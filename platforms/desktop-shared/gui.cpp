@@ -482,12 +482,11 @@ static void set_style(void)
         style.TabRounding = 2.75f;
     }
 
-    // The current font atlas already handles the backing-pixel density.
-    // Apply only the user-facing UI density here; feeding the display scale
-    // into both systems makes Retina menus and controls twice as large.
-    const float ui_scale = config_debug.ui_scale;
+    // SDL3 supplies framebuffer scaling to the renderer. Dear ImGui needs
+    // the separate logical content scale for its fonts and style geometry.
+    const float ui_scale = application_content_scale * config_debug.ui_scale;
     style.ScaleAllSizes(ui_scale);
-    style.FontScaleDpi = 1.0f;
+    style.FontScaleDpi = application_content_scale;
     style.FontScaleMain = config_debug.ui_scale;
 
     //style.Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -572,6 +571,11 @@ ImFont* gui_get_font(int index)
     return default_font[index & 3];
 }
 
+float gui_get_default_font_size(void)
+{
+    return 13.0f + (static_cast<float>(config_debug.font_size & 3) * 3.0f);
+}
+
 
 void gui_init(void)
 {
@@ -587,7 +591,6 @@ void gui_init(void)
     ImGuiIO& io = ImGui::GetIO();
 
     io.IniFilename = config_imgui_file_path;
-    io.FontGlobalScale /= application_display_scale;
 
     // Panels dock into tabs on Shift+drag; no multi-viewport (that would need
     // ImGui_ImplSDLGPU3 to render into separate OS windows, which it does not
@@ -599,22 +602,21 @@ void gui_init(void)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigDockingWithShift = true;
 
-    //gui_roboto_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoMedium_compressed_data, RobotoMedium_compressed_size, 16.0f * application_display_scale, NULL, io.Fonts->GetGlyphRangesCyrillic());
-    gui_roboto_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoLight_compressed_data, RobotoLight_compressed_size, 18.0f * application_display_scale, NULL, io.Fonts->GetGlyphRangesCyrillic());
-    compact_chrome_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoLight_compressed_data, RobotoLight_compressed_size, 15.0f * application_display_scale, NULL, io.Fonts->GetGlyphRangesCyrillic());
-    condensed_chrome_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoLight_compressed_data, RobotoLight_compressed_size, 16.5f * application_display_scale, NULL, io.Fonts->GetGlyphRangesCyrillic());
-    gui_sc3000_font = io.Fonts->AddFontFromMemoryCompressedTTF(SC3000Basic_compressed_data, SC3000Basic_compressed_size, 16.0f * application_display_scale, NULL, io.Fonts->GetGlyphRangesCyrillic());
-    gui_unifont_font = io.Fonts->AddFontFromMemoryCompressedTTF(unifont_compressed_data, unifont_compressed_size, 16.0f * application_display_scale, NULL, io.Fonts->GetGlyphRangesCyrillic());
+    gui_roboto_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoLight_compressed_data, RobotoLight_compressed_size, 18.0f);
+    compact_chrome_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoLight_compressed_data, RobotoLight_compressed_size, 15.0f);
+    condensed_chrome_font = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoLight_compressed_data, RobotoLight_compressed_size, 16.5f);
+    gui_sc3000_font = io.Fonts->AddFontFromMemoryCompressedTTF(SC3000Basic_compressed_data, SC3000Basic_compressed_size, 16.0f);
+    gui_unifont_font = io.Fonts->AddFontFromMemoryCompressedTTF(unifont_compressed_data, unifont_compressed_size, 16.0f);
 
     // Same compact Material Icons set used by the current GearSystem
     // debugger.  Keep it as an independent font: debugger data remains in
     // the selected fixed font while toolbars stay compact at every density.
-    const float icon_font_size = 20.0f * application_display_scale;
+    const float icon_font_size = 20.0f;
     static const ImWchar icon_ranges[] = { ICON_MIN_MD, ICON_MAX_16_MD, 0 };
     ImFontConfig icon_config;
     icon_config.PixelSnapH = true;
     icon_config.GlyphMinAdvanceX = icon_font_size;
-    icon_config.GlyphOffset = ImVec2(0.0f, 2.0f * application_display_scale);
+    icon_config.GlyphOffset = ImVec2(0.0f, 2.0f);
     gui_material_icons_font = io.Fonts->AddFontFromMemoryCompressedTTF(
         MaterialIcons_compressed_data, MaterialIcons_compressed_size,
         icon_font_size, &icon_config, icon_ranges);
@@ -623,7 +625,7 @@ void gui_init(void)
 
     for (int i = 0; i < 4; i++)
     {
-        font_cfg.SizePixels = (13.0f + (i * 3)) * application_display_scale;
+        font_cfg.SizePixels = (13.0f + (i * 3));
         default_font[i] = io.Fonts->AddFontDefault(&font_cfg);
     }
 
@@ -643,8 +645,7 @@ void gui_init(void)
         gui_memory_condensed_font = io.Fonts->AddFontFromMemoryTTF(
             const_cast<unsigned char*>(memory_font.data),
             static_cast<int>(memory_font.size),
-            16.0f * application_display_scale, &memory_font_config,
-            io.Fonts->GetGlyphRangesDefault());
+            16.0f, &memory_font_config);
     }
     if (load_windows_resource(IDR_MEMORY_CONDENSED_LIGHT_TTF,
                               &memory_light_font))
@@ -655,8 +656,7 @@ void gui_init(void)
         gui_memory_condensed_light_font = io.Fonts->AddFontFromMemoryTTF(
             const_cast<unsigned char*>(memory_light_font.data),
             static_cast<int>(memory_light_font.size),
-            16.0f * application_display_scale, &memory_light_font_config,
-            io.Fonts->GetGlyphRangesDefault());
+            16.0f, &memory_light_font_config);
     }
 #else
     const char* base_path = SDL_GetBasePath();
@@ -680,16 +680,14 @@ void gui_init(void)
             ImFontConfig memory_font_config;
             memory_font_config.PixelSnapH = true;
             gui_memory_condensed_font = io.Fonts->AddFontFromFileTTF(
-                memory_font_path, 16.0f * application_display_scale,
-                &memory_font_config, io.Fonts->GetGlyphRangesDefault());
+                memory_font_path, 16.0f, &memory_font_config);
         }
         if (light_path_length >= 0 && static_cast<size_t>(light_path_length) < sizeof(memory_light_font_path))
         {
             ImFontConfig memory_light_font_config;
             memory_light_font_config.PixelSnapH = true;
             gui_memory_condensed_light_font = io.Fonts->AddFontFromFileTTF(
-                memory_light_font_path, 16.0f * application_display_scale,
-                &memory_light_font_config, io.Fonts->GetGlyphRangesDefault());
+                memory_light_font_path, 16.0f, &memory_light_font_config);
         }
     }
 #endif
@@ -2137,13 +2135,17 @@ static void main_menu(void)
         }
 
 #ifdef DEBUG_TOOLS
-        if (ImGui::BeginMenu("UI"))
+        if (ImGui::BeginMenu("UI Setup"))
         {
-            float percent = config_debug.ui_scale * 100.0f;
+            static float pending_ui_scale = 0.0f;
+            if (pending_ui_scale <= 0.0f)
+                pending_ui_scale = config_debug.ui_scale;
             ImGui::SetNextItemWidth(130.0f);
-            if (ImGui::SliderFloat("Scale", &percent, 75.0f, 200.0f, "%.0f%%"))
+            ImGui::DragFloat("Global scale", &pending_ui_scale, 0.05f, 0.75f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SameLine();
+            if (ImGui::Button("Apply scale"))
             {
-                config_debug.ui_scale = percent / 100.0f;
+                config_debug.ui_scale = pending_ui_scale;
                 set_style();
             }
             ImGui::Separator();
@@ -4224,7 +4226,7 @@ static void show_info(void)
     static char info[512];
     emu_get_info(info);
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f,0.502f,0.957f,1.0f));
     ImGui::SetCursorPosX(5.0f);
     ImGui::Text("%s", info);
@@ -4245,7 +4247,7 @@ static void show_fps(void)
     // not a fault.
     const SchedulerDiagnostics pacing = scheduler_get_diagnostics();
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f,1.00f,0.0f,1.0f));
     ImGui::SetCursorPos(ImVec2(5.0f, config_debug.debug ? 25.0f : 5.0f));
     // Four decimals on the machine line, two on the display: 59.9227 against
@@ -4334,7 +4336,7 @@ static void show_status_message(void)
 
         if (ImGui::BeginPopup("Status", flags))
         {
-            ImGui::PushFont(gui_default_font);
+            ImGui::PushFont(gui_default_font, gui_get_default_font_size());
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.1f,0.9f,0.1f,1.0f));
             ImGui::TextWrapped("%s", status_message);
             ImGui::PopStyleColor();

@@ -99,7 +99,7 @@ void IconTooltip(const char* text)
         ImGui::TextUnformatted(text);
         ImGui::EndTooltip();
     }
-    ImGui::PushFont(gui_material_icons_font);
+    ImGui::PushFont(gui_material_icons_font, 20.0f);
 }
 
 void DrawTransport(int count, bool can_scrub)
@@ -110,7 +110,7 @@ void DrawTransport(int count, bool can_scrub)
     const bool at_newest = position <= 0;
     const bool at_oldest = position >= count - 1;
 
-    ImGui::PushFont(gui_material_icons_font);
+    ImGui::PushFont(gui_material_icons_font, 20.0f);
 
     if (playback_active)
     {

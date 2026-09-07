@@ -231,7 +231,7 @@ void gui_debug_psg_window(void)
 
     ImGui::Begin("PSG", &config_debug.show_psg);
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     // One row per channel, not one column: a waveform plot (C8) needs
     // horizontal room to be readable, which four narrow table columns side
@@ -374,7 +374,7 @@ void gui_debug_ay_window(void)
     Audio* audio = emu_get_core()->GetAudio();
 
     ImGui::Begin("AY-3-8910 / YM2149", &config_debug.show_ay);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     if (!audio->IsAyEnabled())
     {

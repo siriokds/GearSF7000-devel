@@ -30,7 +30,7 @@
 
 EXTERN SDL_Gamepad* application_gamepad[2];
 EXTERN int application_gamepad_mappings;
-EXTERN float application_display_scale;
+EXTERN float application_content_scale;
 EXTERN int application_sdl_version;
 
 EXTERN int application_init(const char* rom_file, const char* symbol_file);

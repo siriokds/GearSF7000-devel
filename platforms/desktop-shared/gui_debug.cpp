@@ -566,7 +566,7 @@ static void debug_text_example(void)
     ImGui::SetNextWindowSize(ImVec2(324, 308), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("Text Example");
-    ImGui::PushFont(gui_unifont_font);
+    ImGui::PushFont(gui_unifont_font, 16.0f);
 
     /*std::string text = "Prova";
     ImGui::Text("%s", text.c_str());*/
@@ -618,7 +618,7 @@ static void debug_window_memory_legacy(void)
     Video* video = core->GetVideo();
     SF7000* sf7000 = core->GetSF7000();
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     ImGui::TextColored(cyan, memory->IsSF7000Enabled() ? "  SF-7000: " : "  ROM: ");ImGui::SameLine();
 
@@ -656,7 +656,7 @@ static void debug_window_memory_legacy(void)
         {
             if (ImGui::BeginTabItem("IPL ROM 8K", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 0)
                     mem_edit_select = -1;
                 current_mem_edit = 0;
@@ -669,7 +669,7 @@ static void debug_window_memory_legacy(void)
 
             if (ImGui::BeginTabItem("SF-7000 RAM 64K", NULL, mem_edit_select == 1 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_unifont_font);
+                ImGui::PushFont(gui_unifont_font, 16.0f);
                 if (mem_edit_select == 1)
                     mem_edit_select = -1;
                 current_mem_edit = 1;
@@ -684,7 +684,7 @@ static void debug_window_memory_legacy(void)
             // TAB 1: La parte fissa (Page 0 e 1)
             if (ImGui::BeginTabItem("ROM FIXED", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 0) mem_edit_select = -1;
                 current_mem_edit = 0;
                 // Mostriamo i primi 32KB (fissi per ASC16L)
@@ -696,7 +696,7 @@ static void debug_window_memory_legacy(void)
             // TAB 2: La vista della Page 2 (16KB)
             if (ImGui::BeginTabItem("ROM PAGED", NULL, mem_edit_select == 1 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 1) mem_edit_select = -1;
                 current_mem_edit = 1;
 
@@ -712,7 +712,7 @@ static void debug_window_memory_legacy(void)
             //// TAB 3: Tutta la ROM fisica caricata (Dinamica)
             //if (ImGui::BeginTabItem("ROM PHYSICAL", NULL, mem_edit_select == 3 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             //{
-            //    ImGui::PushFont(gui_default_font);
+            //    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
             //    if (mem_edit_select == 3) mem_edit_select = -1;
             //    current_mem_edit = 3;
             //    // La dimensione qui è dinamica: 128K, 256K, o 512K
@@ -724,7 +724,7 @@ static void debug_window_memory_legacy(void)
             // TAB RAM 32K (SGM)
             if (ImGui::BeginTabItem("RAM 32K", NULL, mem_edit_select == 2 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 2) mem_edit_select = -1;
                 current_mem_edit = 2;
                 mem_edit[current_mem_edit].Draw(memory->GetSGMRam(), 32768, 0x8000);
@@ -736,7 +736,7 @@ static void debug_window_memory_legacy(void)
         {
             if (ImGui::BeginTabItem("IPL", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 0)
                     mem_edit_select = -1;
                 current_mem_edit = 0;
@@ -747,7 +747,7 @@ static void debug_window_memory_legacy(void)
 
             if (ImGui::BeginTabItem("TOP 16K", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 1)
                     mem_edit_select = -1;
                 current_mem_edit = 1;
@@ -759,7 +759,7 @@ static void debug_window_memory_legacy(void)
 
             if (ImGui::BeginTabItem("SF-7000 RAM", NULL, mem_edit_select == 2 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 2)
                     mem_edit_select = -1;
                 current_mem_edit = 2;
@@ -772,7 +772,7 @@ static void debug_window_memory_legacy(void)
         {
             if (ImGui::BeginTabItem("ROM", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 0)
                     mem_edit_select = -1;
                 current_mem_edit = 0;
@@ -784,7 +784,7 @@ static void debug_window_memory_legacy(void)
 
             if (ImGui::BeginTabItem("RAM 2K", NULL, mem_edit_select == 2 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 1)
                     mem_edit_select = -1;
                 current_mem_edit = 1;
@@ -797,7 +797,7 @@ static void debug_window_memory_legacy(void)
         {
             if (ImGui::BeginTabItem("ROM", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 0)
                     mem_edit_select = -1;
                 current_mem_edit = 0;
@@ -809,7 +809,7 @@ static void debug_window_memory_legacy(void)
 
             if (ImGui::BeginTabItem("RAM 32K", NULL, mem_edit_select == 2 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 1)
                     mem_edit_select = -1;
                 current_mem_edit = 1;
@@ -822,7 +822,7 @@ static void debug_window_memory_legacy(void)
         {
             if (ImGui::BeginTabItem("ROM", NULL, mem_edit_select == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
-                ImGui::PushFont(gui_default_font);
+                ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                 if (mem_edit_select == 0)
                     mem_edit_select = -1;
                 current_mem_edit = 0;
@@ -836,7 +836,7 @@ static void debug_window_memory_legacy(void)
             {
                 if (ImGui::BeginTabItem("RAM 1K", NULL, mem_edit_select == 2 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
                 {
-                    ImGui::PushFont(gui_default_font);
+                    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
                     if (mem_edit_select == 1)
                         mem_edit_select = -1;
                     current_mem_edit = 1;
@@ -849,7 +849,7 @@ static void debug_window_memory_legacy(void)
             {
                 if (ImGui::BeginTabItem("RAM 16K", NULL, mem_edit_select == 2 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
                 {
-                    ImGui::PushFont(gui_unifont_font);
+                    ImGui::PushFont(gui_unifont_font, 16.0f);
                     if (mem_edit_select == 2)
                         mem_edit_select = -1;
                     current_mem_edit = 2;
@@ -863,7 +863,7 @@ static void debug_window_memory_legacy(void)
 
         if (ImGui::BeginTabItem("VRAM", NULL, mem_edit_select == 4 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
         {
-            ImGui::PushFont(gui_default_font);
+            ImGui::PushFont(gui_default_font, gui_get_default_font_size());
             if (mem_edit_select == 4)
                 mem_edit_select = -1;
             current_mem_edit = 4;
@@ -976,13 +976,13 @@ static void debug_window_disassembler(void)
                 ImGui::TextUnformatted(tooltip);
                 ImGui::EndTooltip();
             }
-            ImGui::PushFont(gui_material_icons_font);
+            ImGui::PushFont(gui_material_icons_font, 20.0f);
         }
         ImGui::SameLine();
         return pressed;
     };
 
-    ImGui::PushFont(gui_material_icons_font);
+    ImGui::PushFont(gui_material_icons_font, 20.0f);
     if (toolbar_button(ICON_MD_PLAY_ARROW, "debug_continue", "Start / Continue")) emu_debug_continue();
     if (toolbar_button(ICON_MD_PAUSE, "debug_pause", "Pause")) emu_pause();
     if (toolbar_button(ICON_MD_REDO, "debug_step_over", "Step Over")) emu_debug_step_over();
@@ -1104,7 +1104,7 @@ static void debug_window_disassembler(void)
 
             ImGui::PopID();
 
-            ImGui::PushFont(gui_default_font);
+            ImGui::PushFont(gui_default_font, gui_get_default_font_size());
             ImGui::SameLine();
             ImGui::TextColored(red, "%04X", (*breakpoints_cpu)[b]->address);
             ImGui::SameLine();
@@ -1173,7 +1173,7 @@ static void debug_window_disassembler(void)
 
             ImGui::PopID();
 
-            ImGui::PushFont(gui_default_font);
+            ImGui::PushFont(gui_default_font, gui_get_default_font_size());
             ImGui::SameLine();
             if ((*breakpoints_mem)[b].range)
                 ImGui::TextColored(red, "%04X-%04X", (*breakpoints_mem)[b].address1, (*breakpoints_mem)[b].address2);
@@ -1251,7 +1251,7 @@ static void debug_window_disassembler(void)
 
             ImGui::PopID();
 
-            ImGui::PushFont(gui_default_font);
+            ImGui::PushFont(gui_default_font, gui_get_default_font_size());
             ImGui::SameLine();
             if ((*breakpoints_vram)[b].range)
                 ImGui::TextColored(red, "%04X-%04X", (*breakpoints_vram)[b].address1, (*breakpoints_vram)[b].address2);
@@ -1282,7 +1282,7 @@ static void debug_window_disassembler(void)
 
 
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     bool window_visible = ImGui::BeginChild("##dis", ImVec2(ImGui::GetContentRegionAvail().x, 0), true,
                                             ImGuiWindowFlags_HorizontalScrollbar);
@@ -1527,7 +1527,7 @@ static void debug_window_processor(void)
 
     ImGui::Begin("Z80 Status", &config_debug.show_processor, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize);
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     GearSF7000Core* core = emu_get_core();
     CpuStateAccess* processor = core->GetCpuStateAccess();
@@ -1826,7 +1826,7 @@ static void debug_window_sf7000(void)
     const int sectorSize = fdc.sizeCode < 8 ? (128 << fdc.sizeCode) : 0;
     const uint8_t msr = fdc.mainStatus;
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
     ImGui::TextColored(cyan, "DRIVE 0"); ImGui::SameLine();
     sf7000_status_led("MOTOR", motor); ImGui::SameLine();
     sf7000_status_led("DISK", disk.present != 0); ImGui::SameLine();
@@ -2133,7 +2133,7 @@ static void debug_window_events(void)
     manager->CopyEvents(events);
 
     ImGui::Begin("Debug Events", &config_debug.show_events);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     // The depth is chosen at runtime now, so it is read rather than assumed.
     ImGui::TextColored(cyan, "EVENTS %d/%d", static_cast<int>(events.size()),
@@ -2808,7 +2808,7 @@ static void debug_window_mcp_server(void)
     ImGui::SetNextWindowSize(ImVec2(300, 160), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("MCP Server", &config_debug.show_mcp_server, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     const bool mcp_running = emu_mcp_is_running();
     const int transport_mode = emu_mcp_get_transport_mode();
@@ -2888,7 +2888,7 @@ static void debug_window_watch_monitor(void)
     ImGui::SetNextWindowSize(ImVec2(620, 480), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("Watch Monitor", &config_debug.show_watch_monitor);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     DebugAdapter* adapter = emu_mcp_get_adapter();
     if (!adapter)
@@ -3593,7 +3593,7 @@ static void debug_window_vram(void)
 
     ImGui::Begin("VDP Viewer", &config_debug.show_video);
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     Video* video = emu_get_core()->GetVideo();
     u8* regs = video->GetRegisters();
@@ -3665,7 +3665,7 @@ static void debug_window_vram_background(void)
     ImGui::SameLine();
     ImGui::Checkbox("Show Regions##regions_bg", &show_regions);
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     ImGui::Columns(2, "bg", false);
     ImGui::SetColumnOffset(1, size_h + 10.0f);
@@ -3827,7 +3827,7 @@ static void debug_window_vram_tiles(void)
     ImGui::SameLine();
     area_scale_control("Scale##scale_tiles", &scale);
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     ImGui::Columns(2, "tiles", false);
     ImGui::SetColumnOffset(1, width + 10.0f);
@@ -4030,7 +4030,7 @@ static void debug_window_vram_sprites(void)
             active_pipeline_line = &line;
     }
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     ImGui::Columns(2, "spr", false);
     // 4 thumbnails per row (see the `s % 4 < 3` SameLine below) plus the
@@ -4436,7 +4436,7 @@ static void debug_window_vram_sprites(void)
 
 static void debug_window_vram_regs(void)
 {
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     Video* video = emu_get_core()->GetVideo();
     u8* regs = video->GetRegisters();
@@ -4554,7 +4554,7 @@ static void debug_window_vram_regs(void)
 #if GEARSF7000_ENABLE_SR1000
 static void debug_window_cassette_controls(void)
 {
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     SR1000* recorder = emu_get_core()->GetCassette();
     SR1000Speaker* speaker = emu_get_core()->GetCassetteSpeaker();

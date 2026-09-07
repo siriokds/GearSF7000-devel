@@ -256,7 +256,7 @@ void gui_debug_basic_typer_window(void)
     ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("BASIC Typer", &config_debug.show_basic_typer);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     const bool busy = emu_keyboard_text_busy();
 

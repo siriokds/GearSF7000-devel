@@ -415,7 +415,7 @@ void gui_debug_rom_inspector_window(void)
     ImGui::SetNextWindowSize(ImVec2(700, 640), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("ROM Inspector", &config_debug.show_rom_inspector);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     if (ImGui::Button("Open..."))
         open_rom_file_dialog();

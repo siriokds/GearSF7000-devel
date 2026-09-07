@@ -109,7 +109,7 @@ public:
     bool AddWatchDirect(int address, const char* notes, int size);
     void RemoveWatches();
     std::vector<Watch>* GetWatches();
-    void SetGuiFont(ImFont* gui_font);
+    void SetGuiFont(ImFont* gui_font, float gui_font_size);
     void BookMarkPopup();
     void WatchPopup();
     void DrawFindBytesWindow();
@@ -204,6 +204,7 @@ private:
     char m_pending_watch_notes[128];
     std::vector<Watch> m_watches;
     ImFont* m_gui_font;
+    float m_gui_font_size;
     ImDrawList* m_draw_list;
     bool m_search_window;
     int m_search_operator;

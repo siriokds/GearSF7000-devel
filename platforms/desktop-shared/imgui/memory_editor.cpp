@@ -120,10 +120,10 @@ struct MemoryGridMetrics
     float ascii_cell_width;
 };
 
-MemoryGridMetrics calculate_grid_metrics(ImFont* data_font, int max_chars_per_cell)
+MemoryGridMetrics calculate_grid_metrics(ImFont* data_font, float data_font_size, int max_chars_per_cell)
 {
     if (data_font != nullptr)
-        ImGui::PushFont(data_font);
+        ImGui::PushFont(data_font, data_font_size);
 
     MemoryGridMetrics metrics;
     metrics.character_size = ImGui::CalcTextSize("0");
@@ -169,6 +169,7 @@ MemEditor::MemEditor()
     m_pending_watch_address = -1;
     m_pending_watch_notes[0] = 0;
     InitPointer(m_gui_font);
+    m_gui_font_size = 16.0f;
     InitPointer(m_draw_list);
     m_search_window = false;
     m_search_operator = 0;
@@ -242,7 +243,7 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
     const bool draw_ascii = (m_mem_word == 1) && ascii;
     const int byte_column_count = 2 + m_options.bytes_per_row + separator_count + (draw_ascii ? 2 : 0);
     const int max_chars_per_cell = 2 * m_mem_word;
-    const MemoryGridMetrics grid = calculate_grid_metrics(m_gui_font, max_chars_per_cell);
+    const MemoryGridMetrics grid = calculate_grid_metrics(m_gui_font, m_gui_font_size, max_chars_per_cell);
     const ImVec2 ui_character_size = ImGui::CalcTextSize("0");
     float footer_height = 0;
 
@@ -266,7 +267,7 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
     // the disassembler.  The controls below deliberately retain the global
     // UI font and therefore obey Normal / Compact / Minimal density.
     if (m_gui_font != NULL)
-        ImGui::PushFont(m_gui_font);
+        ImGui::PushFont(m_gui_font, m_gui_font_size);
     if (ImGui::BeginChild("##mem", ImVec2(ImGui::GetContentRegionAvail().x, -footer_height), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav))
     {
         m_draw_list = ImGui::GetWindowDrawList();
@@ -2767,9 +2768,10 @@ void MemEditor::DrawWatchValue(uint32_t value, int size, int format)
     }
 }
 
-void MemEditor::SetGuiFont(ImFont* gui_font)
+void MemEditor::SetGuiFont(ImFont* gui_font, float gui_font_size)
 {
     m_gui_font = gui_font;
+    m_gui_font_size = gui_font_size;
 }
 
 MemEditor::Options MemEditor::GetOptions() const

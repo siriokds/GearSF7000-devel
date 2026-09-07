@@ -86,7 +86,7 @@ void gui_debug_mem_import_window(void)
     ImGui::SetNextWindowSize(ImVec2(700, 460), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("Mem Import", &config_debug.show_memory_import);
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
 
     // RAM/ROM section - view picker instead of one flat 64 KiB buffer: what
     // buffers actually exist (and at what CPU base) depends on the active

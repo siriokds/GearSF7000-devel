@@ -95,6 +95,7 @@ EXTERN bool gui_sk1100_virtual_matrix_down(int row, int mask);
 EXTERN void gui_sk1100_release_virtual_keys(void);
 
 EXTERN ImFont* gui_get_font(int index);
+EXTERN float gui_get_default_font_size(void);
 
 // Raw binary export/import between an arbitrary in-memory buffer and a file
 // on disk. Offsets/lengths are relative to memoryPtr itself (buffer start),

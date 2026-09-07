@@ -95,9 +95,9 @@ bool supportsAVX2() {
 
 int application_init(const char* rom_file, const char* symbol_file)
 {
-    // SDL normally replaces this with the drawable/window ratio.  Retain a
-    // usable 1x fallback for headless launches and failed display queries.
-    application_display_scale = 1.0f;
+    // The drawable/framebuffer ratio is supplied by the SDL3 ImGui backend.
+    // Keep a separate logical-content scale for the ImGui font system.
+    application_content_scale = 1.0f;
 
     Log("\n%s", GEARSF7000_TITLE_ASCII);
     Log("%s %s Desktop App", GEARSF7000_TITLE, build_info_version());
@@ -587,10 +587,10 @@ static int sdl_init(void)
     SDL_DisplayID display = SDL_GetDisplayForWindow(sdl_window);
     if (display == 0)
         display = SDL_GetPrimaryDisplay();
-    application_display_scale = display != 0
+    application_content_scale = display != 0
         ? SDL_GetDisplayContentScale(display) : 1.0f;
-    if (application_display_scale <= 0.0f)
-        application_display_scale = 1.0f;
+    if (application_content_scale <= 0.0f)
+        application_content_scale = 1.0f;
 
     return 0;
 }

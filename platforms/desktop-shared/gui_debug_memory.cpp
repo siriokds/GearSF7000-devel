@@ -201,7 +201,7 @@ void gui_debug_memory_window(void)
     const bool flatMap = !memory->IsSF7000Enabled()
         && cartridge->GetType() == Cartridge::SC3000_FLAT64K;
 
-    ImGui::PushFont(gui_default_font);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
     ImGui::TextColored(cyan, "%s", memory->IsSF7000Enabled() ? "SF-7000"
                                  : flatMap ? "FLAT 64K" : "ROM");
     if (!flatMap)
@@ -379,7 +379,9 @@ void gui_debug_memory_draw_view(int slot, const char* title, std::uint8_t* data,
         data_font = gui_memory_condensed_font;
     else if (config_debug.memory_data_font == 2 && gui_memory_condensed_light_font != nullptr)
         data_font = gui_memory_condensed_light_font;
-    g_editors[slot].SetGuiFont(data_font);
+    const float data_font_size = config_debug.memory_data_font == 0
+        ? gui_get_default_font_size() : 16.0f;
+    g_editors[slot].SetGuiFont(data_font, data_font_size);
     g_editors[slot].Draw();
 
     // DrawOptions() may have changed the choice this frame; retain it before
@@ -460,7 +462,7 @@ void gui_debug_memory_search_window(void)
 {
     for (int i = 0; i < GuiDebugMemoryEditorSlotCount; i++)
     {
-        ImGui::PushFont(gui_default_font);
+        ImGui::PushFont(gui_default_font, gui_get_default_font_size());
         g_editors[i].DrawSearchWindow();
         ImGui::PopFont();
     }
@@ -470,7 +472,7 @@ void gui_debug_memory_find_bytes_window(void)
 {
     for (int i = 0; i < GuiDebugMemoryEditorSlotCount; i++)
     {
-        ImGui::PushFont(gui_default_font);
+        ImGui::PushFont(gui_default_font, gui_get_default_font_size());
         g_editors[i].DrawFindBytesWindow();
         ImGui::PopFont();
     }
@@ -480,7 +482,7 @@ void gui_debug_memory_watches_window(void)
 {
     for (int i = 0; i < GuiDebugMemoryEditorSlotCount; i++)
     {
-        ImGui::PushFont(gui_default_font);
+        ImGui::PushFont(gui_default_font, gui_get_default_font_size());
         g_editors[i].DrawWatchWindow();
         ImGui::PopFont();
     }
