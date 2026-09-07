@@ -2141,7 +2141,8 @@ static void main_menu(void)
             if (pending_ui_scale <= 0.0f)
                 pending_ui_scale = config_debug.ui_scale;
             ImGui::SetNextItemWidth(130.0f);
-            ImGui::DragFloat("Global scale", &pending_ui_scale, 0.05f, 0.75f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::InputFloat("Global scale", &pending_ui_scale, 0.05f, 0.10f, "%.2f");
+            pending_ui_scale = std::clamp(pending_ui_scale, 0.75f, 2.0f);
             ImGui::SameLine();
             if (ImGui::Button("Apply scale"))
             {
