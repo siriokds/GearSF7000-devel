@@ -52,6 +52,9 @@ jobs:
           mkdir artifact
           cp platforms/linux/gearsf7000 artifact/
           cp platforms/gamecontrollerdb.txt artifact/
+          cp platforms/desktop-shared/assets/sc3000-keyboard-compact.png artifact/
+          cp platforms/desktop-shared/imgui/fonts/Iosevka/GearSF7000Mono-Condensed.ttf artifact/
+          cp platforms/desktop-shared/imgui/fonts/Iosevka/GearSF7000Mono-CondensedLight.ttf artifact/
           cd artifact
           zip "../GearSF7000-${{ github.ref_name }}-desktop-linux-${{ matrix.name }}.zip" *
       - uses: actions/upload-artifact@v7
