@@ -317,7 +317,7 @@ bool application_load_rom(const char* path)
     Log("application_load_rom %s", path);
 
     Cartridge::ForceConfiguration config;
-    config.region = application_cartridge_region(config_emulator.region);
+    config.region = application_cartridge_region(config_emulator.vdp);
     config.type = config_forced_cartridge_type();
     config.fallbackType = config_fallback_cartridge_type();
 

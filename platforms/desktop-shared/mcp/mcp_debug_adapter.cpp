@@ -908,17 +908,17 @@ json DebugAdapter::SetRegion(const std::string& region)
     if (wanted == "pal" || wanted == "50")
     {
         config.region = Cartridge::CartridgePAL;
-        config_emulator.region = 2;
+        config_emulator.vdp = 2;
     }
     else if (wanted == "ntsc" || wanted == "60")
     {
         config.region = Cartridge::CartridgeNTSC;
-        config_emulator.region = 1;
+        config_emulator.vdp = 1;
     }
     else if (wanted == "auto")
     {
         config.region = Cartridge::CartridgeUnknownRegion;
-        config_emulator.region = 0;
+        config_emulator.vdp = 0;
     }
     else
     {

@@ -48,7 +48,7 @@ struct config_Emulator
     bool start_paused = false;
     bool ffwd = false;
     int ffwd_speed = 1;
-    int region = 0;
+    int vdp = 0;
     // 0 = auto (signature and CRC decide), 1 = manual (mapper_type wins).
     // Manual performs no signature or checksum check at all.
     int mapper_mode = 0;
@@ -187,6 +187,7 @@ struct config_VideoOutput
 struct config_Video : config_VideoOutput
 {
     bool fps = false;
+    bool frame_pacing_info = false;
     bool scanlines = true;
     float scanlines_intensity = 0.10f;
 #ifdef SPRITE_EXPANDER

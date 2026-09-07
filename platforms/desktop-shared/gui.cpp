@@ -204,9 +204,9 @@ static void menu_ffwd(void);
 static void window_crt_lottes_setup(void);
 static void window_advanced_scaling_setup(void);
 static void show_info(void);
-static void show_fps(void);
+static void show_fps(const ImVec2& content_origin);
 static void show_status_message(void);
-static Cartridge::CartridgeRegions get_region(int index);
+static Cartridge::CartridgeRegions get_vdp_selection(int index);
 static Cartridge::ForceConfiguration get_force_config(void);
 static void call_save_screenshot(const char* path);
 
@@ -1249,18 +1249,17 @@ static void main_menu(void)
         {
             gui_in_use = true;
 
-            // "Region", not "Refresh Rate": it picks the machine, and the
-            // rate is a consequence. Video > Frame Pacing is where a rate is
-            // actually chosen, and it now shows real numbers - two menus both
-            // called something about Hz would be one too many.
-            if (ImGui::BeginMenu("Region"))
+            // The selected VDP determines the video standard and its native
+            // timing. It is not a geographical region setting.
+            if (ImGui::BeginMenu("VDP"))
             {
                 ImGui::PushItemWidth(130.0f);
-                if (ImGui::Combo("##emu_rate", &config_emulator.region, "Auto\0NTSC (59.9227 Hz)\0PAL (50.1590 Hz)\0\0"))
+                if (ImGui::Combo("##emu_vdp", &config_emulator.vdp,
+                    "Automatic (database)\0TMS9918 (NTSC, 59.9227 Hz)\0TMS9929 (PAL, 50.1590 Hz)\0\0"))
                 {
-                    if (config_emulator.region > 0)
+                    if (config_emulator.vdp > 0)
                     {
-                        // Changing region no longer has to touch audio: it
+                        // Changing the VDP no longer has to touch audio: it
                         // used to force the queue back into pacing duty.
                         config_emulator.ffwd = false;
                     }
@@ -1812,6 +1811,7 @@ static void main_menu(void)
             }
 
             ImGui::MenuItem("Show FPS", "", &config_video.fps);
+            ImGui::MenuItem("Show Frame Pacing Info", "", &config_video.frame_pacing_info);
 
             ImGui::Separator();
 
@@ -2140,17 +2140,15 @@ static void main_menu(void)
             static float pending_ui_scale = 0.0f;
             if (pending_ui_scale <= 0.0f)
                 pending_ui_scale = config_debug.ui_scale;
-            ImGui::SetNextItemWidth(130.0f);
-            ImGui::InputFloat("Global scale", &pending_ui_scale, 0.05f, 0.10f, "%.2f");
-            pending_ui_scale = std::clamp(pending_ui_scale, 0.75f, 2.0f);
-            ImGui::SameLine();
-            if (ImGui::Button("Apply scale"))
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
+            if (ImGui::InputFloat("Global scale", &pending_ui_scale, 0.05f, 0.10f, "%.2f"))
             {
+                pending_ui_scale = std::clamp(pending_ui_scale, 0.75f, 2.0f);
                 config_debug.ui_scale = pending_ui_scale;
                 set_style();
             }
             ImGui::Separator();
-            ImGui::SetNextItemWidth(130.0f);
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
             if (ImGui::Combo("Font Size", &config_debug.font_size,
                 "Very Small\0Small\0Medium\0Large\0\0"))
                 gui_default_font = default_font[config_debug.font_size];
@@ -2748,6 +2746,7 @@ static bool main_window(void)
         gui_main_window_hovered = ImGui::IsWindowHovered();
     }
 
+    const ImVec2 output_content_origin = ImGui::GetCursorPos();
     renderer_begin_emulator_image();
     // CRT (Lottes) draws its own already-final-resolution output instead of
     // emu_texture directly - see renderer_crt_lottes_live_texture's own
@@ -2766,8 +2765,8 @@ static bool main_window(void)
     ImGui::Image(mainImageTexture, ImVec2((float)main_window_width, (float)main_window_height));
     renderer_end_emulator_image();
 
-    if (config_video.fps)
-        show_fps();
+    if (config_video.fps || config_video.frame_pacing_info)
+        show_fps(output_content_origin);
 
     if ((config_debug.debug) && !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow)) {
         hasFocus = false;
@@ -4238,7 +4237,7 @@ static void show_info(void)
     ImGui::PopStyleVar();
 }
 
-static void show_fps(void)
+static void show_fps(const ImVec2& content_origin)
 {
     // Two rates, because they are two different things now and showing only
     // one hid which. MACHINE is how fast the emulated SC-3000 is running,
@@ -4250,40 +4249,48 @@ static void show_fps(void)
 
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f,1.00f,0.0f,1.0f));
-    ImGui::SetCursorPos(ImVec2(5.0f, config_debug.debug ? 25.0f : 5.0f));
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::SetCursorPos(ImVec2(content_origin.x + style.FramePadding.x,
+                              content_origin.y + style.FramePadding.y));
     // Four decimals on the machine line, two on the display: 59.9227 against
     // a round 60 is a 0.13% difference, and at two decimals both read 59.92.
     // The whole point of the line is that the first number reaches the second
     // and stays there, which cannot be seen without the digits to see it in.
-    ImGui::Text("MACHINE: %.4f / %.4f fps\nDISPLAY: %.2f fps  (%.2f ms)",
-                pacing.measured_fps, pacing.effective_fps,
-                ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
+    if (config_video.fps)
+    {
+        ImGui::Text("MACHINE: %.4f / %.4f fps\nDISPLAY: %.2f fps  (%.2f ms)",
+                    pacing.measured_fps, pacing.effective_fps,
+                    ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
+    }
 
     // The same signal path the Frame Pacing menu shows, in one line: source,
     // destination, and which of the two stages between them are running.
     // Neither stage is visible in the two rates above - that is the whole
     // reason this line exists.
-    const bool converting =
-        config_video_pacing_aligned() && !pacing.display_locked;
-    const double out = pacing.measured_refresh > 1.0 ? pacing.measured_refresh
-                                                     : pacing.display_hz;
-    const double bend = (pacing.clock_scale - 1.0) * 100.0;
-    if (std::fabs(bend) > 0.001)
-        ImGui::Text("TMS %.4f Hz (%+.2f%%)  =>  Monitor %.2f Hz",
-                    pacing.effective_fps, bend, out);
-    else
-        ImGui::Text("TMS %.4f Hz (crystals)  =>  Monitor %.2f Hz",
-                    pacing.effective_fps, out);
-    ImGui::SameLine();
-    if (converting)
-        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.40f, 1.0f), "  Converter");
-    else
-        ImGui::TextDisabled("  Converter");
-    ImGui::SameLine();
-    if (config_video_vsync())
-        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.40f, 1.0f), "VSync");
-    else
-        ImGui::TextDisabled("VSync");
+    if (config_video.frame_pacing_info)
+    {
+        const bool converting =
+            config_video_pacing_aligned() && !pacing.display_locked;
+        const double out = pacing.measured_refresh > 1.0 ? pacing.measured_refresh
+                                                         : pacing.display_hz;
+        const double bend = (pacing.clock_scale - 1.0) * 100.0;
+        if (std::fabs(bend) > 0.001)
+            ImGui::Text("TMS %.4f Hz (%+.2f%%)  =>  Monitor %.2f Hz",
+                        pacing.effective_fps, bend, out);
+        else
+            ImGui::Text("TMS %.4f Hz (crystals)  =>  Monitor %.2f Hz",
+                        pacing.effective_fps, out);
+        ImGui::SameLine();
+        if (converting)
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.40f, 1.0f), "  Converter");
+        else
+            ImGui::TextDisabled("  Converter");
+        ImGui::SameLine();
+        if (config_video_vsync())
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.40f, 1.0f), "VSync");
+        else
+            ImGui::TextDisabled("VSync");
+    }
 
     // The scheduler's own state, only where a debug session can see it. If
     // the measured rate is tracking DISPLAY rather than the target, these
@@ -4291,7 +4298,7 @@ static void show_fps(void)
     // frame, drift stays near zero once the buffer settles, and frames is 1
     // most iterations with an occasional 0 - a steady 1 means nothing is
     // being held back.
-    if (config_debug.debug)
+    if (config_debug.debug && config_video.frame_pacing_info)
     {
         const EmuAudioQueueDiagnostics q = emu_get_audio_queue_diagnostics();
         ImGui::Text("PACING: debt %+.3f fr  drift %+.3f%%  frames %d  buf %d/%d",
@@ -4356,15 +4363,14 @@ static void show_status_message(void)
 static Cartridge::ForceConfiguration get_force_config(void)
 {
     Cartridge::ForceConfiguration config;
-    config.region = get_region(config_emulator.region);
+    config.region = get_vdp_selection(config_emulator.vdp);
     config.type = config_forced_cartridge_type();
     config.fallbackType = config_fallback_cartridge_type();
     return config;
 }
 
-static Cartridge::CartridgeRegions get_region(int index)
+static Cartridge::CartridgeRegions get_vdp_selection(int index)
 {
-    //"Auto\0NTSC (60 Hz)\0PAL (50 Hz)\0\0");
     switch (index)
     {
         case 0:

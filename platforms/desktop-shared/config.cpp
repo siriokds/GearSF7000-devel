@@ -270,7 +270,12 @@ void config_read(void)
     config_emulator.ffwd_speed = read_int("Emulator", "FFWD", 1);
     config_emulator.save_slot = read_int("Emulator", "SaveSlot", 0);
     config_emulator.start_paused = read_bool("Emulator", "StartPaused", false);
-    config_emulator.region = read_int("Emulator", "Region", 0);
+    // Region was the old UI name. Preserve existing user preferences while
+    // migrating new configurations to an explicit VDP selection.
+    config_emulator.vdp = read_int("Emulator", "VDP",
+                                   read_int("Emulator", "Region", 0));
+    if (config_emulator.vdp < 0 || config_emulator.vdp > 2)
+        config_emulator.vdp = 0;
     config_emulator.mapper_mode = read_int("Emulator", "MapperMode", 0);
     config_emulator.mapper_type = read_int("Emulator", "MapperType",
         (int)Cartridge::SC3000_FLAT64K);
@@ -343,7 +348,9 @@ void config_read(void)
     config_video.scale = read_int("Video", "Scale", 0);
     config_video.ratio = read_int("Video", "AspectRatio", 1);
     config_video.overscan = read_int("Video", "Overscan", 1);
-    config_video.fps = read_bool("Video", "FPS", false);
+    config_video.fps = read_bool("Video", "ShowFPS",
+                                 read_bool("Video", "FPS", false));
+    config_video.frame_pacing_info = read_bool("Video", "ShowFramePacingInfo", false);
     {
         // One-time migration from the old standalone Bilinear checkbox to
         // the new mutually-exclusive Postprocessing state - a config file
@@ -612,7 +619,7 @@ void config_write(void)
     write_int("Emulator", "FFWD", config_emulator.ffwd_speed);
     write_int("Emulator", "SaveSlot", config_emulator.save_slot);
     write_bool("Emulator", "StartPaused", config_emulator.start_paused);
-    write_int("Emulator", "Region", config_emulator.region);
+    write_int("Emulator", "VDP", config_emulator.vdp);
     write_int("Emulator", "MapperMode", config_emulator.mapper_mode);
     write_int("Emulator", "MapperType", config_emulator.mapper_type);
     write_int("Emulator", "MapperFallback", config_emulator.mapper_fallback);
@@ -662,7 +669,8 @@ void config_write(void)
     write_int("Video", "Scale", config_video.scale);
     write_int("Video", "AspectRatio", config_video.ratio);
     write_int("Video", "Overscan", config_video.overscan);
-    write_bool("Video", "FPS", config_video.fps);
+    write_bool("Video", "ShowFPS", config_video.fps);
+    write_bool("Video", "ShowFramePacingInfo", config_video.frame_pacing_info);
     write_int("Video", "Postprocessing", config_video.postprocessing);
     write_float("Video", "CrtLottesMaskType", config_video.crt_lottes_mask_type);
     write_float("Video", "CrtLottesMaskIntensity", config_video.crt_lottes_mask_intensity);

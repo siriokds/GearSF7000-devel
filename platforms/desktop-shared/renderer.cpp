@@ -977,16 +977,25 @@ void upload_images(SDL_GPUCommandBuffer* command)
                descriptor.frame_width, descriptor.frame_height);
     if (!config_debug.debug)
         return;
-    // The machine can be paused after VRAM changed but before emu_run_frame()
-    // refreshed the debug cache. Decode at presentation time so Live SAT
-    // really means live; the rendered-frame source is immutable here.
-    emu_refresh_debug_sprite_buffers();
-    upload_rgb(command, debug_background_texture, debug_background_transfer, emu_debug_background_buffer, 256, 256);
-    upload_rgb(command, debug_tiles_texture, debug_tiles_transfer, emu_debug_tile_buffer, 256, 256);
-    for (int sprite = 0; sprite < 64; ++sprite)
-        upload_rgb(command, debug_sprite_textures[sprite], debug_sprite_transfers[sprite], emu_debug_sprite_buffers[sprite], 16, 16);
-    upload_rgb(command, debug_rom_inspector_texture, debug_rom_inspector_transfer, emu_debug_rom_inspector_buffer,
-               ROM_INSPECTOR_TEXTURE_SIZE, ROM_INSPECTOR_TEXTURE_SIZE);
+
+    if (config_debug.show_video)
+    {
+        // The machine can be paused after VRAM changed but before
+        // emu_run_frame() refreshed the debug cache. Decode at presentation
+        // time so Live SAT really means live.
+        emu_refresh_debug_sprite_buffers();
+        upload_rgb(command, debug_background_texture, debug_background_transfer, emu_debug_background_buffer, 256, 256);
+        upload_rgb(command, debug_tiles_texture, debug_tiles_transfer, emu_debug_tile_buffer, 256, 256);
+        for (int sprite = 0; sprite < 64; ++sprite)
+            upload_rgb(command, debug_sprite_textures[sprite], debug_sprite_transfers[sprite], emu_debug_sprite_buffers[sprite], 16, 16);
+    }
+
+    if (config_debug.show_rom_inspector)
+    {
+        upload_rgb(command, debug_rom_inspector_texture, debug_rom_inspector_transfer,
+                   emu_debug_rom_inspector_buffer,
+                   ROM_INSPECTOR_TEXTURE_SIZE, ROM_INSPECTOR_TEXTURE_SIZE);
+    }
 }
 
 void set_emulator_sampler_callback(const ImDrawList*, const ImDrawCmd*)
