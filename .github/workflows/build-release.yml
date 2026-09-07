@@ -3,92 +3,10 @@ name: Build and Release
 on:
   workflow_dispatch:
   push:
-    paths-ignore:
-      - "**.md"
-      - ".github/**"
-      - ".vscode/**"
-  pull_request:
-
-env:
-  APP_NAME: GearSF7000
-  APP_BINARY: gearsf7000
+    tags:
+      - "v*"
 
 jobs:
-  linux:
-    name: Linux (${{ matrix.name }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            name: x64
-          - runner: ubuntu-24.04-arm
-            name: arm64
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y build-essential cmake libgtk-3-dev \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-            libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev \
-            libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev \
-            libudev-dev libxtst-dev
-      - name: Build and install SDL3
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          SDL3_TAG=$(gh release view --repo libsdl-org/SDL --json tagName -q '.tagName')
-          git clone --depth 1 --branch "$SDL3_TAG" https://github.com/libsdl-org/SDL.git /tmp/SDL3
-          cmake -S /tmp/SDL3 -B /tmp/SDL3/build -DCMAKE_INSTALL_PREFIX=/usr -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
-          cmake --build /tmp/SDL3/build -j"$(nproc)"
-          sudo cmake --install /tmp/SDL3/build
-      - name: Build
-        run: make -C platforms/linux
-      - name: Package
-        run: |
-          mkdir artifact
-          cp platforms/linux/gearsf7000 artifact/
-          cp platforms/gamecontrollerdb.txt artifact/
-          cp platforms/desktop-shared/assets/sc3000-keyboard-compact.png artifact/
-          cp platforms/desktop-shared/imgui/fonts/Iosevka/GearSF7000Mono-Condensed.ttf artifact/
-          cp platforms/desktop-shared/imgui/fonts/Iosevka/GearSF7000Mono-CondensedLight.ttf artifact/
-          cd artifact
-          zip "../GearSF7000-${{ github.ref_name }}-desktop-linux-${{ matrix.name }}.zip" *
-      - uses: actions/upload-artifact@v7
-        with:
-          name: GearSF7000-linux-${{ matrix.name }}
-          path: GearSF7000-*.zip
-
-  macos:
-    name: macOS (${{ matrix.name }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - runner: macos-15
-            name: arm64
-          - runner: macos-15-intel
-            name: intel
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Install SDL3
-        run: brew install sdl3
-      - name: Build
-        run: make -C platforms/macos dist
-      - name: Package
-        run: |
-          ditto -c -k --keepParent platforms/macos/GearSF7000.app \
-            "GearSF7000-${{ github.ref_name }}-desktop-macos-${{ matrix.name }}.zip"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: GearSF7000-macos-${{ matrix.name }}
-          path: GearSF7000-*.zip
-
   windows:
     name: Windows (x64)
     runs-on: windows-latest
@@ -126,69 +44,11 @@ jobs:
           name: GearSF7000-windows-x64
           path: GearSF7000-*.zip
 
-  libretro:
-    name: Libretro (Linux x64)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Build
-        run: make -C platforms/libretro
-      - name: Package
-        run: zip "GearSF7000-${{ github.ref_name }}-libretro-linux-x64.zip" platforms/libretro/gearsc3000_libretro.so
-      - uses: actions/upload-artifact@v7
-        with:
-          name: GearSF7000-libretro-linux-x64
-          path: GearSF7000-*.zip
-
-  openemu:
-    name: OpenEmu (macOS arm64)
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Check out OpenEmu SDK
-        uses: actions/checkout@v6
-        with:
-          repository: OpenEmu/OpenEmu-SDK
-          ref: cae1da7aad25e7cdd8138578650f4e215652721a
-          path: OpenEmu-SDK
-      - name: Build OpenEmuBase
-        run: |
-          xcodebuild -project OpenEmu-SDK/OpenEmu-SDK.xcodeproj -scheme OpenEmuBase \
-            -configuration Release -derivedDataPath "$RUNNER_TEMP/OpenEmuSDK" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
-      - name: Build and package GearSC3000
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: |
-          VERSION="${VERSION#v}"
-          make -C platforms/openemu package \
-            SDK_ROOT="$GITHUB_WORKSPACE/OpenEmu-SDK" \
-            FRAMEWORKS="$RUNNER_TEMP/OpenEmuSDK/Build/Products/Release" \
-            ARCH=arm64 VERSION="$VERSION" RELEASE_TAG="$GITHUB_REF_NAME"
-      - name: Verify package
-        run: |
-          plutil -lint platforms/openemu/build/GearSC3000.oecoreplugin/Contents/Info.plist
-          codesign --verify --deep --strict platforms/openemu/build/GearSC3000.oecoreplugin
-          cd platforms/openemu/build
-          shasum -a 256 -c GearSC3000.oecoreplugin.zip.sha256
-      - uses: actions/upload-artifact@v7
-        with:
-          name: GearSF7000-openemu-arm64
-          path: |
-            platforms/openemu/build/GearSC3000.oecoreplugin.zip
-            platforms/openemu/build/GearSC3000.oecoreplugin.zip.sha256
-            platforms/openemu/build/gearsc3000-openemu-appcast.xml
-            platforms/openemu/build/gearsc3000.xml
-
   release:
     name: Release
-    needs: [linux, macos, windows, libretro, openemu]
+    needs: [windows]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
@@ -198,6 +58,7 @@ jobs:
           path: release
           merge-multiple: true
       - name: Create draft release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
