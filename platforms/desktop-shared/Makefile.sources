@@ -91,6 +91,9 @@ ifeq ($(ENABLE_MCP),1)
     SOURCES_CXX += \
         $(DESKTOP_SRC_DIR)/mcp/mcp_debug_adapter.cpp \
         $(DESKTOP_SRC_DIR)/mcp/mcp_tool_registry.cpp \
+        $(DESKTOP_SRC_DIR)/mcp/mcp_tool_definitions_core.cpp \
+        $(DESKTOP_SRC_DIR)/mcp/mcp_tool_definitions_debug.cpp \
+        $(DESKTOP_SRC_DIR)/mcp/mcp_tool_definitions_input.cpp \
         $(DESKTOP_SRC_DIR)/mcp/mcp_server.cpp
 endif
 

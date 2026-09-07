@@ -96,6 +96,9 @@
     <ClCompile Include="..\desktop-shared\mcp\mcp_server.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Disabled</Optimization>
     </ClCompile>
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_core.cpp" />
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_debug.cpp" />
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_input.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui_draw.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui_impl_sdl3.cpp" />
