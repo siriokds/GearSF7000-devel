@@ -169,62 +169,33 @@ void AddMcpToolDefinitionsInput(json& tools)
         }}
     });
 
+    json controller_macro_buttons = json::array({
+        "up", "down", "left", "right", "0", "1", "2", "3", "4", "5", "6",
+        "7", "8", "9", "asterisk", "*", "hash", "#", "left_button",
+        "right_button", "yellow", "red", "fire1", "fire2", "blue", "purple"
+    });
+    json controller_macro_item_properties = json::object();
+    controller_macro_item_properties["tap"] = {{"type", "string"}, {"description", "Tap button for one frame."}, {"enum", controller_macro_buttons}};
+    controller_macro_item_properties["press"] = {{"type", "string"}, {"description", "Press and hold button."}, {"enum", controller_macro_buttons}};
+    controller_macro_item_properties["release"] = {{"type", "string"}, {"description", "Release button."}, {"enum", controller_macro_buttons}};
+    controller_macro_item_properties["wait"] = {{"type", "integer"}, {"description", "Frames to wait."}, {"minimum", 1}, {"maximum", 1000}};
+    controller_macro_item_properties["player"] = {{"type", "integer"}, {"description", "Player override for this command, 1-2."}, {"minimum", 1}, {"maximum", 2}};
+
+    json controller_macro_properties = json::object();
+    controller_macro_properties["player"] = {{"type", "integer"}, {"description", "Default player number 1-2."}, {"minimum", 1}, {"maximum", 2}};
+    controller_macro_properties["commands"] = {
+        {"type", "array"},
+        {"description", "Ordered macro commands, e.g. [{\"tap\":\"1\"},{\"wait\":30},{\"press\":\"right\"},{\"wait\":60},{\"release\":\"right\"}]."},
+        {"minItems", 1},
+        {"items", {{"type", "object"}, {"properties", controller_macro_item_properties}, {"additionalProperties", false}}}
+    };
+
     tools.push_back({
         {"name", "controller_macro"},
         {"title", "Controller Macro"},
         {"description", "Run a frame-based controller macro. Commands are tap, press, release, and wait; player defaults to 1."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", false}, {"openWorldHint", false}}},
-        {"inputSchema", {
-            {"type", "object"},
-            {"properties", {
-                {"player", {
-                    {"type", "integer"},
-                    {"description", "Default player number 1-2."},
-                    {"minimum", 1},
-                    {"maximum", 2}
-                }},
-                {"commands", {
-                    {"type", "array"},
-                    {"description", "Ordered macro commands, e.g. [{\"tap\":\"1\"},{\"wait\":30},{\"press\":\"right\"},{\"wait\":60},{\"release\":\"right\"}]."},
-                    {"minItems", 1},
-                    {"items", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"tap", {
-                                {"type", "string"},
-                                {"description", "Tap button for one frame."},
-                                {"enum", json::array({"up", "down", "left", "right", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "asterisk", "*", "hash", "#", "left_button", "right_button", "yellow", "red", "fire1", "fire2", "blue", "purple"})}
-                            }},
-                            {"press", {
-                                {"type", "string"},
-                                {"description", "Press and hold button."},
-                                {"enum", json::array({"up", "down", "left", "right", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "asterisk", "*", "hash", "#", "left_button", "right_button", "yellow", "red", "fire1", "fire2", "blue", "purple"})}
-                            }},
-                            {"release", {
-                                {"type", "string"},
-                                {"description", "Release button."},
-                                {"enum", json::array({"up", "down", "left", "right", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "asterisk", "*", "hash", "#", "left_button", "right_button", "yellow", "red", "fire1", "fire2", "blue", "purple"})}
-                            }},
-                            {"wait", {
-                                {"type", "integer"},
-                                {"description", "Frames to wait."},
-                                {"minimum", 1},
-                                {"maximum", 1000}
-                            }},
-                            {"player", {
-                                {"type", "integer"},
-                                {"description", "Player override for this command, 1-2."},
-                                {"minimum", 1},
-                                {"maximum", 2}
-                            }}
-                        }},
-                        {"additionalProperties", false}
-                    }}
-                }}
-            }},
-            {"required", json::array({"commands"})},
-            {"additionalProperties", false}
-        }}
+        {"inputSchema", {{"type", "object"}, {"properties", controller_macro_properties}, {"required", json::array({"commands"})}, {"additionalProperties", false}}}
     });
 
     tools.push_back({
