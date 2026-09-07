@@ -1,0 +1,69 @@
+name: OpenEmu release
+
+on:
+  push:
+    tags:
+      - "openemu-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Check out OpenEmu SDK
+        uses: actions/checkout@v4
+        with:
+          repository: OpenEmu/OpenEmu-SDK
+          ref: cae1da7aad25e7cdd8138578650f4e215652721a
+          path: OpenEmu-SDK
+
+      - name: Build OpenEmuBase
+        run: |
+          xcodebuild \
+            -project OpenEmu-SDK/OpenEmu-SDK.xcodeproj \
+            -scheme OpenEmuBase \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/OpenEmuSDK" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            build
+
+      - name: Build and package GearSC3000
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#openemu-v}"
+          make -C platforms/openemu package \
+            SDK_ROOT="$GITHUB_WORKSPACE/OpenEmu-SDK" \
+            FRAMEWORKS="$RUNNER_TEMP/OpenEmuSDK/Build/Products/Release" \
+            ARCH=arm64 \
+            VERSION="$VERSION" \
+            RELEASE_TAG="$GITHUB_REF_NAME"
+
+      - name: Verify release files
+        run: |
+          plutil -lint platforms/openemu/build/GearSC3000.oecoreplugin/Contents/Info.plist
+          codesign --verify --deep --strict platforms/openemu/build/GearSC3000.oecoreplugin
+          test "$(file platforms/openemu/build/GearSC3000.oecoreplugin/Contents/MacOS/GearSC3000)" != ""
+          grep -q "arm64" < <(file platforms/openemu/build/GearSC3000.oecoreplugin/Contents/MacOS/GearSC3000)
+          ! otool -L platforms/openemu/build/GearSC3000.oecoreplugin/Contents/MacOS/GearSC3000 | grep -i SDL
+          cd platforms/openemu/build
+          shasum -a 256 -c GearSC3000.oecoreplugin.zip.sha256
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "GearSC3000 OpenEmu ${GITHUB_REF_NAME#openemu-v}" \
+            --generate-notes \
+            platforms/openemu/build/GearSC3000.oecoreplugin.zip \
+            platforms/openemu/build/GearSC3000.oecoreplugin.zip.sha256 \
+            platforms/openemu/build/gearsc3000-openemu-appcast.xml \
+            platforms/openemu/build/gearsc3000.xml

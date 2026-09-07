@@ -1,0 +1,5 @@
+#include "resource.h"
+
+IDR_SC3000_KEYBOARD_PNG RCDATA "..\\desktop-shared\\assets\\sc3000-keyboard-compact.png"
+IDR_MEMORY_CONDENSED_TTF RCDATA "..\\desktop-shared\\imgui\\fonts\\Iosevka\\GearSF7000Mono-Condensed.ttf"
+IDR_MEMORY_CONDENSED_LIGHT_TTF RCDATA "..\\desktop-shared\\imgui\\fonts\\Iosevka\\GearSF7000Mono-CondensedLight.ttf"

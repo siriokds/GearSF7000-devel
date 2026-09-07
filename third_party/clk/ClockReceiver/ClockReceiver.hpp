@@ -1,0 +1,211 @@
+//
+//  ClockReceiver.hpp
+//  Clock Signal
+//
+//  Created by Thomas Harte on 22/07/2017.
+//  Copyright 2017 Thomas Harte. All rights reserved.
+//
+
+#pragma once
+
+#include "ForceInline.hpp"
+
+#include <algorithm>
+#include <concepts>
+#include <cassert>
+#include <cstdint>
+#include <limits>
+
+constexpr bool is_power_of_two(const int v) {
+	return !(v & (v - 1));
+}
+
+/*!
+	Provides a class that wraps a plain int, providing most of the basic arithmetic and
+	Boolean operators, but forcing callers and receivers to be explicit as to usage.
+*/
+template <int ClockDenominator>
+requires (is_power_of_two(ClockDenominator))
+class Clocks {
+public:
+	static constexpr int Denominator = ClockDenominator;
+	using IntType = int64_t;
+
+	constexpr Clocks(const IntType rhs) noexcept : length_(rhs) {}
+	constexpr Clocks() noexcept : length_(0) {}
+
+	// Assignments are implemented anywhere they can't lose data.
+	template <typename SourceClocks>
+	requires (SourceClocks::Denominator <= Denominator)
+	constexpr Clocks(const SourceClocks rhs) noexcept {
+		*this = rhs.template reduce<Clocks>();
+	}
+
+	Clocks operator +=(const Clocks rhs)	{	length_ += rhs.length_;	return *this;	}
+	Clocks operator -=(const Clocks rhs)	{	length_ -= rhs.length_;	return *this;	}
+	Clocks operator ++() 					{	++length_;	return *this;	}
+	Clocks operator --()					{	--length_;	return *this;	}
+
+	Clocks operator ++(int) {
+		const Clocks result = *this;
+		++length_;
+		return result;
+	}
+	Clocks operator --(int) {
+		const Clocks result = *this;
+		--length_;
+		return result;
+	}
+
+	Clocks operator *=(const Clocks rhs) 	{	*this = Clocks(length_ * rhs.length_);	return *this;	}
+	Clocks operator /=(const Clocks rhs) 	{	*this = Clocks(length_ / rhs.length_);	return *this;	}
+	Clocks operator %=(const Clocks rhs) 	{	*this = Clocks(length_ % rhs.length_);	return *this;	}
+	Clocks operator &=(const Clocks rhs) 	{	*this = Clocks(length_ & rhs.length_);	return *this;	}
+
+	constexpr Clocks operator +(const Clocks rhs) const		{	return Clocks(length_ + rhs.length_);	}
+	constexpr Clocks operator -(const Clocks rhs) const		{	return Clocks(length_ - rhs.length_);	}
+
+	constexpr Clocks operator *(const Clocks rhs) const		{	return Clocks(length_ * rhs.length_);	}
+	constexpr Clocks operator /(const Clocks rhs) const		{	return Clocks(length_ / rhs.length_);	}
+
+	constexpr Clocks operator %(const Clocks rhs) const		{	return Clocks(length_ % rhs.length_);	}
+	constexpr Clocks operator &(const Clocks rhs) const		{	return Clocks(length_ & rhs.length_);	}
+
+	constexpr Clocks operator -() const						{	return Clocks(-length_);				}
+
+	auto operator <=>(const Clocks &) const = default;
+
+	constexpr bool operator !() const					{	return !length_;				}
+	// bool operator () is not supported because it offers an implicit cast to int,
+	// which is prone silently to permit misuse.
+
+	/// @returns The underlying int, converted to a numeric type of your choosing, clamped to that type's range.
+	template <typename Type = IntType>
+	requires std::integral<Type> || std::floating_point<Type>
+	constexpr Type as() const {
+		// TODO: adopt std::saturate_cast if/when this is a C++26 project.
+
+		const IntType value = get();
+		if constexpr (std::is_floating_point_v<Type>) {
+			// Floating point: the caller takes responsibility for loss of precision;
+			// acceptable range can be assumed.
+			return Type(value);
+		} else {
+			assert(std::is_signed_v<IntType>);
+
+			if constexpr (std::is_signed_v<Type>) {
+				// Casting to another signed type; either it's large enough that range can't be exceeded,
+				// or it's a lesser range that can safely be clamped to.
+				if constexpr (sizeof(Type) >= sizeof(IntType)) {
+					return Type(value);
+				} else {
+					return Type(std::clamp<IntType>(value, IntType(std::numeric_limits<Type>::min()), IntType(std::numeric_limits<Type>::max())));
+				}
+			} else {
+				// Casting to an unsigned type: negative numbers map straight to 0, everything positive
+				// either unambiguously fits, or can be subject to an in-IntType min.
+				if(value <= 0) {
+					return 0;
+				}
+				if constexpr (sizeof(Type) >= sizeof(IntType)) {
+					return Type(value);
+				} else {
+					return Type(std::min<IntType>(value, IntType(std::numeric_limits<Type>::max())));
+				}
+			}
+		}
+	}
+
+	/// @returns The underlying int, in its native form, potentially scaled upward.
+	template <int GetDenominator = Denominator>
+	requires (GetDenominator >= Denominator)
+	constexpr IntType get() const {
+		return length_ << (GetDenominator - Denominator);
+	}
+
+	/// @returns This value, optionally converted to another time base. Potentially loses precision.
+	template <typename TargetClocks>
+	constexpr TargetClocks reduce() const {
+		if constexpr (TargetClocks::Denominator >= Denominator) {
+			return TargetClocks(length_ << (TargetClocks::Denominator - Denominator));
+		} else {
+			return TargetClocks(length_ >> (Denominator - TargetClocks::Denominator));
+		}
+	}
+
+	// operator int() is deliberately not provided, to avoid accidental subtitution of
+	// classes that use this template.
+
+	/*!
+		Performs the net division necessary to: (i) convert from Clocks to DestinationClocks; and (ii) further to divide by divider.
+		Returns the number of DestinationClocks. Keeps here any remainder after subtracting the returned amount.
+
+		So e.g. `HalfCycles.divide<Cycles>(n)` with n = 1 will return a conversion from HalfCycles to Cycles for the same duration.
+		Wth n = 2 will return a length in Cycles that is half the duration. Etc.
+	*/
+	template <typename DestinationClocks = Clocks>
+	requires (DestinationClocks::Denominator <= Denominator)
+	DestinationClocks divide(const Clocks divider) {
+		// Apply the clock division.
+		const auto native_period = length_ / divider.length_;
+		length_ %= divider.length_;
+
+		// Also accumulate some potential wastage if there's a type conversion.
+		static constexpr auto Shift = Denominator - DestinationClocks::Denominator;
+		if constexpr (Shift != 0) {
+			const auto further_residue = native_period & ((1 << Shift) - 1);
+			length_ += further_residue * divider.length_;
+			// Logic: whatever part of native period isn't going to be converted is quantity lost after
+			// applying the divider. So unapply it to get back to what wasn't extracted from the original.
+		}
+
+		return DestinationClocks(native_period >> Shift);
+	}
+
+	/*!
+		Extracts a whole number of `DestinationClock`s from `*this`.
+		Leaves the residue here.
+	*/
+	template <typename DestinationClocks = Clocks>
+	DestinationClocks flush() {
+		if constexpr (DestinationClocks::Denominator >= Denominator) {
+			const auto result = DestinationClocks(get<DestinationClocks::Denominator>());
+			length_ = 0;
+			return result;
+		} else {
+			static constexpr int Shift = Denominator - DestinationClocks::Denominator;
+			static constexpr IntType ResidueMask = (1 << Shift) - 1;
+			const auto result = DestinationClocks(length_ >> Shift);
+			length_ &= ResidueMask;
+			return result;
+		}
+	}
+
+	static Clocks max() { return Clocks(std::numeric_limits<IntType>::max()); }
+	static Clocks min() { return Clocks(std::numeric_limits<IntType>::min()); }
+
+private:
+	IntType length_;
+};
+
+/// Reasons Clocks into being a count of querter cycles, building half- and whole-cycles from there.
+using Cycles = Clocks<1>;
+using HalfCycles = Clocks<2>;
+using QuarterCycles = Clocks<4>;
+
+/*!
+	Provides automated boilerplate for connecting an owner that works in one clock base to a receiver that works in another.
+*/
+template <typename TargetT, typename SourceClocks, typename DestinationClocks>
+class ConvertedClockReceiver: public TargetT {
+public:
+	using TargetT::TargetT;
+
+	void run_for(const SourceClocks duration) {
+		source_ += duration;
+		TargetT::run_for(source_.template flush<DestinationClocks>());
+	}
+
+private:
+	SourceClocks source_;
+};

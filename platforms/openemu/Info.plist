@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>GearSC3000</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.gearsc3000.GearSC3000</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>GearSC3000</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSPrincipalClass</key>
+    <string>OEGameCoreController</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUFeedURL</key>
+    <string>https://github.com/siriokds/GearSF7000-devel/releases/latest/download/gearsc3000-openemu-appcast.xml</string>
+    <key>OEGameCoreClass</key>
+    <string>GearSC3000GameCore</string>
+    <key>OEGameCorePlayerCount</key>
+    <integer>2</integer>
+    <key>OEGameCoreOptions</key>
+    <dict>
+        <key>openemu.system.sg1000</key>
+        <dict>
+            <key>OEGameCoreRewindBufferSeconds</key>
+            <integer>60</integer>
+            <key>OEGameCoreRewindInterval</key>
+            <integer>1</integer>
+            <key>OEGameCoreSupportsRewinding</key>
+            <true/>
+            <key>OEGameCoreSupportsDisplayModeChange</key>
+            <true/>
+        </dict>
+    </dict>
+    <key>OEProjectURL</key>
+    <string>https://github.com/siriokds/GearSF7000-devel</string>
+    <key>OESystemIdentifiers</key>
+    <array>
+        <string>openemu.system.sg1000</string>
+    </array>
+</dict>
+</plist>

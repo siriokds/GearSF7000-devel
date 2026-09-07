@@ -1,0 +1,149 @@
+SRC_DIR = ../../src
+DESKTOP_SRC_DIR=../desktop-shared
+AUDIO_SRC_DIR=../audio-shared
+CLK_SRC_DIR=../../third_party/clk
+
+SOURCES_C := \
+    $(SRC_DIR)/miniz/miniz.c \
+
+SOURCES_CXX := \
+    $(SRC_DIR)/build_info.cpp \
+    $(DESKTOP_SRC_DIR)/main.cpp \
+    $(DESKTOP_SRC_DIR)/emu.cpp \
+    $(DESKTOP_SRC_DIR)/gui.cpp \
+    $(DESKTOP_SRC_DIR)/application.cpp \
+    $(DESKTOP_SRC_DIR)/application_headless.cpp \
+    $(DESKTOP_SRC_DIR)/config.cpp \
+    $(DESKTOP_SRC_DIR)/crt_signal_dump.cpp \
+    $(DESKTOP_SRC_DIR)/crt_signal_capture_loader.cpp \
+    $(DESKTOP_SRC_DIR)/renderer.cpp \
+    $(DESKTOP_SRC_DIR)/rewind.cpp \
+    $(DESKTOP_SRC_DIR)/scheduler.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/imgui_impl_sdl3.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/imgui_impl_sdlgpu3.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/imgui.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/imgui_draw.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/imgui_widgets.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/imgui_tables.cpp \
+    $(DESKTOP_SRC_DIR)/imgui/memory_editor.cpp \
+    $(DESKTOP_SRC_DIR)/implot/implot.cpp \
+    $(DESKTOP_SRC_DIR)/implot/implot_items.cpp \
+    $(AUDIO_SRC_DIR)/sound_queue.cpp \
+    $(SRC_DIR)/Audio.cpp \
+    $(SRC_DIR)/COM8251A.cpp \
+    $(SRC_DIR)/BasicProgramLoader.cpp \
+    $(SRC_DIR)/Cartridge.cpp \
+    $(SRC_DIR)/MachineIOPorts.cpp \
+    $(SRC_DIR)/cpu/clk/CLKZ80Processor.cpp \
+    $(SRC_DIR)/cpu/clk/CLKZ80StateAccess.cpp \
+    $(SRC_DIR)/cpu/clk/GearSF7000ClockDomains.cpp \
+    $(SRC_DIR)/cpu/clk/GearSF7000BusHandler.cpp \
+    $(SRC_DIR)/DebugEvents.cpp \
+    $(SRC_DIR)/DiagnosticLog.cpp \
+    $(SRC_DIR)/GearSF7000Core.cpp \
+    $(SRC_DIR)/Input.cpp \
+    $(SRC_DIR)/Led.cpp \
+    $(SRC_DIR)/Memory.cpp \
+    $(SRC_DIR)/SystemClock.cpp \
+    $(SRC_DIR)/TMS9918CpuAccessTiming.cpp \
+    $(SRC_DIR)/TMS9918VramSlotSchedule.cpp \
+    $(SRC_DIR)/TMS9918VramSequencer.cpp \
+    $(SRC_DIR)/Video.cpp \
+    $(SRC_DIR)/WAVUtils.cpp \
+    $(SRC_DIR)/sk1100.cpp \
+    $(SRC_DIR)/audio/Blip_Buffer.cpp \
+    $(SRC_DIR)/audio/Effects_Buffer.cpp \
+    $(SRC_DIR)/audio/Sms_Apu.cpp \
+    $(SRC_DIR)/audio/Multi_Buffer.cpp \
+    $(CLK_SRC_DIR)/Processors/Z80/Implementation/PartialMachineCycle.cpp \
+    $(CLK_SRC_DIR)/Processors/Z80/Implementation/Z80Base.cpp \
+    $(CLK_SRC_DIR)/Processors/Z80/Implementation/Z80Storage.cpp \
+
+ENABLE_RECORDER ?= 1
+ifeq ($(ENABLE_RECORDER),1)
+    SOURCES_CXX += \
+        $(SRC_DIR)/VgmRecorder.cpp \
+        $(SRC_DIR)/WavRecorder.cpp
+endif
+
+# Debugger and MCP are a product profile, not a Release/Debug compiler
+# distinction. The reduced GearSC3000 product links a tiny compatibility shim
+# for the desktop shell and does not compile the debugger implementation or
+# disassembler at all.
+ENABLE_DEBUG_TOOLS ?= 1
+ifeq ($(ENABLE_DEBUG_TOOLS),1)
+    SOURCES_CXX += \
+        $(DESKTOP_SRC_DIR)/gui_debug.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_memory.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_mem_import.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_audio.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_basic_typer.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_disassembler_export.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_rom_inspector.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_rewind.cpp \
+        $(SRC_DIR)/Z80Disassembler.cpp
+else
+    SOURCES_CXX += $(DESKTOP_SRC_DIR)/gui_debug_stub.cpp
+endif
+
+ENABLE_MCP ?= 0
+ifeq ($(ENABLE_MCP),1)
+    SOURCES_CXX += \
+        $(DESKTOP_SRC_DIR)/mcp/mcp_debug_adapter.cpp \
+        $(DESKTOP_SRC_DIR)/mcp/mcp_tool_registry.cpp \
+        $(DESKTOP_SRC_DIR)/mcp/mcp_server.cpp
+endif
+
+# The AY expansion is optional. Defined here rather than in Makefile.common
+# because that file is included after this one, and the source list has to know.
+# Makefile.common turns the same variable into -DGEARSF7000_ENABLE_AY. Keeping
+# the source out of the build when disabled avoids the situation AY8910.cpp was
+# in for a long time: compiled into every binary while entirely disconnected.
+ENABLE_AY ?= 1
+ifeq ($(ENABLE_AY),1)
+    SOURCES_CXX += $(SRC_DIR)/audio/Ay_Apu.cpp
+endif
+
+# The SF-7000 floppy drive (FDC + disk image formats + its own disc explorer
+# debug window) is optional, same reasoning as ENABLE_AY above. Off by default
+# only for a future cartridge-only build (e.g. libretro); every one of this
+# project's own build targets keeps it at the default of 1.
+ENABLE_SF7000 ?= 1
+ifeq ($(ENABLE_SF7000),1)
+    SOURCES_CXX += \
+        $(SRC_DIR)/NEC765.cpp \
+        $(SRC_DIR)/SF7000.cpp \
+        $(SRC_DIR)/Disk.cpp \
+        $(SRC_DIR)/DiskLayout.cpp \
+        $(SRC_DIR)/EDSKLoader.cpp \
+        $(SRC_DIR)/HFELoader.cpp \
+        $(SRC_DIR)/DS7Format.cpp \
+        $(SRC_DIR)/sf7fs/SF7Disc.cpp \
+        $(SRC_DIR)/WavChannel.cpp \
+        $(SRC_DIR)/WavPlayer.cpp \
+        $(SRC_DIR)/WavSample.cpp \
+        $(SRC_DIR)/WavSampleManager.cpp
+    ifeq ($(ENABLE_DEBUG_TOOLS),1)
+        SOURCES_CXX += $(DESKTOP_SRC_DIR)/gui_debug_disc_explorer.cpp
+    endif
+endif
+
+# The SR-1000 cassette recorder, same pattern.
+ENABLE_SR1000 ?= 1
+ifeq ($(ENABLE_SR1000),1)
+    SOURCES_CXX += \
+        $(SRC_DIR)/SR1000.cpp \
+        $(SRC_DIR)/SR1000_Speaker.cpp \
+        $(SRC_DIR)/SegaBasicBitTape.cpp \
+        $(SRC_DIR)/SegaBasicWavTape.cpp \
+        $(SRC_DIR)/Tape.cpp \
+        $(SRC_DIR)/TapeMotor.cpp \
+        $(SRC_DIR)/SPITapePlayer.cpp
+endif
+
+# The SP-400 printer, same pattern. Independent of SF7000/SR1000: it hangs off
+# the base SC-3000 PPI, not off either of the other two.
+ENABLE_SP400 ?= 1
+ifeq ($(ENABLE_SP400),1)
+    SOURCES_CXX += $(SRC_DIR)/SP400.cpp
+endif

@@ -1,0 +1,33 @@
+SOURCES_C := $(SOURCE_DIR)/miniz/miniz.c
+
+SOURCES_CXX := $(CORE_DIR)/libretro.cpp \
+               $(SOURCE_DIR)/build_info.cpp \
+               $(SOURCE_DIR)/Audio.cpp \
+               $(SOURCE_DIR)/COM8251A.cpp \
+               $(SOURCE_DIR)/BasicProgramLoader.cpp \
+               $(SOURCE_DIR)/Cartridge.cpp \
+               $(SOURCE_DIR)/MachineIOPorts.cpp \
+               $(SOURCE_DIR)/cpu/clk/CLKZ80Processor.cpp \
+               $(SOURCE_DIR)/cpu/clk/CLKZ80StateAccess.cpp \
+               $(SOURCE_DIR)/cpu/clk/GearSF7000ClockDomains.cpp \
+               $(SOURCE_DIR)/cpu/clk/GearSF7000BusHandler.cpp \
+               $(SOURCE_DIR)/DebugEvents.cpp \
+               $(SOURCE_DIR)/DiagnosticLog.cpp \
+               $(SOURCE_DIR)/GearSF7000Core.cpp \
+               $(SOURCE_DIR)/Input.cpp \
+               $(SOURCE_DIR)/Led.cpp \
+               $(SOURCE_DIR)/Memory.cpp \
+               $(SOURCE_DIR)/SystemClock.cpp \
+               $(SOURCE_DIR)/TMS9918CpuAccessTiming.cpp \
+               $(SOURCE_DIR)/TMS9918VramSlotSchedule.cpp \
+               $(SOURCE_DIR)/TMS9918VramSequencer.cpp \
+               $(SOURCE_DIR)/Video.cpp \
+               $(SOURCE_DIR)/WAVUtils.cpp \
+               $(SOURCE_DIR)/sk1100.cpp \
+               $(SOURCE_DIR)/audio/Blip_Buffer.cpp \
+               $(SOURCE_DIR)/audio/Effects_Buffer.cpp \
+               $(SOURCE_DIR)/audio/Sms_Apu.cpp \
+               $(SOURCE_DIR)/audio/Multi_Buffer.cpp \
+               $(SOURCE_DIR)/../third_party/clk/Processors/Z80/Implementation/PartialMachineCycle.cpp \
+               $(SOURCE_DIR)/../third_party/clk/Processors/Z80/Implementation/Z80Base.cpp \
+               $(SOURCE_DIR)/../third_party/clk/Processors/Z80/Implementation/Z80Storage.cpp

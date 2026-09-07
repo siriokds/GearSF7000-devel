@@ -1,0 +1,10 @@
+  <!-- GearSC3000: native Apple Silicon SG-1000 core -->
+  <core
+    id="org.gearsc3000.GearSC3000"
+    name="GearSC3000"
+    appcastURL="https://raw.githubusercontent.com/OpenEmu-Silicon/OpenEmu-Silicon/main/Appcasts/gearsc3000.xml">
+    <description>Cycle-accurate SG-1000 emulator</description>
+    <systems>
+      <system id="openemu.system.sg1000">SG-1000</system>
+    </systems>
+  </core>

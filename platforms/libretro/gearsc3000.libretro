@@ -1,0 +1,11 @@
+[Libretro]
+Type=Emulator
+Version=0.1.0
+Name=GearSC3000
+Module=gearsc3000_libretro.so
+LibretroVersion=1
+Authors=Ignacio Sanchez Gines;Saverio Russo;
+License=GPL-3.0+;
+
+[Platform:SC3000]
+MimeType=application/x-sc3000-rom;

@@ -1,0 +1,229 @@
+define HEADER
+   ____                          _
+  / ___| ___  __ _ _ __ ___ ___ | | ___  ___ ___
+ | |  _ / _ \\/ _` | '__/ __/ _ \\| |/ _ \\/ __/ _ \\
+ | |_| |  __/ (_| | | | (_| (_) | |  __/ (_| (_) |
+  \\____|\\___|\\__,_|_|  \\___\\___/|_|\\___|\\___\\___/
+
+  ** Building for $(PLATFORM) platform **
+  ** Git version: $(GIT_VERSION) **
+
+endef
+export HEADER
+
+.DEFAULT_GOAL := all
+
+TARGET_NAME = gearsf7000
+GIT_VERSION := "$(shell git describe --abbrev=7 --dirty --always --tags)"
+UNAME_S := $(shell uname -s)
+PLATFORM = "undefined"
+
+DEPFLAGS = -MMD -MP
+
+USE_CLANG ?= 0
+ifeq ($(USE_CLANG), 1)
+    CXX = clang++
+    CC = clang
+else
+    CXX = g++
+    CC = gcc
+endif
+
+CPPFLAGS += -I../ -I../../ -I../../src -I../../third_party/clk
+# ImPlot lives in its own directory rather than inside imgui/, and its
+# quoted #include "imgui.h" only resolves via same-directory lookup for
+# files that are actually in imgui/ - it needs this path explicitly.
+CPPFLAGS += -I$(DESKTOP_SRC_DIR)/imgui
+CPPFLAGS += -Wall -Wextra -Wformat  -DEMULATOR_BUILD=\"$(GIT_VERSION)\"
+
+# Keep the audio rate selectable for SDL, the emulator core and tape synth.
+# Visual Studio keeps using the 48 kHz default from definitions.h unless it
+# explicitly defines GC_AUDIO_SAMPLE_RATE in the project settings.
+AUDIO_SAMPLE_RATE ?= 48000
+CPPFLAGS += -DGC_AUDIO_SAMPLE_RATE=$(AUDIO_SAMPLE_RATE)
+
+# Product identity is independent from the emulated-device feature switches.
+# Full builds remain GearSF7000; cartridge-computer targets opt into
+# GearSC3000 explicitly so the executable and its runtime title agree.
+PRODUCT_SC3000 ?= 0
+CPPFLAGS += -DGEARSF7000_PRODUCT_SC3000=$(PRODUCT_SC3000)
+
+ENABLE_DEBUG_TOOLS ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_DEBUG_TOOLS=$(ENABLE_DEBUG_TOOLS)
+ifeq ($(ENABLE_DEBUG_TOOLS),0)
+CPPFLAGS += -DGEARSF7000_DISABLE_DISASSEMBLER
+endif
+
+# Frame history and media recording remain available in the full application.
+# Distribution-oriented computer builds can remove every recording entry point
+# and keep frame-history capture off from startup.
+ENABLE_RECORDER ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_RECORDER=$(ENABLE_RECORDER)
+
+# MCP is an opt-in developer feature. The regular desktop application keeps
+# the server completely disabled unless an explicit MCP build is requested.
+ENABLE_MCP ?= 0
+CPPFLAGS += -DGEARSF7000_ENABLE_MCP=$(ENABLE_MCP)
+
+# Optional visual companion for scanlines containing more than the four
+# sprites the TMS9918 itself selects. Defining SPRITE_EXPANDER adds both the
+# implementation and its runtime switch; leaving it undefined removes the
+# API, configuration and menu entry completely.
+ENABLE_SPRITE_EXPANDER ?= 1
+ifeq ($(ENABLE_SPRITE_EXPANDER),1)
+CPPFLAGS += -DSPRITE_EXPANDER
+endif
+
+# AY-3-8910 / YM2149 on an SGM-style expansion. Desktop only - the libretro
+# core neither compiles Ay_Apu.cpp nor defines this, so the #if there sees 0.
+# It changes sizeof(Audio), so it has to reach every translation unit that
+# includes Audio.h: set it here, never per file, or you get a silent ODR
+# violation. Build with ENABLE_AY=0 to leave the chip out entirely.
+ENABLE_AY ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_AY=$(ENABLE_AY)
+
+# SF-7000 floppy drive, SR-1000 cassette recorder, SP-400 printer - each
+# independently optional, same reasoning and mechanism as ENABLE_AY above.
+# Matched against Makefile.sources, which excludes each cluster's source
+# files from the build entirely when its flag is 0.
+ENABLE_SF7000 ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_SF7000=$(ENABLE_SF7000)
+ENABLE_SR1000 ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_SR1000=$(ENABLE_SR1000)
+ENABLE_SP400 ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_SP400=$(ENABLE_SP400)
+
+# Audio backend. SDL3 Audio tested clean on macOS (tape speaker included, the
+# thing CoreAudio was originally added to fix) - default it on every desktop
+# platform for now, CoreAudio and all, kept intact behind this same flag, not
+# deleted. Force AUDIO_COREAUDIO=1 on macOS to go back to it, or to A/B the
+# two again.
+AUDIO_COREAUDIO ?= 0
+CPPFLAGS += -DGEARSF7000_AUDIO_COREAUDIO=$(AUDIO_COREAUDIO)
+
+# C++20 is the desktop baseline on macOS, Linux, BSD and MinGW.  Besides
+# keeping these builds aligned with Visual Studio, this is required by the
+# cycle-accurate components planned for the emulator core.
+CXXFLAGS += -std=c++20
+CFLAGS += -std=c99
+
+DEBUG ?= 0
+ifeq ($(DEBUG), 1)
+    BUILD_CONFIG = Debug
+    CPPFLAGS +=-DDEBUG -g3
+else
+    BUILD_CONFIG = Release
+    CPPFLAGS +=-DNDEBUG -O3 -flto=auto
+    LDFLAGS += -O3 -flto=auto
+endif
+
+# Objects belong to the platform Makefile that produced them and to one named
+# product profile. Keeping them beside the sources allowed, for example, a
+# Linux `make computer` (MCP/AY/debugger off) to poison the next macOS full
+# link. The platform directory is already part of this path because make runs
+# there; BUILD_PROFILE separates the full and cartridge-computer products and
+# BUILD_CONFIG separates compiler Debug/Release output.
+BUILD_PROFILE ?= full
+BUILD_SIGNATURE = CXX=$(CXX);CC=$(CC);DEBUG=$(DEBUG);SANITIZE=$(SANITIZE);AUDIO_SAMPLE_RATE=$(AUDIO_SAMPLE_RATE);PRODUCT_SC3000=$(PRODUCT_SC3000);ENABLE_DEBUG_TOOLS=$(ENABLE_DEBUG_TOOLS);ENABLE_RECORDER=$(ENABLE_RECORDER);ENABLE_MCP=$(ENABLE_MCP);ENABLE_SPRITE_EXPANDER=$(ENABLE_SPRITE_EXPANDER);ENABLE_AY=$(ENABLE_AY);ENABLE_SF7000=$(ENABLE_SF7000);ENABLE_SR1000=$(ENABLE_SR1000);ENABLE_SP400=$(ENABLE_SP400);AUDIO_COREAUDIO=$(AUDIO_COREAUDIO);CPU=CLK;SDL=3;RENDERER=SDL_GPU;DEPS=MMD
+# POSIX cksum is available on every host served by these Unix Makefiles. The
+# opaque leaf keeps paths short while the adjacent stamp records the complete
+# human-readable signature for diagnosis.
+BUILD_VARIANT := $(shell printf '%s' '$(BUILD_SIGNATURE)' | cksum | awk '{print $$1}')
+OBJ_DIR := build/$(BUILD_PROFILE)/$(BUILD_CONFIG)/$(BUILD_VARIANT)
+
+# Sources reach the repository root through two different relative prefixes.
+# Normalize both into a stable tree below OBJ_DIR, preserving subdirectories
+# so identically named files cannot collide.
+source_repo_path = $(if $(filter ../../%,$(1)),$(patsubst ../../%,%,$(1)),platforms/$(patsubst ../%,%,$(1)))
+source_object = $(OBJ_DIR)/$(basename $(call source_repo_path,$(1))).o
+OBJECTS := $(foreach source,$(SOURCES_C) $(SOURCES_CXX) $(SOURCES_MM),$(call source_object,$(source)))
+DEPENDENCIES := $(OBJECTS:.o=.d)
+
+SANITIZE ?= 0
+ifeq ($(SANITIZE), 1)
+    # Let the selected compiler link its own AddressSanitizer runtime.  A
+    # hard-coded -lasan only works with some Linux toolchains, not Apple clang.
+    CPPFLAGS += -fsanitize=address -fno-omit-frame-pointer
+    LDFLAGS += -fsanitize=address
+endif
+
+ifeq ($(UNAME_S), Linux)
+    PLATFORM = "Linux"
+    LDFLAGS += -ldl -pthread `pkg-config --libs sdl3`
+    CXXFLAGS += -pthread
+    CPPFLAGS += `pkg-config --cflags sdl3`
+    TARGET := $(TARGET_NAME)
+else ifeq ($(UNAME_S), Darwin)
+    PLATFORM = "macOS"
+    ifeq ($(AUDIO_COREAUDIO), 1)
+        LDFLAGS += -framework AudioToolbox -framework CoreAudio
+    endif
+    LDFLAGS += `pkg-config --libs sdl3`
+    CPPFLAGS += `pkg-config --cflags sdl3`
+    CPPFLAGS += -I/opt/local/include
+    TARGET := $(TARGET_NAME)
+else
+    PLATFORM = "Generic Unix-like/BSD"
+    LDFLAGS += `pkg-config --libs sdl3`
+    CPPFLAGS += `pkg-config --cflags sdl3`
+    TARGET := $(TARGET_NAME)
+endif
+
+# Make does not normally know that command-line feature variables alter every
+# compilation command. The signature selects a distinct object directory, and
+# its stamp documents exactly what produced that directory.
+BUILD_CONFIG_FILE := $(OBJ_DIR)/.gearsf7000-build-config
+
+$(BUILD_CONFIG_FILE):
+	@mkdir -p $(@D)
+	@printf '%s\n' '$(BUILD_SIGNATURE)' > $@
+
+all: header $(TARGET)
+	@echo Build complete for $(PLATFORM) \($(BUILD_CONFIG)\)
+
+$(TARGET): $(OBJECTS)
+	$(CXX) -o $@ $(OBJECTS) $(LDFLAGS)
+
+# The build stamp has to be rebuilt every time, or it reports when this one
+# file last happened to need recompiling instead of when the binary was made.
+# That is not hypothetical: a binary built after a commit kept announcing the
+# commit before it, because nothing had touched the file carrying the macro.
+# One small translation unit per build is the price of a version string that
+# is never a guess.
+.PHONY: force_build_info
+force_build_info:
+
+$(call source_object,$(SRC_DIR)/build_info.cpp): force_build_info
+
+define compile_mm_rule
+$(call source_object,$(1)): $(1) $(BUILD_CONFIG_FILE)
+	@mkdir -p $$(@D)
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) $$(DEPFLAGS) -c -o $$@ $$<
+endef
+
+define compile_cxx_rule
+$(call source_object,$(1)): $(1) $(BUILD_CONFIG_FILE)
+	@mkdir -p $$(@D)
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) $$(DEPFLAGS) -c -o $$@ $$<
+endef
+
+define compile_c_rule
+$(call source_object,$(1)): $(1) $(BUILD_CONFIG_FILE)
+	@mkdir -p $$(@D)
+	$$(CC) $$(CPPFLAGS) $$(CFLAGS) $$(DEPFLAGS) -c -o $$@ $$<
+endef
+
+$(foreach source,$(SOURCES_MM),$(eval $(call compile_mm_rule,$(source))))
+$(foreach source,$(SOURCES_CXX),$(eval $(call compile_cxx_rule,$(source))))
+$(foreach source,$(SOURCES_C),$(eval $(call compile_c_rule,$(source))))
+
+clean:
+	rm -rf build
+	rm -f gearsf7000 gearsc3000 .gearsf7000-build-config
+
+header:
+	@echo "$$HEADER"
+
+# Compiler-generated dependency files keep incremental builds ABI-safe when
+# a class layout or an inline implementation changes in a header.
+-include $(DEPENDENCIES)
