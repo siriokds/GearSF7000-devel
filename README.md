@@ -33,6 +33,8 @@ understanding precisely what they are doing.
   the four undocumented combinations produced by the hardware mode bits.
 - **Real media workflows:** cartridge and ZIP images, multiple floppy formats,
   SegaDOS filesystem inspection, WAV tapes and Sega BASIC program transfer.
+- **ASC16L games:** ASCII 16 Lite cartridges with one switchable 16 KiB ROM
+  page and 16 KiB of cartridge RAM.
 - **Machine audio beyond the PSG:** SN76489, optional AY-3-8910/YM2149,
   cassette-speaker monitoring, floppy activity audio and WAV/VGM recording.
 - **Time-travel development:** save states, a frame recorder, rewind,
@@ -221,6 +223,37 @@ Supported media include:
   mappings.
 - **Modern controllers** through the bundled
   [SDL_GameControllerDB](https://github.com/gabomdq/SDL_GameControllerDB).
+
+### Cartridge mappers and BASIC memory profiles
+
+The **Emulator > Mapper** menu provides **Auto (detect)** and **Manual** modes.
+Automatic selection uses known CRC information and mapper signatures, with a
+configurable fallback chosen from the same mapper list. Manual mode exposes
+these configurations exactly as shown in the application:
+
+| Menu entry | Memory configuration |
+| --- | --- |
+| `Flat 64K (RAM)` | One writable 64 KiB address space; the loaded image is copied directly into RAM. |
+| `ASC16L` | 32 KiB fixed ROM, one switchable 16 KiB ROM page and 16 KiB RAM. |
+| `SC-3000 (32K RAM)` | ROM at `$0000-$7FFF` and 32 KiB RAM at `$8000-$FFFF`. |
+| `SC-3000 (16K cart + 2K internal)` | ROM at `$0000-$7FFF`, 16 KiB cartridge RAM at `$8000-$BFFF` and mirrored 2 KiB internal RAM at `$C000-$FFFF`. |
+| `SC-3000 (2K RAM)` | ROM at `$0000-$7FFF` and mirrored 2 KiB internal RAM above it. |
+| `SG-1000 (16K RAM)` | ROM at `$0000-$BFFF` and 16 KiB RAM at `$C000-$FFFF`. |
+| `SG-1000 (1K RAM)` | ROM at `$0000-$BFFF` and mirrored 1 KiB RAM at `$C000-$FFFF`. |
+
+These profiles cover cartridge games as well as the memory arrangements used
+by the supported BASIC environments.
+
+Games using the **ASC16L (ASCII 16 Lite)** mapper can be launched directly.
+Its switchable page occupies `$8000-$BFFF`, while its 16 KiB RAM occupies
+`$C000-$FFFF`. Bank writes select the active 16 KiB page and wrap across every
+complete bank present in the image, including ROM sizes whose bank count is
+not a power of two.
+
+Automatic selection recognises the `AS16` signature at ROM offset `$3FF0`.
+ASC16L can also be selected explicitly for images without the signature. The
+selected bank is visible to the debugger and is preserved in save states and
+recorder snapshots.
 
 ## Desktop emulator
 
