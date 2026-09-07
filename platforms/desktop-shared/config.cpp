@@ -249,6 +249,9 @@ void config_read(void)
     config_debug.ui_density = read_int("Debug", "UiDensity", 0);
     if (config_debug.ui_density < 0 || config_debug.ui_density > 2)
         config_debug.ui_density = 0;
+    config_debug.ui_scale = read_float("Debug", "UiScale", 1.0f);
+    if (config_debug.ui_scale < 0.75f || config_debug.ui_scale > 2.0f)
+        config_debug.ui_scale = 1.0f;
 #if defined(__APPLE__)
     // Retina displays retain the 1:1 pixel geometry of the condensed grid;
     // Light has proved the most comfortable default for long debug sessions.
@@ -593,6 +596,7 @@ void config_write(void)
     write_bool("Debug", "DisBank", config_debug.dis_show_bank);
     write_int("Debug", "FontSize", config_debug.font_size);
     write_int("Debug", "UiDensity", config_debug.ui_density);
+    write_float("Debug", "UiScale", config_debug.ui_scale);
     write_int("Debug", "MemoryDataFont", config_debug.memory_data_font);
     write_bool("Debug", "MultiViewport", config_debug.multi_viewport);
     write_bool("Debug", "Cassette", config_debug.show_cassette);

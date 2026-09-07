@@ -403,6 +403,11 @@ static void set_style(void)
     ImGuiStyle& style = ImGui::GetStyle();
     ImGuiIO& io = ImGui::GetIO();
 
+    // Rebuild the complete style before applying the selected scale.  This
+    // function is also called while the UI menu is open, so scaling the
+    // already-scaled style would otherwise compound on every adjustment.
+    ImGui::StyleColorsDark(&style);
+
     // The default ImGui font draws window titles, menus, tabs and controls.
     // Debugger data explicitly pushes gui_default_font/gui_unifont_font and
     // therefore stays at its selected, readable fixed size.
@@ -476,6 +481,14 @@ static void set_style(void)
         style.GrabMinSize = 9.0f;
         style.TabRounding = 2.75f;
     }
+
+    // The current font atlas already handles the backing-pixel density.
+    // Apply only the user-facing UI density here; feeding the display scale
+    // into both systems makes Retina menus and controls twice as large.
+    const float ui_scale = config_debug.ui_scale;
+    style.ScaleAllSizes(ui_scale);
+    style.FontScaleDpi = 1.0f;
+    style.FontScaleMain = config_debug.ui_scale;
 
     //style.Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     //style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.5921568870544434f, 0.5921568870544434f, 0.5921568870544434f, 1.0f);
@@ -2124,6 +2137,39 @@ static void main_menu(void)
         }
 
 #ifdef DEBUG_TOOLS
+        if (ImGui::BeginMenu("UI"))
+        {
+            float percent = config_debug.ui_scale * 100.0f;
+            ImGui::SetNextItemWidth(130.0f);
+            if (ImGui::SliderFloat("Scale", &percent, 75.0f, 200.0f, "%.0f%%"))
+            {
+                config_debug.ui_scale = percent / 100.0f;
+                set_style();
+            }
+            ImGui::Separator();
+            ImGui::SetNextItemWidth(130.0f);
+            if (ImGui::Combo("Font Size", &config_debug.font_size,
+                "Very Small\0Small\0Medium\0Large\0\0"))
+                gui_default_font = default_font[config_debug.font_size];
+            ImGui::Separator();
+            if (ImGui::MenuItem("Normal", "", config_debug.ui_density == 0))
+            {
+                config_debug.ui_density = 0;
+                set_style();
+            }
+            if (ImGui::MenuItem("Compact", "", config_debug.ui_density == 2))
+            {
+                config_debug.ui_density = 2;
+                set_style();
+            }
+            if (ImGui::MenuItem("Minimal", "", config_debug.ui_density == 1))
+            {
+                config_debug.ui_density = 1;
+                set_style();
+            }
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Debug"))
         {
             gui_in_use = true;
@@ -2234,40 +2280,6 @@ static void main_menu(void)
             }
 
             ImGui::Separator();
-
-            if (ImGui::BeginMenu("Font Size", config_debug.debug))
-            {
-                ImGui::PushItemWidth(110.0f);
-                if (ImGui::Combo("##font", &config_debug.font_size, "Very Small\0Small\0Medium\0Large\0\0"))
-                {
-                    gui_default_font = default_font[config_debug.font_size];
-                }
-                ImGui::PopItemWidth();
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("UI Density", config_debug.debug))
-            {
-                if (ImGui::MenuItem("Normal", "", config_debug.ui_density == 0))
-                {
-                    config_debug.ui_density = 0;
-                    set_style();
-                }
-
-                if (ImGui::MenuItem("Compact", "", config_debug.ui_density == 2))
-                {
-                    config_debug.ui_density = 2;
-                    set_style();
-                }
-
-                if (ImGui::MenuItem("Minimal", "", config_debug.ui_density == 1))
-                {
-                    config_debug.ui_density = 1;
-                    set_style();
-                }
-
-                ImGui::EndMenu();
-            }
 
             ImGui::Separator();
 

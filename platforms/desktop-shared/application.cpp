@@ -584,20 +584,13 @@ static int sdl_init(void)
     }
     SDL_free(gamepads);
 
-    int w, h;
-    int display_w, display_h;
-    SDL_GetWindowSize(sdl_window, &w, &h);
-    SDL_GetWindowSizeInPixels(sdl_window, &display_w, &display_h);
-    
-    if (w > 0 && h > 0)
-    {
-        float scale_w = (float)display_w / w;
-        float scale_h = (float)display_h / h;
-
-        application_display_scale = (scale_w > scale_h) ? scale_w : scale_h;
-        if (application_display_scale <= 0.0f)
-            application_display_scale = 1.0f;
-    }
+    SDL_DisplayID display = SDL_GetDisplayForWindow(sdl_window);
+    if (display == 0)
+        display = SDL_GetPrimaryDisplay();
+    application_display_scale = display != 0
+        ? SDL_GetDisplayContentScale(display) : 1.0f;
+    if (application_display_scale <= 0.0f)
+        application_display_scale = 1.0f;
 
     return 0;
 }

@@ -419,6 +419,7 @@ struct config_Debug
     bool dis_show_bank = true;
     int font_size = 0;
     int ui_density = 0;
+    float ui_scale = 1.0f;
     // 0 = debugger fixed font, 1 = Iosevka Condensed, 2 = Iosevka Light.
     // This is a global Memory Editor preference shared by ROM/RAM/VRAM tabs.
     int memory_data_font = 0;
