@@ -4,21 +4,29 @@
 [![Release](https://img.shields.io/github/v/tag/siriokds/GearSF7000-devel?label=version)](https://github.com/siriokds/GearSF7000-devel/releases)
 [![Activity](https://img.shields.io/github/commit-activity/t/siriokds/GearSF7000-devel)](https://github.com/siriokds/GearSF7000-devel/commits/main)
 
-GearSF7000 brings Sega's early 8-bit computer family back as a complete,
-inspectable machine. It is a cross-platform SG-1000, SC-3000 and SF-7000
-emulator with accurate processor and video timing, disk and cassette support,
-an advanced frame recorder and a full development environment built into the
-desktop application.
+GearSF7000 emulates two base systems: the Sega SG-1000 console and the Sega
+SC-3000 computer. The SC-3000 configuration can be expanded with the Sega
+SF-7000 Super Control Station and the Sega SR-1000 Tape Recorder. SF-7000 is
+an expansion peripheral, not a standalone computer: it connects through its
+dedicated IPL cartridge, which occupies the cartridge slot.
 
-Run cartridge software, boot the SF-7000 IPL, work with SegaDOS disks, load
-Sega BASIC programs or follow a single VDP access down to the exact raster dot
-and VRAM slot. GearSF7000 is designed both for enjoying the original machines
-and for understanding precisely what they are doing.
+The emulator combines accurate processor and video timing with disk and
+cassette support, an advanced frame recorder and a full development
+environment built into the desktop application. Support for the Sega SP-400
+Printer/Plotter is planned.
+
+Run cartridge software on the base machines, connect and boot the SF-7000
+through its dedicated IPL cartridge, work with SegaDOS disks, load Sega BASIC
+programs or follow a single VDP access down to the exact raster dot and VRAM
+slot. GearSF7000 is designed both for enjoying the original machines and for
+understanding precisely what they are doing.
 
 ## Highlights
 
-- **Complete Sega computer environment:** SC-3000, SK-1100 keyboard, SF-7000
-  disk expansion, SR-1000 cassette recorder and SG-1000 cartridge support.
+- **Two base systems:** SG-1000 console and SC-3000 computer, each with its
+  own memory map and hardware configuration.
+- **SC-3000 peripherals:** Sega SK-1100 keyboard handling, Sega SF-7000 Super
+  Control Station and Sega SR-1000 Tape Recorder.
 - **Timing you can inspect:** partial Z80 machine cycles, native PAL/NTSC
   raster timing and a slot-accurate TMS9918/TMS9929 VRAM scheduler.
 - **All VDP mode combinations:** Graphics I, Graphics II, Text, Multicolor and
@@ -34,8 +42,6 @@ and for understanding precisely what they are doing.
 - **External tooling:** an optional MCP server with 132 commands and headless
   operation over standard input/output or local HTTP.
 
-SP-400 printer support is planned and already has a dedicated build hook.
-
 ## Downloads
 
 Current packages are published on the
@@ -50,9 +56,9 @@ from source using the instructions below.
 | CPU | Zilog Z80 with documented and undocumented behaviour, register R, MEMPTR, interrupt lines, reset handling and instruction-level inspection. |
 | Video | TMS9918/TMS9929 VDP with raster timing, VRAM arbitration, sprite evaluation, status flags and its internal 171-slot scanline schedule. |
 | Sound | SN76489 PSG, optional AY-3-8910 / YM2149 expansion, resampling, VGM/WAV capture and machine-speaker paths. |
-| Computer | SC-3000 memory map, PPI, SK-1100 keyboard, cartridge handling and Sega BASIC workflows. |
-| SF-7000 | IPL cartridge, FDC765 floppy subsystem, drive control, disk timing, SegaDOS media and Intel 8251A serial interface. |
-| Cassette | SR-1000 motor, tape transport, tape speaker and WAV/Sega BASIC tape handling. |
+| Base systems | SG-1000 console mapping and SC-3000 computer memory map, PPI, keyboard, cartridge handling and Sega BASIC workflows. |
+| Sega SF-7000 Super Control Station | Expansion with dedicated IPL cartridge, FDC765 floppy subsystem, drive control, disk timing, SegaDOS media and Intel 8251A serial interface. |
+| Sega SR-1000 Tape Recorder | Cassette motor, tape transport, tape speaker and WAV/Sega BASIC tape handling. |
 
 ## Timing and fidelity
 
@@ -191,25 +197,30 @@ logic level delivered to the PPI and from the computer's PSG.
   malformed image or debugger pause fails safely without corrupting PPI tape
   timing.
 
-## Machines, media and peripherals
+## Emulated systems, peripherals and media
 
-The desktop application supports the hardware combinations used by the Sega
-8-bit family. The cartridge slot is modelled as a physical resource: a normal
-software cartridge and the SF-7000 IPL cartridge cannot occupy it together.
+The base system is selected independently from its peripherals. The cartridge
+slot is modelled as a physical resource: a normal software cartridge and the
+SF-7000 IPL cartridge cannot occupy it together.
 
-- **SG-1000 cartridges** with the appropriate console memory mapping.
-- **SC-3000** with keyboard-matrix input, BASIC-oriented workflows and
+- **SG-1000:** base console with its cartridge-oriented memory mapping.
+- **SC-3000:** base computer with keyboard-matrix input, BASIC workflows and
   cartridge software.
-- **SF-7000** through its IPL cartridge, with boot, drive and disk controls.
-- **SR-1000** cassette support with transport controls and tape files.
+- **Sega SF-7000 Super Control Station:** optional SC-3000 disk expansion,
+  connected through its IPL cartridge, with boot, drive and disk controls.
+- **Sega SR-1000 Tape Recorder:** optional SC-3000 cassette peripheral with
+  transport controls, tape files and speaker monitoring.
+- **Sega SP-400 Printer/Plotter:** planned peripheral; it is not presented as
+  implemented.
+
+Supported media include:
+
 - **Disk images** in `.sf7`, `.dsk`, `.hfe` and `.ds7` formats, with mount,
   eject and write-protection control.
 - **Cartridge images** and ZIP-compressed media, with a database of known
   mappings.
 - **Modern controllers** through the bundled
   [SDL_GameControllerDB](https://github.com/gabomdq/SDL_GameControllerDB).
-
-SP-400 support is planned and is intentionally not presented as implemented.
 
 ## Desktop emulator
 
@@ -463,7 +474,7 @@ and OpenEmu SDK build instructions.
 GearSF7000 is based on a version of
 [GearColeco](https://github.com/drhelius/Gearcoleco) by
 [Ignacio Sánchez Gines (drhelius)](https://github.com/drhelius), adapted for
-the Sega SC-3000 and SF-7000 hardware family.
+the Sega SG-1000 and SC-3000 systems and their supported peripherals.
 
 The Z80 processor integration uses an imported subset of
 [Clock Signal (CLK)](https://github.com/TomHarte/CLK) by
