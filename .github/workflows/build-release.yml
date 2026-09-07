@@ -57,11 +57,11 @@ jobs:
           pattern: GearSF7000-*
           path: release
           merge-multiple: true
-      - name: Create draft release
+      - name: Create release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" release/* \
             --title "GearSF7000 ${{ github.ref_name }}" \
-            --draft --generate-notes
+            --generate-notes
