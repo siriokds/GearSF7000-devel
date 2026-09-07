@@ -97,6 +97,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
       - name: Download SDL3
         shell: bash
         env:
