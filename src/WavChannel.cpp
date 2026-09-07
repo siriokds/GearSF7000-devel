@@ -78,8 +78,8 @@ void WavChannel::Reset(int masterSampleRate)
     m_ChannelPositionIncr = 1.0f;
     m_Playing = false;
     m_PlayMode = PlayMode::ONESHOT;
-    m_ChannelPosition = 0;
-    m_LoopStart = m_ChannelPosition;
+    m_ChannelPosition = 0.0f;
+    m_LoopStart = (int)m_ChannelPosition;
     m_LoopEnd = 0;
     m_LoopRep = 1;
 }
@@ -97,7 +97,7 @@ void WavChannel::SetupChannel(PlayMode mode, float volume)
     m_TargetVolume = volume;
     m_VolumeStep = 0.0f;
 
-    m_ChannelPosition = 0;
+    m_ChannelPosition = 0.0f;
     m_BasePositionIncr = (sampleRate > 0 && m_MasterSampleRate > 0)
         ? static_cast<float>(sampleRate) / static_cast<float>(m_MasterSampleRate)
         : 1.0f;
@@ -105,8 +105,8 @@ void WavChannel::SetupChannel(PlayMode mode, float volume)
     m_PitchDecrement = 0;
 
     m_PlayMode = mode;
-    m_LoopStart = m_ChannelPosition;
-    m_LoopEnd = sampleSize - 1;
+    m_LoopStart = (int)m_ChannelPosition;
+    m_LoopEnd = (int)(sampleSize - 1);
     m_LoopRep = 1;
 
     m_PlayMode_r = m_PlayMode;
@@ -125,7 +125,7 @@ void WavChannel::SetupChannelMs(float loopStartMs, float loopEndMs, int loopRep,
 
     const float freq = GC_AUDIO_SAMPLE_RATE / 1000.0f;
 
-    SetupChannel(loopStartMs * freq, loopEndMs * freq, loopRep, volume);
+    SetupChannel((int)(loopStartMs * freq), (int)(loopEndMs * freq), loopRep, volume);
 
 }
 
@@ -135,7 +135,7 @@ void WavChannel::SetupChannel(int loopStart, int loopEnd, int loopRep, float vol
     m_Volume = 0.0f;
     m_TargetVolume = volume;
     m_VolumeStep = 0.0f;
-    m_ChannelPosition = loopStart;
+    m_ChannelPosition = (float)loopStart;
     m_BasePositionIncr = (sampleRate > 0 && m_MasterSampleRate > 0)
         ? static_cast<float>(sampleRate) / static_cast<float>(m_MasterSampleRate)
         : 1.0f;
@@ -143,7 +143,7 @@ void WavChannel::SetupChannel(int loopStart, int loopEnd, int loopRep, float vol
     m_PitchDecrement = 0;
 
     m_PlayMode = PlayMode::REPS;
-    m_LoopStart = m_ChannelPosition;
+    m_LoopStart = (int)m_ChannelPosition;
     m_LoopEnd = loopEnd;
     m_LoopRep = loopRep;
 
@@ -161,7 +161,7 @@ void WavChannel::PlayChannel()
 {
     if (sampleData == nullptr) return;
 
-    m_ChannelPosition = m_LoopStart;
+    m_ChannelPosition = (float)m_LoopStart;
     m_ChannelPositionIncr = m_BasePositionIncr;
     m_PitchDecrement = 0.0f;
     m_Volume = 0.0f;
@@ -175,7 +175,7 @@ void WavChannel::PlayChannel()
 void WavChannel::StopChannel() 
 {
     m_Playing = false;
-    m_ChannelPosition = m_LoopStart;
+    m_ChannelPosition = (float)m_LoopStart;
     m_Volume = 0.0f;
     m_VolumeStep = 0.0f;
     m_PitchDecrement = 0.0f;

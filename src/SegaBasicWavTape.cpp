@@ -62,9 +62,9 @@ void SegaBasicWavTape::Init(int masterClock, TapeMotor* motor)
 	//CyclesPerPosition = CalculateCyclesFromMicros(MasterClock, MICROSECONDS_PER_BYTE);
 
 	CyclePositions[0] = 0;
-	CyclePositions[1] = (CyclesPerPosition / 2) - 4;
-	CyclePositions[2] = ((CyclesPerPosition * 3) / 4) - 4;
-	CyclePositions[3] = CyclesPerPosition - 4;
+	CyclePositions[1] = (int)((CyclesPerPosition / 2) - 4);
+	CyclePositions[2] = (int)(((CyclesPerPosition * 3) / 4) - 4);
+	CyclePositions[3] = (int)(CyclesPerPosition - 4);
 
 	Position = 0;
 	PositionCyclesCounter = 0;
@@ -170,6 +170,7 @@ void SegaBasicWavTape::Tick(int cycles)
 
 bool SegaBasicWavTape::LoadBas(std::string fullPath)
 {
+	(void)fullPath; // unused
 	//FilePath = fullPath;
 	//Position = 0;
 	//PositionCyclesCounter = 0;
@@ -416,18 +417,18 @@ double SegaBasicWavTape::CalculateRevolutions(int position, double tapeLengthInI
 
 float SegaBasicWavTape::GetCounter()
 {
-	return CalculateRevolutions(Position, 60) * 100;
+	return (float)(CalculateRevolutions(Position, 60) * 100);
 }
 
 
 float SegaBasicWavTape::GetCounterMax()
 {
-	return CalculateRevolutions(EndPosition, 60) * 100;
+	return (float)(CalculateRevolutions(EndPosition, 60) * 100);
 }
 
 std::string SegaBasicWavTape::GetInfo()
 {
-	float revs = CalculateRevolutions(Position, 60) * 100;
+	float revs = (float)(CalculateRevolutions(Position, 60) * 100);
 
 	//double perc = static_cast<double>(PositionCyclesCounter) / CyclesPerPosition;
 	//int offset = static_cast<int>(perc * 4.0) & 3; // Ridotto a intervallo [0,3]

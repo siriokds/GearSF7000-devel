@@ -356,7 +356,7 @@ void boardSetFdcActive()
 
 uint32_t boardSystemTime(NEC765* fdc)
 {
-    return fdc->totalCycles;
+    return (uint32_t)fdc->totalCycles;
 }
 
 void nec765SetAudio(NEC765* fdc, Audio* pAudio)
@@ -370,6 +370,7 @@ void nec765SetReadOnly(NEC765* fdc, bool readonly)
 {
     fdc->status1 |= ST1_NW;
     fdc->status3 |= ST3_WP;
+    (void)readonly; // Unused
 }
 
 static void nec765EndSeek(NEC765* fdc)

@@ -22,7 +22,9 @@
 #include <string>
 #include <vector>
 #if defined(_WIN32)
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include "../windows/resource.h"
 #endif
@@ -145,8 +147,8 @@ static int main_window_width = 0;
 static int main_window_height = 0;
 static bool status_message_active = false;
 static char status_message[4096] = "";
-static u32 status_message_start_time = 0;
-static u32 status_message_duration = 0;
+static Uint64 status_message_start_time = 0;
+static Uint64 status_message_duration = 0;
 
 // "Configure..." window for the CRT (Lottes) postprocessing mode - a real
 // Output panel, not a diagnostic test tool, so it lives here rather than in
@@ -2780,13 +2782,13 @@ static bool main_window(void)
         {
             int factor_w = w / w_corrected;
             int factor_h = h / h_corrected;
-            scale_multiplier = (factor_w < factor_h) ? factor_w : factor_h;
+            scale_multiplier = (float)((factor_w < factor_h) ? factor_w : factor_h);
         }
         else if (video_output.scale == SCALE_WIN_HEIGHT)
         {
             scale_multiplier = 1;
             h_corrected = h;
-            w_corrected = h * ratio;
+            w_corrected = (int)(h * ratio);
         }
         else if (video_output.scale == SCALE_WIN_HEIGHT_HALF)
         {
@@ -2860,8 +2862,8 @@ static bool main_window(void)
     }
     else
     {
-        int window_x = (w - (w_corrected * scale_multiplier)) / 2;
-        int window_y = ((h - (h_corrected * scale_multiplier)) / 2) + (config_emulator.show_menu ? main_menu_height : 0);
+        int window_x = (int)((w - (w_corrected * scale_multiplier)) / 2);
+        int window_y = (int)(((h - (h_corrected * scale_multiplier)) / 2) + (config_emulator.show_menu ? main_menu_height : 0));
 
         ImGui::SetNextWindowSize(ImVec2((float)main_window_width, (float)main_window_height));
         ImGui::SetNextWindowPos(ImVec2((float)window_x, (float)window_y));
@@ -4177,8 +4179,8 @@ static void menu_reset(void)
 
     emu_reset(config, config_emulator.start_paused);
 
-    GearSF7000Core* core = emu_get_core();
-    Audio* audio = core->GetAudio();
+    //GearSF7000Core* core = emu_get_core();
+    //Audio* audio = core->GetAudio();
 
     if (config_emulator.start_paused)
         emu_clear_video_buffer();
@@ -4450,7 +4452,7 @@ static void show_status_message(void)
 {
     if (status_message_active)
     {
-        u32 current_time = SDL_GetTicks();
+        Uint64 current_time = SDL_GetTicks();
         if ((current_time - status_message_start_time) > status_message_duration)
             status_message_active = false;
         else

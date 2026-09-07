@@ -243,6 +243,7 @@ inline uint8_t MachineIOPorts::SC3000_PPI_GetPortB()
 
 inline void MachineIOPorts::SC3000_PPI_SetPortB(uint8_t value)
 {
+    (void)value; // unused
 //    SC3000_PPI_PortB = value;
 //
 //#ifdef _DEBUG

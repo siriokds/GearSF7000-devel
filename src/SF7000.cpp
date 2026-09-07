@@ -408,6 +408,7 @@ void SF7000::FDC765_DiskEject(int drive)
 
 void	SF7000::FDC765_SetReadOnly(int drive, bool readonly)
 {
+	(void)drive; // unused
 	nec765SetReadOnly(fdc, readonly);
 }
 

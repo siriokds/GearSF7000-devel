@@ -418,7 +418,7 @@ void Audio::EnableAyDebug(bool enable)
 
 void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
 {
-    m_pApu->end_frame(m_ElapsedCycles);
+    m_pApu->end_frame((blip_time_t)m_ElapsedCycles);
     if (m_pApu->is_debug_enabled())
     {
         for (int i = 0; i < 4; i++)
@@ -433,7 +433,7 @@ void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
     // disagrees between them. Run it even when the expansion is disabled - it
     // is then silent, but keeping its clock aligned means enabling it at the
     // next reset does not start from a stale time.
-    m_pAyApu->end_frame(m_ElapsedCycles);
+    m_pAyApu->end_frame((blip_time_t)m_ElapsedCycles);
     if (m_pAyApu->is_debug_enabled())
     {
         for (int i = 0; i < 3; i++)
@@ -443,7 +443,7 @@ void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
         }
     }
 #endif
-    m_pBuffer->end_frame(m_ElapsedCycles);
+    m_pBuffer->end_frame((blip_time_t)m_ElapsedCycles);
 
     int count = static_cast<int>(m_pBuffer->read_samples(m_pSampleBuffer, GC_AUDIO_BUFFER_SIZE));
 
@@ -572,7 +572,7 @@ void Audio::PlayDriveTrack(uint8_t oldtrack, uint8_t newtrack)
     if (oldtrack == newtrack) return;
     // Ottieni il canale audio associato
 
-    int deltaTracks = std::abs(newtrack - oldtrack);
+//    int deltaTracks = std::abs(newtrack - oldtrack);
 //    int diff = newtrack > oldtrack ? newtrack - oldtrack : (newtrack < oldtrack ? oldtrack - newtrack : newtrack);
 
     //if (deltaTracks == 1)

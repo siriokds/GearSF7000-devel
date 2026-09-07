@@ -571,7 +571,7 @@ static void debug_text_example(void)
     /*std::string text = "Prova";
     ImGui::Text("%s", text.c_str());*/
 
-    int offset = 0;
+    //int offset = 0;
     
     //for (int row = 1; row < 8; row++)
     //{
@@ -4483,7 +4483,7 @@ static void debug_window_vram_regs(void)
     ImGui::TextColored(yellow, "VDP REGISTERS:");
 
     int mode = ((regs[0] & 0x06) << 8) | (regs[1] & 0x18);
-    u16 vramPtr = video->GetVRAMPtr();
+    //u16 vramPtr = video->GetVRAMPtr();
 
     int name_table_addr;
     int pattern_table_addr;
