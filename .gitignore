@@ -77,9 +77,6 @@ platforms/libretro/libs/
 
 #JetBrains
 .idea
-/src/NEC765.cpp
-
-
 # Built binary, not a deliverable: make writes it in the source tree.
 platforms/macos/gearsf7000
 

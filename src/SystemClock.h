@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <algorithm>
 #include <iostream>
 #include <iomanip> // Per manipolare la precisione dell'output
 #include <vector>

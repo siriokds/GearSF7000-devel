@@ -171,7 +171,8 @@ jobs:
         run: |
           plutil -lint platforms/openemu/build/GearSC3000.oecoreplugin/Contents/Info.plist
           codesign --verify --deep --strict platforms/openemu/build/GearSC3000.oecoreplugin
-          shasum -a 256 -c platforms/openemu/build/GearSC3000.oecoreplugin.zip.sha256
+          cd platforms/openemu/build
+          shasum -a 256 -c GearSC3000.oecoreplugin.zip.sha256
       - uses: actions/upload-artifact@v7
         with:
           name: GearSF7000-openemu-arm64
