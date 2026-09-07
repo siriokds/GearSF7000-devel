@@ -43,8 +43,9 @@ projects. Their included licence files and notices remain applicable.
 - [Clock Signal (CLK)](https://github.com/TomHarte/CLK), by Tom Harte,
   provides the imported Z80 subset (MIT). The imported revision is recorded
   in [`third_party/clk/README-GearSF7000.md`](third_party/clk/README-GearSF7000.md).
-- [blueMSX](http://www.bluemsx.com/), by Daniel Vik and Tomas Karlsson,
-  provides the adapted floppy-controller and disk support (GPL-2.0-or-later).
+- [blueMSX](http://www.bluemsx.com/), by Daniel Vik and Tomas Karlsson, is
+  the basis for the FDC765 and SF-7000 modules. Both have been extensively
+  modified for GearSF7000-devel (GPL-2.0-or-later).
 - [Game Music Emu](https://bitbucket.org/mpyne/game-music-emu/) and
   [Blip_Buffer](https://www.slack.net/~ant/), by Shay Green, provide the
   audio emulation and resampling code (LGPL-2.1-or-later).

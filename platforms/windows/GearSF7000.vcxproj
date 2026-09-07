@@ -93,7 +93,9 @@
     <ClCompile Include="..\desktop-shared\gui_debug_rom_inspector.cpp" />
     <ClCompile Include="..\desktop-shared\mcp\mcp_debug_adapter.cpp" />
     <ClCompile Include="..\desktop-shared\mcp\mcp_tool_registry.cpp" />
-    <ClCompile Include="..\desktop-shared\mcp\mcp_server.cpp" />
+    <ClCompile Include="..\desktop-shared\mcp\mcp_server.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Disabled</Optimization>
+    </ClCompile>
     <ClCompile Include="..\desktop-shared\imgui\imgui.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui_draw.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui_impl_sdl3.cpp" />

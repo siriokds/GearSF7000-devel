@@ -68,7 +68,7 @@ uint8_t CalcBasicProgramCRC(BasicProgramBody* body, int length)
 // three-second wait; existing files may of course contain longer leaders.
 #define BITWRITER_LEADER_BITS 256
 
-static class BitWriter
+class BitWriter
 {
 public:
 
@@ -227,4 +227,3 @@ public:
 		return len;
 	}
 };
-
