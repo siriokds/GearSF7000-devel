@@ -24,8 +24,8 @@ adapted to the project requirements, including a reduced emulation stack.
   editor, I/O inspection, VRAM views and rewind support.
 - **Emulation core:** CLK Z80 processor, TMS9918 video display processor,
   SN76489 sound generator and optional AY-3-8910 / YM2149 expansion audio.
-- **Hardware:** SF-7000 floppy subsystem, SR-1000 cassette recorder,
-  SP-400 printer and SK-1100 keyboard support.
+- **Hardware:** SF-7000 floppy subsystem, SR-1000 cassette recorder and
+  SK-1100 keyboard support. SP-400 printer support is planned.
 - **Targets:** standalone desktop builds for macOS, Linux and Windows;
   GearSC3000 cores for Libretro and OpenEmu.
 
