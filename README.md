@@ -1,7 +1,7 @@
 # GearSF7000-devel
 
 GearSF7000 is a cross-platform emulator and development environment for the
-Sega SF-7000, SC-3000, SR-1000 and SP-400, written in C++.
+Sega SC-3000/SG-1000 with SF-7000, SR-1000 and SP-400 devices, written in C++.
 
 This repository contains the development sources. It follows the layout used
 by the other Gear emulators: the emulator core is in `src`, while desktop,
@@ -10,7 +10,7 @@ libretro and OpenEmu front ends live in `platforms`.
 GearSF7000-devel is based on a version of
 [GearColeco](https://github.com/drhelius/Gearcoleco) by
 [Ignacio Sánchez Gines (drhelius)](https://github.com/drhelius), adapted for
-the SF-7000 family of machines. Its Z80 CPU implementation uses
+the SC-3000/SG-1000 family of machines. Its Z80 CPU implementation uses
 [CLK](https://github.com/TomHarte/CLK) by [Tom Harte](https://github.com/TomHarte),
 adapted to the project requirements, including a reduced emulation stack.
 
