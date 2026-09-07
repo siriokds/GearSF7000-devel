@@ -413,8 +413,7 @@ void emu_apply_startup_config(void)
                         "boot to the NO BIOS screen");
     }
 
-    const config_VideoOutput& startup_video = config_debug.debug
-        ? config_debug.video : static_cast<const config_VideoOutput&>(config_video);
+    const config_VideoOutput& startup_video = config_video_output_for_mode(config_debug.debug);
     if (startup_video.overscan == 4)
         emu_set_full_raster_debug_enabled(true);
     else

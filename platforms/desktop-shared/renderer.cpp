@@ -35,8 +35,7 @@ namespace
 {
 const config_VideoOutput& active_video_output()
 {
-    return config_debug.debug
-        ? config_debug.video : static_cast<const config_VideoOutput&>(config_video);
+    return config_video_output_for_mode(config_debug.debug);
 }
 
 SDL_GPUDevice* gpu_device = nullptr;

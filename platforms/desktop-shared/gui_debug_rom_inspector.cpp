@@ -443,8 +443,8 @@ void gui_debug_rom_inspector_window(void)
         g_tiles_per_row = kMaxTilesPerAxis;
 
     ImGui::TextColored(cyan, "Color Table:"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(140);
     const char* colortable_labels[3] = { "None", "Mode 1 (Graphics I)", "Mode 2 (Graphics II)" };
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(colortable_labels, IM_ARRAYSIZE(colortable_labels)));
     if (ImGui::BeginCombo("##colortable_mode", colortable_labels[g_colortable_mode]))
     {
         for (int i = 0; i < 3; i++)

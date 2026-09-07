@@ -270,7 +270,7 @@ static void area_scale_control(const char* label, float* scale)
     static const float steps[] = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f };
     char preview[16];
     snprintf(preview, sizeof(preview), "%.1fx", (double)*scale);
-    ImGui::SetNextItemWidth(70);
+    ImGui::SetNextItemWidth(gui_combo_width_for_text("4.0x"));
     if (ImGui::BeginCombo(label, preview))
     {
         for (float step : steps)
@@ -1539,13 +1539,33 @@ static void debug_window_processor(void)
     long double elapsed_uS = (long double)elapsed_tS / ((long double)z80_clock_hz / 1000000.0L);
     long double elapsed_mS = elapsed_uS / 1000;
 
+    char elapsed_tk_text[32];
+    char elapsed_us_text[48];
+    char elapsed_ms_text[48];
+    snprintf(elapsed_tk_text, sizeof(elapsed_tk_text), "TK: %016" PRIu64, elapsed_tS);
+    snprintf(elapsed_us_text, sizeof(elapsed_us_text), "uS: %Lf", elapsed_uS);
+    snprintf(elapsed_ms_text, sizeof(elapsed_ms_text), "mS: %Lf", elapsed_mS);
+
+    const float clock_row_start = ImGui::GetCursorPosX();
+    const float clock_block_width = std::max({
+        ImGui::CalcTextSize(elapsed_tk_text).x,
+        ImGui::CalcTextSize(elapsed_us_text).x,
+        ImGui::CalcTextSize(elapsed_ms_text).x
+    });
     ImGui::TextColored(magenta, "CLOCK");
-    ImGui::Text("TK: %016" PRIu64, elapsed_tS);
-    ImGui::Text("uS: %Lf", elapsed_uS);
-    ImGui::Text("mS: %Lf", elapsed_mS);
+    const float reset_button_width = ImGui::CalcTextSize("RESET").x
+        + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SameLine(clock_row_start + clock_block_width - reset_button_width);
+    const bool reset_clock = ImGui::SmallButton("RESET##reset_clock");
+    const bool reset_clock_hovered = ImGui::IsItemHovered();
+    if (reset_clock_hovered)
+        ImGui::SetTooltip("Reset clock counters");
 
+    ImGui::TextUnformatted(elapsed_tk_text);
+    ImGui::TextUnformatted(elapsed_us_text);
+    ImGui::TextUnformatted(elapsed_ms_text);
 
-    if (ImGui::Button("RESET", ImVec2(145, 0)))
+    if (reset_clock)
     {
         try
         {
@@ -1556,9 +1576,6 @@ static void debug_window_processor(void)
         }
     }
 
-
-
-    ImGui::Separator();
 
 
     ImGui::Separator();
@@ -2305,7 +2322,7 @@ static void debug_window_events(void)
         };
         const auto drawTargetEditor = [&]()
         {
-            ImGui::SetNextItemWidth(190);
+            ImGui::SetNextItemWidth(gui_combo_width_for_array(categoryNames, IM_ARRAYSIZE(categoryNames)));
             bool categoryChanged = false;
             if (ImGui::BeginCombo("##type", categoryNames[newCategory], ImGuiComboFlags_HeightLargest))
             {
@@ -2366,7 +2383,7 @@ static void debug_window_events(void)
             const bool hasValue = categoryAccess[newCategory] != AccessExecute
                 && !isVdpLatchTarget();
             ImGui::BeginDisabled(!hasValue);
-            ImGui::SetNextItemWidth(205); ImGui::Combo("##condition", &condition, conditionNames, IM_ARRAYSIZE(conditionNames));
+            ImGui::SetNextItemWidth(gui_combo_width_for_array(conditionNames, IM_ARRAYSIZE(conditionNames))); ImGui::Combo("##condition", &condition, conditionNames, IM_ARRAYSIZE(conditionNames));
             ImGui::EndDisabled();
         };
         const auto drawValuesEditor = [&]()
@@ -2385,7 +2402,7 @@ static void debug_window_events(void)
             ImGui::Text("Mode"); ImGui::SameLine();
             const char* triggerModes[] = { "Repeat", "One-shot" };
             int triggerMode = oneShot ? 1 : 0;
-            ImGui::SetNextItemWidth(92); if (ImGui::Combo("##trigger_mode", &triggerMode, triggerModes, IM_ARRAYSIZE(triggerModes))) oneShot = triggerMode == 1;
+            ImGui::SetNextItemWidth(gui_combo_width_for_array(triggerModes, IM_ARRAYSIZE(triggerModes))); if (ImGui::Combo("##trigger_mode", &triggerMode, triggerModes, IM_ARRAYSIZE(triggerModes))) oneShot = triggerMode == 1;
             ImGui::SameLine(); ImGui::Text("Pause from hit"); ImGui::SameLine(); ImGui::SetNextItemWidth(64); ImGui::InputInt("##hit", &hit); ImGui::SameLine();
             validationMessage = buildDraftRule(&pendingRule);
             const bool canAdd = validationMessage == NULL;
@@ -2540,7 +2557,7 @@ static void debug_window_events(void)
     // filters by the wrong category rather than failing.
     const char* categories[] = { "All", "CPU", "MEM", "VDP", "I/O", "VDP REG", "FDC", "PPI", "VIDEO", "TAPE", "AUDIO", "AY", "STATE" };
     int categorySelection = categoryFilter + 1;
-    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(categories, IM_ARRAYSIZE(categories)));
     if (ImGui::Combo("Category", &categorySelection, categories, IM_ARRAYSIZE(categories)))
         categoryFilter = categorySelection - 1;
 
@@ -2931,7 +2948,7 @@ static void debug_window_watch_monitor(void)
         // area scan or a narrowing pass over the current results) is
         // decided automatically from have_previous_results and shown as a
         // status line underneath, not by renaming the button itself.
-        ImGui::SetNextItemWidth(140);
+        ImGui::SetNextItemWidth(gui_combo_width_for_array(k_area_names, IM_ARRAYSIZE(k_area_names)));
         ImGui::Combo("Area##search_area", &search_area, k_area_names, IM_ARRAYSIZE(k_area_names));
         ImGui::SameLine();
         if (ImGui::Button("Reset"))
@@ -2942,17 +2959,17 @@ static void debug_window_watch_monitor(void)
             have_previous_results = false;
         }
 
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(gui_combo_width_for_array(op_names, IM_ARRAYSIZE(op_names)));
         ImGui::Combo("Op##search_op", &op_idx, op_names, IM_ARRAYSIZE(op_names));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(110);
+        ImGui::SetNextItemWidth(gui_combo_width_for_array(compare_type_names, IM_ARRAYSIZE(compare_type_names)));
         ImGui::Combo("Compare to##search_compare_type", &compare_type_idx, compare_type_names, IM_ARRAYSIZE(compare_type_names));
         ImGui::SameLine();
         ImGui::BeginDisabled(compare_type_idx == 0); // "previous" needs no value
         ImGui::SetNextItemWidth(80);
         ImGui::InputText("Value##search_value", compare_value, IM_ARRAYSIZE(compare_value), ImGuiInputTextFlags_CharsDecimal);
         ImGui::EndDisabled();
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(gui_combo_width_for_array(data_type_names, IM_ARRAYSIZE(data_type_names)));
         ImGui::Combo("Data type##search_data_type", &data_type_idx, data_type_names, IM_ARRAYSIZE(data_type_names));
         ImGui::SameLine();
         if (ImGui::Button("Scan"))
@@ -3025,13 +3042,13 @@ static void debug_window_watch_monitor(void)
         static int new_text_size = 4;
         static char new_label[32] = "";
 
-        ImGui::SetNextItemWidth(140);
+        ImGui::SetNextItemWidth(gui_combo_width_for_array(k_area_names, IM_ARRAYSIZE(k_area_names)));
         ImGui::Combo("Area##new_area", &new_area, k_area_names, IM_ARRAYSIZE(k_area_names));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         ImGui::InputText("Address (hex)##new_address", new_address, IM_ARRAYSIZE(new_address), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase);
 
-        ImGui::SetNextItemWidth(110);
+        ImGui::SetNextItemWidth(gui_combo_width_for_array(k_type_names, IM_ARRAYSIZE(k_type_names)));
         ImGui::Combo("Type##new_type", &new_type, k_type_names, IM_ARRAYSIZE(k_type_names));
         ImGui::SameLine();
         if (new_type == 3)
@@ -3044,7 +3061,7 @@ static void debug_window_watch_monitor(void)
         else
         {
             static const char* size_names[] = { "1 byte", "2 bytes" };
-            ImGui::SetNextItemWidth(90);
+            ImGui::SetNextItemWidth(gui_combo_width_for_array(size_names, IM_ARRAYSIZE(size_names)));
             ImGui::Combo("Size##new_size", &new_size_choice, size_names, IM_ARRAYSIZE(size_names));
         }
 
@@ -3144,7 +3161,11 @@ static void debug_window_watch_monitor(void)
                 ImGui::SameLine();
 
                 if (row_watch[i] >= static_cast<int>(watch_ids.size())) row_watch[i] = 0;
-                ImGui::SetNextItemWidth(140);
+                float watch_combo_width = 0.0f;
+                for (const auto& watch : watch_ids)
+                    watch_combo_width = std::max(watch_combo_width,
+                        gui_combo_width_for_text(watch.second.c_str()));
+                ImGui::SetNextItemWidth(watch_combo_width);
                 if (ImGui::BeginCombo("##watch", watch_ids[row_watch[i]].second.c_str()))
                 {
                     for (int w = 0; w < static_cast<int>(watch_ids.size()); w++)
@@ -3154,7 +3175,7 @@ static void debug_window_watch_monitor(void)
                 }
                 ImGui::SameLine();
 
-                ImGui::SetNextItemWidth(100);
+                ImGui::SetNextItemWidth(gui_combo_width_for_array(k_op_names, IM_ARRAYSIZE(k_op_names)));
                 ImGui::Combo("##op", &row_op[i], k_op_names, IM_ARRAYSIZE(k_op_names));
                 ImGui::SameLine();
 
@@ -3963,7 +3984,7 @@ static void debug_window_vram_sprites(void)
         "Live SAT", "Last Rendered Frame", "Current Scanline Fetch",
         "Last Frame Scanline"
     };
-    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(sprite_sources, IM_ARRAYSIZE(sprite_sources)));
     ImGui::Combo("Source##sprite_source", &config_debug.vram_sprites_source,
         sprite_sources, IM_ARRAYSIZE(sprite_sources));
     ImGui::SameLine();

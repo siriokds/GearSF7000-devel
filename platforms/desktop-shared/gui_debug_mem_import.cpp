@@ -5,6 +5,7 @@
 
 #include "gui_debug_mem_import.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -105,7 +106,11 @@ void gui_debug_mem_import_window(void)
     }
     else
     {
-        ImGui::SetNextItemWidth(220);
+        float target_combo_width = 0.0f;
+        for (int i = 0; i < view_count; ++i)
+            target_combo_width = std::max(target_combo_width,
+                gui_combo_width_for_text(views[i].title));
+        ImGui::SetNextItemWidth(target_combo_width);
         if (ImGui::BeginCombo("Target", views[selected_view].title))
         {
             for (int i = 0; i < view_count; i++)

@@ -20,6 +20,7 @@
 #include <math.h>
 #include <algorithm>
 #include <string>
+#include <vector>
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
@@ -276,6 +277,7 @@ static void menu_video_output_scale(config_VideoOutput& output, bool debug_outpu
         case SCALE_WIN_WIDTH_HEIGHT: preview = "Scale to Window Width & Height"; break;
     }
 
+    ImGui::SetNextItemWidth(gui_combo_width_for_text("Scale to Window Height (Half-Steps)"));
     if (!ImGui::BeginCombo("##scale", preview))
         return;
 
@@ -403,9 +405,11 @@ static void set_style(void)
     ImGuiStyle& style = ImGui::GetStyle();
     ImGuiIO& io = ImGui::GetIO();
 
-    // Rebuild the complete style before applying the selected scale.  This
-    // function is also called while the UI menu is open, so scaling the
-    // already-scaled style would otherwise compound on every adjustment.
+    // Rebuild every style field from ImGui defaults before applying the
+    // selected scale. StyleColorsDark() only resets colors; using it alone
+    // would leave newer spacing/size fields scaled and compound subsequent
+    // adjustments made while the UI menu is open.
+    style = ImGuiStyle();
     ImGui::StyleColorsDark(&style);
 
     // The default ImGui font draws window titles, menus, tabs and controls.
@@ -574,6 +578,33 @@ ImFont* gui_get_font(int index)
 float gui_get_default_font_size(void)
 {
     return 13.0f + (static_cast<float>(config_debug.font_size & 3) * 3.0f);
+}
+
+float gui_combo_width_for_text(const char* longest_item)
+{
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float text_width = longest_item ? ImGui::CalcTextSize(longest_item).x : 0.0f;
+    return text_width + ImGui::GetFrameHeight() + (style.FramePadding.x * 2.0f)
+        + (ImGui::GetFontSize() * 0.75f);
+}
+
+float gui_combo_width_for_items(const char* items_separated_by_zeros)
+{
+    float width = 0.0f;
+    if (items_separated_by_zeros)
+    {
+        for (const char* item = items_separated_by_zeros; *item; item += std::strlen(item) + 1)
+            width = std::max(width, gui_combo_width_for_text(item));
+    }
+    return width;
+}
+
+float gui_combo_width_for_array(const char* const items[], int item_count)
+{
+    float width = 0.0f;
+    for (int i = 0; items && i < item_count; ++i)
+        width = std::max(width, gui_combo_width_for_text(items[i]));
+    return width;
 }
 
 
@@ -924,6 +955,63 @@ static void recent_list_remove(std::string* entries, int count, int index)
     config_write();
 }
 
+// Preserve the distinguishing tail of a path when a recent-file submenu
+// would otherwise occupy most of the display. Cuts only at a path separator,
+// following the same rule used by Dual's recent-path popup.
+static std::string recent_path_label(const std::string& path, float max_width)
+{
+    if (ImGui::CalcTextSize(path.c_str()).x <= max_width)
+        return path;
+
+    // Inside the user's home, start from its first meaningful directory:
+    // /Users/name/Documents/... becomes /Documents/... . On a drive-letter
+    // path keep the drive root and apply the same rule.
+    std::string visible_path = path;
+    if (const char* home_folder = SDL_GetUserFolder(SDL_FOLDER_HOME))
+    {
+        std::string home(home_folder);
+        if (!home.empty() && visible_path.compare(0, home.size(), home) == 0)
+        {
+            const std::string relative = visible_path.substr(home.size());
+            if (home.size() >= 3 && home[1] == ':' &&
+                (home[2] == '/' || home[2] == '\\'))
+                visible_path = home.substr(0, 3) + relative;
+            else
+                visible_path = "/" + relative;
+        }
+    }
+
+    size_t component_start = 0;
+    if (!visible_path.empty() && (visible_path[0] == '/' || visible_path[0] == '\\'))
+        component_start = 1;
+    else if (visible_path.size() >= 3 && visible_path[1] == ':' &&
+             (visible_path[2] == '/' || visible_path[2] == '\\'))
+        component_start = 3;
+
+    const size_t first_separator = visible_path.find_first_of("/\\", component_start);
+    if (first_separator == std::string::npos)
+        return visible_path;
+
+    const std::string prefix = visible_path.substr(0, first_separator);
+    const char separator_char = visible_path[first_separator];
+    for (size_t separator = first_separator;
+         separator != std::string::npos;
+         separator = visible_path.find_first_of("/\\", separator + 1))
+    {
+        const std::string candidate = prefix + separator_char + "..." +
+            visible_path.substr(separator);
+        if (ImGui::CalcTextSize(candidate.c_str()).x <= max_width)
+            return candidate;
+    }
+
+    // A single very long filename cannot be shortened at a component
+    // boundary. Keep it intact rather than cutting a UTF-8 sequence.
+    const size_t last_separator = visible_path.find_last_of("/\\");
+    return last_separator == std::string::npos
+        ? visible_path
+        : prefix + separator_char + "..." + visible_path.substr(last_separator);
+}
+
 // Renders one "Open Recent" list: each row is the path plus a right-aligned
 // delete button. Returns the index the user chose to open, or -1.
 //
@@ -933,13 +1021,24 @@ static void recent_list_remove(std::string* entries, int count, int index)
 static int recent_list_menu(std::string* entries, int count)
 {
     const float row_height = ImGui::GetFrameHeight();
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float spacing = style.ItemSpacing.x;
+    const float menu_width = ImGui::GetMainViewport()->WorkSize.x * 0.50f;
+    const float menu_chrome_width = row_height + spacing +
+        (style.WindowPadding.x * 2.0f);
+    const float max_label_width = std::max(ImGui::GetFontSize() * 12.0f,
+        menu_width - menu_chrome_width);
+
+    std::vector<std::string> labels(static_cast<size_t>(count));
 
     float label_width = 0.0f;
     for (int i = 0; i < count; i++)
         if (entries[i].length() > 0)
+        {
+            labels[static_cast<size_t>(i)] = recent_path_label(entries[i], max_label_width);
             label_width = std::max(label_width,
-                ImGui::CalcTextSize(entries[i].c_str()).x);
+                ImGui::CalcTextSize(labels[static_cast<size_t>(i)].c_str()).x);
+        }
 
     int chosen = -1;
     int remove = -1;
@@ -955,10 +1054,16 @@ static int recent_list_menu(std::string* entries, int count)
         // Fixed row size, so neither the menu width nor the row height can
         // change when the button appears: the list would shift under the
         // pointer that is trying to aim at it.
-        if (ImGui::Selectable(entries[i].c_str(), false,
+        const std::string& label = labels[static_cast<size_t>(i)];
+        if (ImGui::Selectable("##recent_entry", false,
                 ImGuiSelectableFlags_AllowOverlap,
                 ImVec2(label_width, row_height)))
             chosen = i;
+        const float text_y = row_min.y + (row_height - ImGui::GetFontSize()) * 0.5f;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(row_min.x, text_y),
+            ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+        if (label != entries[i] && ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", entries[i].c_str());
 
         const ImVec2 row_max(row_min.x + label_width + spacing + row_height,
                              row_min.y + row_height);
@@ -1179,7 +1284,7 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Fast Forward Speed"))
             {
-                ImGui::PushItemWidth(100.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("Unlimited"));
                 ImGui::Combo("##fwd", &config_emulator.ffwd_speed, "X 1.5\0X 2\0X 2.5\0X 3\0Unlimited\0\0");
                 ImGui::PopItemWidth();
                 ImGui::EndMenu();
@@ -1201,7 +1306,7 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Save State Slot"))
             {
-                ImGui::PushItemWidth(100.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("Slot 5"));
                 ImGui::Combo("##slot", &config_emulator.save_slot, "Slot 1\0Slot 2\0Slot 3\0Slot 4\0Slot 5\0\0");
                 ImGui::PopItemWidth();
                 ImGui::EndMenu();
@@ -1253,7 +1358,7 @@ static void main_menu(void)
             // timing. It is not a geographical region setting.
             if (ImGui::BeginMenu("VDP"))
             {
-                ImGui::PushItemWidth(130.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("TMS9918 (NTSC, 59.9227 Hz)"));
                 if (ImGui::Combo("##emu_vdp", &config_emulator.vdp,
                     "Automatic (database)\0TMS9918 (NTSC, 59.9227 Hz)\0TMS9929 (PAL, 50.1590 Hz)\0\0"))
                 {
@@ -1270,7 +1375,7 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Mapper"))
             {
-                ImGui::PushItemWidth(130.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("Auto (detect)"));
                 ImGui::Combo("##mapper_mode", &config_emulator.mapper_mode,
                     "Auto (detect)\0Manual\0\0");
                 ImGui::PopItemWidth();
@@ -1366,7 +1471,7 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Save State Location"))
             {
-                ImGui::PushItemWidth(220.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("Savestates In Custom Folder"));
                 if (ImGui::Combo("##savestate_option", &config_emulator.savestates_dir_option, "Savestates In Custom Folder\0Savestates In ROM Folder\0\0"))
                 {
                     emu_savestates_dir_option = config_emulator.savestates_dir_option;
@@ -1597,7 +1702,7 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Aspect Ratio"))
             {
-                ImGui::PushItemWidth(160.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("Square Pixels (1:1 PAR)"));
                 ImGui::Combo("##ratio", &config_video.ratio, "Square Pixels (1:1 PAR)\0Standard (4:3 DAR)\0Wide (16:9 DAR)\0\0");
                 ImGui::PopItemWidth();
                 ImGui::EndMenu();
@@ -1605,10 +1710,10 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Overscan"))
             {
-                ImGui::PushItemWidth(150.0f);
+                ImGui::PushItemWidth(gui_combo_width_for_text("Full (284 width)"));
                 if (ImGui::Combo("##overscan", &config_video.overscan, "Disabled\0Top+Bottom\0Full (272 width)\0Full (284 width)\0\0"))
                 {
-                    if (!config_debug.debug)
+                    if (!config_debug.debug || config_debug.video_as_main_settings)
                         apply_video_output_source(config_video);
                 }
                 ImGui::PopItemWidth();
@@ -1838,12 +1943,12 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Palette"))
             {
-                ImGui::PushItemWidth(180.0f);
 #if GEARSF7000_PRODUCT_SC3000
                 const char* palette_names = "Original\0TMS9918\0TMS9918 Analog\0Custom\0\0";
 #else
                 const char* palette_names = "Coleco\0TMS9918\0TMS9918 Analog\0Custom\0\0";
 #endif
+                ImGui::PushItemWidth(gui_combo_width_for_items(palette_names));
                 if (ImGui::Combo("##palette", &config_video.palette, palette_names, 11))
                 {
                     update_palette();
@@ -1950,7 +2055,7 @@ static void main_menu(void)
 
                     if (ImGui::BeginMenu("Directional Controls"))
                     {
-                        ImGui::PushItemWidth(150.0f);
+                        ImGui::PushItemWidth(gui_combo_width_for_text("Left Analog Stick"));
                         ImGui::Combo("##directional", &config_input[0].gamepad_directional, "D-pad\0Left Analog Stick\0\0");
                         ImGui::PopItemWidth();
                         ImGui::EndMenu();
@@ -1987,7 +2092,7 @@ static void main_menu(void)
 
                     if (ImGui::BeginMenu("Directional Controls"))
                     {
-                        ImGui::PushItemWidth(150.0f);
+                        ImGui::PushItemWidth(gui_combo_width_for_text("Left Analog Stick"));
                         ImGui::Combo("##directional", &config_input[1].gamepad_directional, "D-pad\0Left Analog Stick\0\0");
                         ImGui::PopItemWidth();
                         ImGui::EndMenu();
@@ -2135,21 +2240,32 @@ static void main_menu(void)
         }
 
 #ifdef DEBUG_TOOLS
-        if (ImGui::BeginMenu("UI Setup"))
+        if (ImGui::BeginMenu("UI Settings"))
         {
             static float pending_ui_scale = 0.0f;
             if (pending_ui_scale <= 0.0f)
                 pending_ui_scale = config_debug.ui_scale;
+
+            const float setup_label_width = std::max(
+                ImGui::CalcTextSize("Global scale").x,
+                ImGui::CalcTextSize("Font Size").x);
+            const float setup_control_x = ImGui::GetCursorPosX() +
+                setup_label_width + ImGui::GetStyle().ItemSpacing.x;
+
+            ImGui::TextUnformatted("Global scale");
+            ImGui::SameLine(setup_control_x);
             ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-            if (ImGui::InputFloat("Global scale", &pending_ui_scale, 0.05f, 0.10f, "%.2f"))
+            if (ImGui::InputFloat("##global_scale", &pending_ui_scale, 0.025f, 0.10f, "%.3f"))
             {
                 pending_ui_scale = std::clamp(pending_ui_scale, 0.75f, 2.0f);
                 config_debug.ui_scale = pending_ui_scale;
                 set_style();
             }
-            ImGui::Separator();
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-            if (ImGui::Combo("Font Size", &config_debug.font_size,
+
+            ImGui::TextUnformatted("Font Size");
+            ImGui::SameLine(setup_control_x);
+            ImGui::SetNextItemWidth(gui_combo_width_for_text("Very Small"));
+            if (ImGui::Combo("##font_size", &config_debug.font_size,
                 "Very Small\0Small\0Medium\0Large\0\0"))
                 gui_default_font = default_font[config_debug.font_size];
             ImGui::Separator();
@@ -2177,8 +2293,7 @@ static void main_menu(void)
 
             if (ImGui::MenuItem("Enable", "", &config_debug.debug))
             {
-                apply_video_output_source(config_debug.debug
-                    ? config_debug.video : static_cast<const config_VideoOutput&>(config_video));
+                apply_video_output_source(config_video_output_for_mode(config_debug.debug));
                 if (config_debug.debug)
                     emu_debug_step();
                 else
@@ -2294,6 +2409,17 @@ static void main_menu(void)
 
             if (ImGui::BeginMenu("Video", config_debug.debug))
             {
+                if (ImGui::MenuItem("As Main Video Settings", "",
+                    &config_debug.video_as_main_settings))
+                {
+                    video_setup_profile = config_debug.video_as_main_settings
+                        ? static_cast<config_VideoOutput*>(&config_video)
+                        : &config_debug.video;
+                    apply_video_output_source(config_video_output_for_mode(true));
+                }
+                ImGui::Separator();
+                ImGui::BeginDisabled(config_debug.video_as_main_settings);
+
                 if (ImGui::BeginMenu("Scale"))
                 {
                     menu_video_output_scale(config_debug.video, true);
@@ -2302,7 +2428,7 @@ static void main_menu(void)
 
                 if (ImGui::BeginMenu("Aspect Ratio"))
                 {
-                    ImGui::PushItemWidth(160.0f);
+                    ImGui::PushItemWidth(gui_combo_width_for_text("Square Pixels (1:1 PAR)"));
                     ImGui::Combo("##debug_ratio", &config_debug.video.ratio,
                         "Square Pixels (1:1 PAR)\0Standard (4:3 DAR)\0Wide (16:9 DAR)\0\0");
                     ImGui::PopItemWidth();
@@ -2311,7 +2437,7 @@ static void main_menu(void)
 
                 if (ImGui::BeginMenu("Overscan"))
                 {
-                    ImGui::PushItemWidth(150.0f);
+                    ImGui::PushItemWidth(gui_combo_width_for_text("Full (284 width)"));
                     if (ImGui::Combo("##debug_overscan", &config_debug.video.overscan,
                         "Disabled\0Top+Bottom\0Full (272 width)\0Full (284 width)\0Full Frame\0\0"))
                     {
@@ -2328,6 +2454,8 @@ static void main_menu(void)
                     menu_video_output_postprocessing(config_debug.video);
                     ImGui::EndMenu();
                 }
+
+                ImGui::EndDisabled();
 
                 ImGui::Separator();
                 ImGui::MenuItem("Show VRAM Viewer", "", &config_debug.show_video);
@@ -2601,8 +2729,7 @@ static bool main_window(void)
     bool hasFocus = true;
 
     const bool config_isdebug = config_debug.debug;
-    config_VideoOutput& video_output = config_isdebug
-        ? config_debug.video : static_cast<config_VideoOutput&>(config_video);
+    config_VideoOutput& video_output = config_video_output_for_mode(config_isdebug);
 
     GC_RuntimeInfo runtime;
     emu_get_runtime(runtime);
@@ -4112,9 +4239,7 @@ static void window_crt_lottes_setup(void)
         return;
 
     config_VideoOutput& output = video_setup_profile
-        ? *video_setup_profile
-        : (config_debug.debug ? config_debug.video
-                              : static_cast<config_VideoOutput&>(config_video));
+        ? *video_setup_profile : config_video_output_for_mode(config_debug.debug);
 
     // Not AlwaysAutoResize: combined with the SetNextItemWidth(-1.0f)
     // sliders below, auto-resize's width feeds back into itself frame over
@@ -4193,9 +4318,7 @@ static void window_advanced_scaling_setup(void)
         return;
 
     config_VideoOutput& output = video_setup_profile
-        ? *video_setup_profile
-        : (config_debug.debug ? config_debug.video
-                              : static_cast<config_VideoOutput&>(config_video));
+        ? *video_setup_profile : config_video_output_for_mode(config_debug.debug);
 
     // Same AlwaysAutoResize/SetNextItemWidth feedback loop as
     // window_crt_lottes_setup - fixed initial size avoids it.

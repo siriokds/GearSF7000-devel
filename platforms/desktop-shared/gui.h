@@ -96,6 +96,11 @@ EXTERN void gui_sk1100_release_virtual_keys(void);
 
 EXTERN ImFont* gui_get_font(int index);
 EXTERN float gui_get_default_font_size(void);
+// Combo widths follow the active font and global content scale. The helper
+// includes the arrow button, frame padding and a small readability margin.
+EXTERN float gui_combo_width_for_text(const char* longest_item);
+EXTERN float gui_combo_width_for_items(const char* items_separated_by_zeros);
+EXTERN float gui_combo_width_for_array(const char* const items[], int item_count);
 
 // Raw binary export/import between an arbitrary in-memory buffer and a file
 // on disk. Offsets/lengths are relative to memoryPtr itself (buffer start),

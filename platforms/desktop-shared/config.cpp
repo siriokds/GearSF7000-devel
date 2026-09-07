@@ -384,10 +384,10 @@ void config_read(void)
     if (config_video.overscan < 0 || config_video.overscan > 3)
         config_video.overscan = 1;
 
-    // A missing [DebugVideo] section intentionally uses config_Debug's
-    // conservative defaults. The first config_write() materializes every
-    // key, after which this profile evolves independently from [Video].
+    // The debug output follows the main profile by default. Its independent
+    // values remain persistent and become active when that link is disabled.
 #if GEARSF7000_ENABLE_DEBUG_TOOLS
+    config_debug.video_as_main_settings = read_bool("DebugVideo", "AsMainVideoSettings", true);
     config_debug.video.scale = read_int("DebugVideo", "Scale", config_debug.video.scale);
     config_debug.video.ratio = read_int("DebugVideo", "AspectRatio", config_debug.video.ratio);
     config_debug.video.overscan = read_int("DebugVideo", "Overscan", config_debug.video.overscan);
@@ -691,6 +691,7 @@ void config_write(void)
     write_float("Video", "ScanlinesIntensity", config_video.scanlines_intensity);
 
 #if GEARSF7000_ENABLE_DEBUG_TOOLS
+    write_bool("DebugVideo", "AsMainVideoSettings", config_debug.video_as_main_settings);
     write_int("DebugVideo", "Scale", config_debug.video.scale);
     write_int("DebugVideo", "AspectRatio", config_debug.video.ratio);
     write_int("DebugVideo", "Overscan", config_debug.video.overscan);

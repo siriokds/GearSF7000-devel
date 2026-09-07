@@ -314,10 +314,10 @@ struct config_Hotkey
 struct config_Debug
 {
     bool debug = false;
-    // Independent presentation profile for the debugger's Output window.
-    // Conservative defaults are intentional for old config files which do
-    // not have a [DebugVideo] section yet: native picture, square pixels and
-    // no display shader. config_write() creates the complete section.
+    // By default the debugger Output window follows the main Video profile.
+    // Disable this to use the independent profile below.
+    bool video_as_main_settings = true;
+    // Independent presentation profile used when the link above is disabled.
     config_VideoOutput video = [] {
         config_VideoOutput output;
         output.scale = 1;
@@ -458,6 +458,12 @@ inline Cartridge::CartridgeTypes config_fallback_cartridge_type(void)
 EXTERN config_Input config_input[2];
 EXTERN config_Hotkey config_hotkeys[config_HotkeyIndex_COUNT];
 EXTERN config_Debug config_debug;
+
+inline config_VideoOutput& config_video_output_for_mode(bool debug_mode)
+{
+    return debug_mode && !config_debug.video_as_main_settings
+        ? config_debug.video : static_cast<config_VideoOutput&>(config_video);
+}
 
 EXTERN void config_init(void);
 EXTERN void config_destroy(void);

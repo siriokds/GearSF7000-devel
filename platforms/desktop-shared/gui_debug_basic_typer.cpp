@@ -317,8 +317,8 @@ void gui_debug_basic_typer_window(void)
 
     ImGui::SameLine();
     ImGui::BeginDisabled(busy);
-    ImGui::SetNextItemWidth(110.0f);
     const char* names[] = { k_speeds[0].name, k_speeds[1].name };
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(names, IM_ARRAYSIZE(names)));
     int speed_index = config_debug.basic_typer_speed;
     if (ImGui::Combo("##typer_speed", &speed_index, names, IM_ARRAYSIZE(names)))
         config_debug.basic_typer_speed = speed_index;

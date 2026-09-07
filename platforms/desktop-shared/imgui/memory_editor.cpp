@@ -38,6 +38,7 @@
 #include "memory_editor.h"
 #include "colors.h"
 #include "../../../src/definitions.h"
+#include "../gui.h"
 
 namespace
 {
@@ -775,15 +776,15 @@ void MemEditor::DrawOptions()
         ImGui::SliderInt("##columns", &m_options.bytes_per_row, 4, 32);
         ImGui::Text("Preview as:");
         ImGui::SameLine();
-        ImGui::PushItemWidth(120.0f);
+        ImGui::SetNextItemWidth(gui_combo_width_for_items("Uint8\0Int8\0Uint16\0Int16\0UInt32\0Int32\0\0"));
         ImGui::Combo("##preview_type", &m_options.preview_data_type, "Uint8\0Int8\0Uint16\0Int16\0UInt32\0Int32\0\0");
         ImGui::Text("Preview as:");
         ImGui::SameLine();
-        ImGui::PushItemWidth(120.0f);
+        ImGui::SetNextItemWidth(gui_combo_width_for_items("Little Endian\0Big Endian\0\0"));
         ImGui::Combo("##preview_endianess", &m_options.preview_endianess, "Little Endian\0Big Endian\0\0");
         ImGui::Text("Data font:");
         ImGui::SameLine();
-        ImGui::PushItemWidth(160.0f);
+        ImGui::SetNextItemWidth(gui_combo_width_for_text("Iosevka Condensed Light"));
         ImGui::Combo("##data_font", &m_options.data_font,
             "Debugger fixed\0Iosevka Condensed\0Iosevka Condensed Light\0\0");
         ImGui::Checkbox("Uppercase hex", &m_options.uppercase_hex);
@@ -1091,7 +1092,7 @@ void MemEditor::WatchPopup()
         ImGui::InputTextWithHint("##bookaddr", buf, address, m_hex_addr_digits + 1, ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase);
 
         ImGui::Text("Size:");
-        ImGui::PushItemWidth(120);
+        ImGui::SetNextItemWidth(gui_combo_width_for_items("8 bits\0" "16 bits\0" "24 bits\0" "32 bits\0\0"));
         ImGui::Combo("##watch_size", &size, "8 bits\0" "16 bits\0" "24 bits\0" "32 bits\0\0");
 
         ImGui::Text("Description:");
@@ -1486,12 +1487,12 @@ void MemEditor::SearchWindow()
     snprintf(window_title, 64, "%s Search", m_title);
     ImGui::Begin(window_title, &m_search_window);
 
-    ImGui::PushItemWidth(240);
     const char* search_opeartors[] = {"Value is less than", "Value is greater than", "Value is equal to", "Value is not equal to", "Value is less than or equal to", "Value is greater than or equal to"};
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(search_opeartors, IM_ARRAYSIZE(search_opeartors)));
     ImGui::Combo("##search_op", &m_search_operator, search_opeartors, IM_ARRAYSIZE(search_opeartors));
 
-    ImGui::PushItemWidth(160);
     const char* search_compare_types[] = {"Previous snapshot", "Specific value", "Specific address"};
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(search_compare_types, IM_ARRAYSIZE(search_compare_types)));
     ImGui::Combo("##search_comp", &m_search_compare_type, search_compare_types, IM_ARRAYSIZE(search_compare_types));
 
     if (m_search_compare_type == 1)
@@ -1575,8 +1576,8 @@ void MemEditor::SearchWindow()
         }
     }
 
-    ImGui::PushItemWidth(140);
     const char* search_types[] = {"Hexadecimal", "Signed", "Unsigned"};
+    ImGui::SetNextItemWidth(gui_combo_width_for_array(search_types, IM_ARRAYSIZE(search_types)));
     ImGui::Combo("##search_type", &m_search_data_type, search_types, IM_ARRAYSIZE(search_types));
 
     if (ImGui::Button("Capture"))

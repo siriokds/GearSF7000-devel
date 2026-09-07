@@ -177,7 +177,7 @@ void DrawTransport(int count, bool can_scrub)
     ImGui::PopFont();
 
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(72);
+    ImGui::SetNextItemWidth(gui_combo_width_for_items("0.25x\0 0.5x\0   1x\0   2x\0   4x\0\0"));
     ImGui::Combo("##rw_playback_speed", &playback_speed_index,
                  "0.25x\0 0.5x\0   1x\0   2x\0   4x\0\0");
 
