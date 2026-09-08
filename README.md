@@ -21,6 +21,8 @@ programs or follow a single VDP access down to the exact raster dot and VRAM
 slot. GearSF7000 is designed both for enjoying the original machines and for
 understanding precisely what they are doing.
 
+<img src="https://raw.githubusercontent.com/wiki/siriokds/GearSF7000-devel/gearsf7000-debugger.png" alt="GearSF7000 desktop emulator and debugger">
+
 ## Highlights
 
 - **Two base systems:** SG-1000 console and SC-3000 computer, each with its
