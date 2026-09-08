@@ -4,7 +4,11 @@
 
 #include "mcp_tool_definitions.h"
 
-void AddMcpToolDefinitionsInput(json& tools)
+// Split into several functions because one function with dozens of nested
+// nlohmann::json initializer-lists blows past MSVC's C1060 compiler heap
+// limit (each part below compiles fine on its own).
+
+static void AddMcpToolDefinitionsInput_BasicAndKeyboard(json& tools)
 {
     // Controller input tools
     tools.push_back({
@@ -139,7 +143,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"key", "action"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_ControllerAndSprites(json& tools)
+{
     tools.push_back({
         {"name", "controller_button"},
         {"title", "Controller Button"},
@@ -297,7 +304,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_Disassembler(json& tools)
+{
     // Disassembler tools
     tools.push_back({
         {"name", "debug_run_to_cursor"},
@@ -399,7 +409,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"bank", "address"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_MemoryEditorBookmarks(json& tools)
+{
     // Memory editor tools
     tools.push_back({
         {"name", "select_memory_range"},
@@ -492,7 +505,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"area", "address"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_Watches(json& tools)
+{
     tools.push_back({
         {"name", "watch_add"},
         {"title", "Add Watch"},
@@ -570,6 +586,23 @@ void AddMcpToolDefinitionsInput(json& tools)
         }}
     });
 
+    // Nested via local json variables, not a single literal, to keep MSVC's
+    // compiler heap (C1060) from choking on too-deep initializer-list nesting.
+    json watch_condition_item_properties = json::object();
+    watch_condition_item_properties["id"] = {{"type", "integer"}, {"description", "Watch id."}};
+    watch_condition_item_properties["op"] = {{"type", "string"}, {"enum", {"==", "!=", ">", "<", ">=", "<=", "changed", "increased", "decreased"}}};
+    watch_condition_item_properties["value"] = {{"description", "Comparison value; required for ==, !=, >, <, >=, <=, omit for changed/increased/decreased."}};
+
+    json watch_condition_item = json::object();
+    watch_condition_item["type"] = "object";
+    watch_condition_item["properties"] = watch_condition_item_properties;
+    watch_condition_item["required"] = json::array({"id", "op"});
+
+    json watch_conditions_schema = json::object();
+    watch_conditions_schema["type"] = "array";
+    watch_conditions_schema["description"] = "List of {id, op, value?}, one per watch to test. value is required for ==, !=, >, <, >=, <= and ignored/omitted for changed, increased, decreased.";
+    watch_conditions_schema["items"] = watch_condition_item;
+
     tools.push_back({
         {"name", "watch_set_condition"},
         {"title", "Set Watch Trigger Condition"},
@@ -578,19 +611,7 @@ void AddMcpToolDefinitionsInput(json& tools)
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
-                {"conditions", {
-                    {"type", "array"},
-                    {"description", "List of {id, op, value?}, one per watch to test. value is required for ==, !=, >, <, >=, <= and ignored/omitted for changed, increased, decreased."},
-                    {"items", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"id", {{"type", "integer"}, {"description", "Watch id."}}},
-                            {"op", {{"type", "string"}, {"enum", {"==", "!=", ">", "<", ">=", "<=", "changed", "increased", "decreased"}}}},
-                            {"value", {{"description", "Comparison value; required for ==, !=, >, <, >=, <=, omit for changed/increased/decreased."}}}
-                        }},
-                        {"required", json::array({"id", "op"})}
-                    }}
-                }},
+                {"conditions", watch_conditions_schema},
                 {"mode", {
                     {"type", "string"},
                     {"description", "Combine all conditions with AND or OR."},
@@ -624,7 +645,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_SymbolsAndSearch(json& tools)
+{
     tools.push_back({
         {"name", "list_disassembler_bookmarks"},
         {"title", "List Disassembler Bookmarks"},
@@ -849,7 +873,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"area", "pattern"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_Tracing(json& tools)
+{
     // Tracing tools
     tools.push_back({
         {"name", "get_trace_log"},
@@ -910,7 +937,17 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"enabled"})}
         }}
     });
+}
 
+void AddMcpToolDefinitionsInput(json& tools)
+{
+    AddMcpToolDefinitionsInput_BasicAndKeyboard(tools);
+    AddMcpToolDefinitionsInput_ControllerAndSprites(tools);
+    AddMcpToolDefinitionsInput_Disassembler(tools);
+    AddMcpToolDefinitionsInput_MemoryEditorBookmarks(tools);
+    AddMcpToolDefinitionsInput_Watches(tools);
+    AddMcpToolDefinitionsInput_SymbolsAndSearch(tools);
+    AddMcpToolDefinitionsInput_Tracing(tools);
 }
 
 #endif /* GEARSF7000_ENABLE_MCP */

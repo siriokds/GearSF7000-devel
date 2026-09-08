@@ -168,7 +168,7 @@ void SegaBasicWavTape::Tick(int cycles)
 
 
 
-bool SegaBasicWavTape::LoadBas(std::string fullPath)
+bool SegaBasicWavTape::LoadBas(std::string)
 {
 	//FilePath = fullPath;
 	//Position = 0;

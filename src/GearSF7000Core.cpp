@@ -424,7 +424,7 @@ bool GearSF7000Core::LoadROM(const char* szFilePath, Cartridge::ForceConfigurati
 }
 
 
-bool GearSF7000Core::LoadROMNull(Cartridge::ForceConfiguration* config, bool pauseAtResetVector)
+bool GearSF7000Core::LoadROMNull(Cartridge::ForceConfiguration*, bool pauseAtResetVector)
 {
     if (m_pCartridge->LoadFromNull())
     {

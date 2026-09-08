@@ -16,7 +16,7 @@ void SP400::Init()
 	Reset(false);
 }
 
-void SP400::Reset(bool running)
+void SP400::Reset(bool)
 {
 	FAULT = false;
 	BUSY = false;
@@ -40,12 +40,8 @@ uint8_t	SP400::ReadPortB()
 	return (BUSY ? 0x40 : 0x00) | (FAULT ? 0x20 : 0x00); 
 }
 
-int		SP400::WritePortC(uint8_t val) 
-{ 
-	bool t_nFEED = (val & 0x80) != 0; // PC7
-	bool t_nRESET = (val & 0x40) != 0; // PC6
-	bool t_DATA = (val & 0x20) != 0; // PC5
-
+int		SP400::WritePortC(uint8_t val)
+{
 	//if (t_nFEED == nFEED && t_nRESET == nRESET && t_DATA == DATA)
 	//	return 0; // No change
 

@@ -4,7 +4,11 @@
 
 #include "mcp_tool_definitions.h"
 
-void AddMcpToolDefinitionsDebug(json& tools)
+// Split into several functions because one function with dozens of nested
+// nlohmann::json initializer-lists blows past MSVC's C1060 compiler heap
+// limit (each part below compiles fine on its own).
+
+static void AddMcpToolDefinitionsDebug_ChipStatus(json& tools)
 {
     // Chip status tools
     tools.push_back({
@@ -157,7 +161,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_DebugExport(json& tools)
+{
     tools.push_back({
         {"name", "set_full_raster_debug_enabled"},
         {"title", "Set Full Raster Debug Enabled"},
@@ -268,7 +275,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_MediaLoad(json& tools)
+{
     // Media and state management tools
     tools.push_back({
         {"name", "load_rom"},
@@ -412,7 +422,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"required", json::array({"file_path"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_SaveStates(json& tools)
+{
     tools.push_back({
         {"name", "list_save_state_slots"},
         {"title", "List Save State Slots"},
@@ -503,7 +516,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_FastForwardAndSync(json& tools)
+{
     tools.push_back({
         {"name", "set_fast_forward_speed"},
         {"title", "Set Fast Forward Speed"},
@@ -605,6 +621,28 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
+
+static void AddMcpToolDefinitionsDebug_RewindAnalysis(json& tools)
+{
+    // Nested via local json variables, not a single literal, to keep MSVC's
+    // compiler heap (C1060) from choking on too-deep initializer-list nesting.
+    json rewind_range_item_properties = json::object();
+    rewind_range_item_properties["area"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}};
+    rewind_range_item_properties["offset"] = {{"type", "integer"}, {"minimum", 0}};
+    rewind_range_item_properties["size"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}};
+
+    json rewind_range_item = json::object();
+    rewind_range_item["type"] = "object";
+    rewind_range_item["properties"] = rewind_range_item_properties;
+    rewind_range_item["required"] = json::array({"area", "offset", "size"});
+    rewind_range_item["additionalProperties"] = false;
+
+    json rewind_memory_ranges = json::object();
+    rewind_memory_ranges["type"] = "array";
+    rewind_memory_ranges["maxItems"] = 8;
+    rewind_memory_ranges["description"] = "Physical areas from list_memory_areas; 4096 bytes each, 16384 total.";
+    rewind_memory_ranges["items"] = rewind_range_item;
 
     tools.push_back({
         {"name", "analyze_rewind_range"},
@@ -620,20 +658,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
                 {"cpu", {{"type", "boolean"}, {"description", "Include compact CPU state. Default true."}}},
                 {"vdp", {{"type", "boolean"}, {"description", "Include VDP registers, status, hashes, overflow and collision. Default true."}}},
                 {"changes_only", {{"type", "boolean"}, {"description", "Return a memory baseline then changed spans only. Default true."}}},
-                {"memory_ranges", {
-                    {"type", "array"}, {"maxItems", 8},
-                    {"description", "Physical areas from list_memory_areas; 4096 bytes each, 16384 total."},
-                    {"items", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"area", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
-                            {"offset", {{"type", "integer"}, {"minimum", 0}}},
-                            {"size", {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}}}
-                        }},
-                        {"required", json::array({"area", "offset", "size"})},
-                        {"additionalProperties", false}
-                    }}
-                }}
+                {"memory_ranges", rewind_memory_ranges}
             }},
             {"required", json::array({"start_position", "end_position"})},
             {"additionalProperties", false}
@@ -679,7 +704,16 @@ void AddMcpToolDefinitionsDebug(json& tools)
             }}
         }}
     });
+}
 
+void AddMcpToolDefinitionsDebug(json& tools)
+{
+    AddMcpToolDefinitionsDebug_ChipStatus(tools);
+    AddMcpToolDefinitionsDebug_DebugExport(tools);
+    AddMcpToolDefinitionsDebug_MediaLoad(tools);
+    AddMcpToolDefinitionsDebug_SaveStates(tools);
+    AddMcpToolDefinitionsDebug_FastForwardAndSync(tools);
+    AddMcpToolDefinitionsDebug_RewindAnalysis(tools);
 }
 
 #endif /* GEARSF7000_ENABLE_MCP */

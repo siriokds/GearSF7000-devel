@@ -86,7 +86,7 @@
 DataFile entry;
 Timer timer;
 
-void digitalWrite(int pin, int v) { }
+void digitalWrite(int, int) { }
 void LowWrite() { }
 void HighWrite() { }
 
@@ -151,7 +151,7 @@ void ZX80ByteWrite();
 void writeSampleData();
 void DirectRecording();
 
-void delay(int ms) {}
+void delay(int) {}
 
 #define memcmp_P    memcpy
 #define strstr_P    strstr
@@ -315,7 +315,7 @@ void changeDir() {
 
 
 
-void printtextF(const char* text, int l) {  //Print text to screen. 
+void printtextF(const char* text, int) {  //Print text to screen.
 
 
 #ifdef _DEBUG
@@ -328,7 +328,7 @@ void printtextF(const char* text, int l) {  //Print text to screen.
 #endif
 }
 
-void printtext(char* text, int l) {  //Print text to screen. 
+void printtext(char* text, int) {  //Print text to screen.
 
 #ifdef _DEBUG
     printf(text);
@@ -357,7 +357,6 @@ word TickToUs(word ticks) {
 int readfile(byte bytes, unsigned long p)
 {
     int i = 0;
-    int t = 0;
     if (entry.seekSet(p)) {
         i = entry.read(input, bytes);
     }

@@ -368,8 +368,16 @@ void nec765SetAudio(NEC765* fdc, Audio* pAudio)
 
 void nec765SetReadOnly(NEC765* fdc, bool readonly)
 {
-    fdc->status1 |= ST1_NW;
-    fdc->status3 |= ST3_WP;
+    if (readonly)
+    {
+        fdc->status1 |= ST1_NW;
+        fdc->status3 |= ST3_WP;
+    }
+    else
+    {
+        fdc->status1 &= ~ST1_NW;
+        fdc->status3 &= ~ST3_WP;
+    }
 }
 
 static void nec765EndSeek(NEC765* fdc)

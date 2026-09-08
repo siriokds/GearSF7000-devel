@@ -75,7 +75,6 @@ inline u8 Memory::Read(u16 address)
     else if (m_pCartridge->GetType() == Cartridge::CartridgeTypes::SC3000_2K)
     {
         u8* pRom = m_pCartridge->GetROM();
-        int romSize = m_pCartridge->GetROMSize();
 
         switch (address & 0xC000)
         {
@@ -90,7 +89,6 @@ inline u8 Memory::Read(u16 address)
     else if (m_pCartridge->GetType() == Cartridge::CartridgeTypes::SC3000_32K)
     {
         u8* pRom = m_pCartridge->GetROM();
-        int romSize = m_pCartridge->GetROMSize();
 
         switch (address & 0xC000)
         {
@@ -120,7 +118,6 @@ inline u8 Memory::Read(u16 address)
     else if (m_pCartridge->GetType() == Cartridge::CartridgeTypes::SG1000_16K)
     {
         u8* pRom = m_pCartridge->GetROM();
-        int romSize = m_pCartridge->GetROMSize();
 
         switch (address & 0xC000)
         {

@@ -212,6 +212,10 @@ SDL_GPUShader* create_crt_pass_shader(SDL_GPUShaderStage stage,
     info.stage = stage;
     info.num_samplers = (stage == SDL_GPU_SHADERSTAGE_FRAGMENT) ? fragmentSamplers : 0;
     info.num_uniform_buffers = (stage == SDL_GPU_SHADERSTAGE_FRAGMENT) ? fragmentUniformBuffers : 0;
+#ifndef __APPLE__
+    (void)metallib;
+    (void)metallibSize;
+#endif
 
     const char* driver = SDL_GetGPUDeviceDriver(gpu_device);
     if (driver && strcmp(driver, "vulkan") == 0)

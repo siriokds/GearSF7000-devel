@@ -22,7 +22,9 @@
 #include <string>
 #include <vector>
 #if defined(_WIN32)
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include "../windows/resource.h"
 #endif
@@ -4176,9 +4178,6 @@ static void menu_reset(void)
     Cartridge::ForceConfiguration config = get_force_config();
 
     emu_reset(config, config_emulator.start_paused);
-
-    GearSF7000Core* core = emu_get_core();
-    Audio* audio = core->GetAudio();
 
     if (config_emulator.start_paused)
         emu_clear_video_buffer();

@@ -4,7 +4,7 @@ TapeMotor::TapeMotor() : MotorOn(false)
 {
 }
 
-void TapeMotor::SetMotor(bool motorOn)
+void TapeMotor::SetMotor(bool)
 {
 	MotorOn = true; // motorOn;
 }

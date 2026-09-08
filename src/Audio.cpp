@@ -572,7 +572,6 @@ void Audio::PlayDriveTrack(uint8_t oldtrack, uint8_t newtrack)
     if (oldtrack == newtrack) return;
     // Ottieni il canale audio associato
 
-    int deltaTracks = std::abs(newtrack - oldtrack);
 //    int diff = newtrack > oldtrack ? newtrack - oldtrack : (newtrack < oldtrack ? oldtrack - newtrack : newtrack);
 
     //if (deltaTracks == 1)

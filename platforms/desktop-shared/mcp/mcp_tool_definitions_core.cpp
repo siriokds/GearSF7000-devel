@@ -4,7 +4,11 @@
 
 #include "mcp_tool_definitions.h"
 
-void AddMcpToolDefinitionsCore(json& tools)
+// Split into several functions because one function with dozens of nested
+// nlohmann::json initializer-lists blows past MSVC's C1060 compiler heap
+// limit (each part below compiles fine on its own).
+
+static void AddMcpToolDefinitionsCore_ExecutionControl(json& tools)
 {
     // Execution control tools
     tools.push_back({
@@ -163,7 +167,10 @@ void AddMcpToolDefinitionsCore(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsCore_Breakpoints(json& tools)
+{
     // Breakpoint tools
     tools.push_back({
         {"name", "set_breakpoint"},
@@ -410,7 +417,10 @@ void AddMcpToolDefinitionsCore(json& tools)
             {"required", json::array({"enabled"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsCore_Memory(json& tools)
+{
     // Memory tools
     tools.push_back({
         {"name", "list_memory_areas"},
@@ -449,6 +459,25 @@ void AddMcpToolDefinitionsCore(json& tools)
         }}
     });
 
+    // Nested via local json variables, not a single literal, to keep MSVC's
+    // compiler heap (C1060) from choking on too-deep initializer-list nesting.
+    json atomic_snapshot_range_item_properties = json::object();
+    atomic_snapshot_range_item_properties["area"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}};
+    atomic_snapshot_range_item_properties["offset"] = {{"type", "integer"}, {"minimum", 0}};
+    atomic_snapshot_range_item_properties["size"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}};
+
+    json atomic_snapshot_range_item = json::object();
+    atomic_snapshot_range_item["type"] = "object";
+    atomic_snapshot_range_item["properties"] = atomic_snapshot_range_item_properties;
+    atomic_snapshot_range_item["required"] = json::array({"area", "offset", "size"});
+    atomic_snapshot_range_item["additionalProperties"] = false;
+
+    json atomic_snapshot_memory_ranges = json::object();
+    atomic_snapshot_memory_ranges["type"] = "array";
+    atomic_snapshot_memory_ranges["maxItems"] = 16;
+    atomic_snapshot_memory_ranges["description"] = "Physical memory areas from list_memory_areas. At most 4096 bytes per range and 16384 bytes total.";
+    atomic_snapshot_memory_ranges["items"] = atomic_snapshot_range_item;
+
     tools.push_back({
         {"name", "get_atomic_snapshot"},
         {"title", "Get Atomic Machine Snapshot"},
@@ -460,20 +489,7 @@ void AddMcpToolDefinitionsCore(json& tools)
                 {"cpu", {{"type", "boolean"}, {"description", "Include CPU registers and clock; default true."}}},
                 {"vdp", {{"type", "boolean"}, {"description", "Include VDP registers and internal status; default true."}}},
                 {"sf7000", {{"type", "boolean"}, {"description", "Include SF-7000 state; default false."}}},
-                {"memory_ranges", {
-                    {"type", "array"}, {"maxItems", 16},
-                    {"description", "Physical memory areas from list_memory_areas. At most 4096 bytes per range and 16384 bytes total."},
-                    {"items", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"area", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
-                            {"offset", {{"type", "integer"}, {"minimum", 0}}},
-                            {"size", {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}}}
-                        }},
-                        {"required", json::array({"area", "offset", "size"})},
-                        {"additionalProperties", false}
-                    }}
-                }}
+                {"memory_ranges", atomic_snapshot_memory_ranges}
             }},
             {"additionalProperties", false}
         }}
@@ -525,7 +541,10 @@ void AddMcpToolDefinitionsCore(json& tools)
             {"required", json::array({"name", "value"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsCore_DisassemblyAndMedia(json& tools)
+{
     // Disassembly tool
     tools.push_back({
         {"name", "get_disassembly"},
@@ -632,7 +651,14 @@ void AddMcpToolDefinitionsCore(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+void AddMcpToolDefinitionsCore(json& tools)
+{
+    AddMcpToolDefinitionsCore_ExecutionControl(tools);
+    AddMcpToolDefinitionsCore_Breakpoints(tools);
+    AddMcpToolDefinitionsCore_Memory(tools);
+    AddMcpToolDefinitionsCore_DisassemblyAndMedia(tools);
 }
 
 #endif /* GEARSF7000_ENABLE_MCP */

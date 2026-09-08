@@ -93,7 +93,7 @@ void MachineIOPorts::Reset()
 	SC3000_PPI_PortCTRL = 0x00;
 }
 
-void MachineIOPorts::onByteReceived(uint8_t byte) {
+void MachineIOPorts::onByteReceived(uint8_t) {
 
 }
 
