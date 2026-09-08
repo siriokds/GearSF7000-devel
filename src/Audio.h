@@ -328,7 +328,7 @@ inline void Audio::Tick(unsigned int clockCycles)
 
 inline void Audio::WriteAudioRegister(u8 value)
 {
-    m_pApu->write_data(m_ElapsedCycles, value);
+    m_pApu->write_data((blip_time_t)m_ElapsedCycles, value);
 #if GEARSF7000_ENABLE_RECORDER
     if (m_bVgmRecordingEnabled)
         m_VgmRecorder.WritePSG(value);
@@ -352,7 +352,7 @@ inline void Audio::AyWriteData(u8 value)
     // never was would be a false record of the session, not a faithful one.
     if (m_bAyEnabled)
     {
-        m_pAyApu->write(m_ElapsedCycles, m_AySelectedRegister, value);
+        m_pAyApu->write((blip_time_t)m_ElapsedCycles, m_AySelectedRegister, value);
 #if GEARSF7000_ENABLE_RECORDER
         if (m_bVgmRecordingEnabled)
             m_VgmRecorder.WriteAY8910(m_AySelectedRegister, value);

@@ -11,9 +11,9 @@
 
 PROGMEM const char TZXTape[7] = { 'Z','X','T','a','p','e','!' };
 PROGMEM const char TAPcheck[7] = { 'T','A','P','t','a','p','.' };
-PROGMEM const char ZX81Filename[9] = { 'T','Z','X','D','U','I','N','O',0x9D };
+PROGMEM const char ZX81Filename[9] = { 'T','Z','X','D','U','I','N','O',(char)0x9D };
 PROGMEM const char AYFile[8] = { 'Z','X','A','Y','E','M','U','L' }; // added additional AY file header check
-PROGMEM const char TAPHdr[20] = { 0x0,0x0,0x3,'Z','X','A','Y','F','i','l','e',' ',' ',0x1A,0xB,0x0,0xC0,0x0,0x80,0x6E }; // 
+PROGMEM const char TAPHdr[20] = { 0x0,0x0,0x3,'Z','X','A','Y','F','i','l','e',' ',' ',0x1A,0xB,0x0,(char)0xC0,0x0,(char)0x80,0x6E }; // 
 //const char TAPHdr[24] = {0x13,0x0,0x0,0x3,' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',0x1A,0xB,0x0,0xC0,0x0,0x80,0x52,0x1C,0xB,0xFF};
 
 //TZX block list - uncomment as supported

@@ -94,7 +94,7 @@ void MachineIOPorts::Reset()
 }
 
 void MachineIOPorts::onByteReceived(uint8_t byte) {
-
+    (void)byte; // unused
 }
 
 void MachineIOPorts::SaveState(std::ostream& stream) const

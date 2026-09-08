@@ -340,13 +340,13 @@ double SegaBasicBitTape::CalculateRevolutions(int position, double tapeLengthInI
 
 float SegaBasicBitTape::GetCounter() 
 {
-	return CalculateRevolutions(Position, 60) * 100;
+	return (float)(CalculateRevolutions(Position, 60) * 100);
 }
 
 
 float SegaBasicBitTape::GetCounterMax()
 {
-	return CalculateRevolutions(EndPosition, 60) * 100;
+	return (float)(CalculateRevolutions(EndPosition, 60) * 100);
 }
 
 std::string SegaBasicBitTape::GetInfo()

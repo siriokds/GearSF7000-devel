@@ -208,6 +208,9 @@ SDL_GPUShader* create_crt_pass_shader(SDL_GPUShaderStage stage,
     const uint8_t* dxil, size_t dxilSize,
     int fragmentSamplers = 1, int fragmentUniformBuffers = 1)
 {
+    (void)metallib;
+    (void)metallibSize;
+
     SDL_GPUShaderCreateInfo info = {};
     info.stage = stage;
     info.num_samplers = (stage == SDL_GPU_SHADERSTAGE_FRAGMENT) ? fragmentSamplers : 0;

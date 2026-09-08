@@ -49,7 +49,7 @@ public:
     {
         if (!output || max < 1) return;
 
-        int len = FileName.length();
+        int len = (int)FileName.length();
         if (len > max) len = max;
 
         for (int i = 0; i < len; i++)
@@ -109,7 +109,7 @@ public:
 
             stream->read((char*)buffer, bytes);
         }
-        return bytes;
+        return (int)bytes;
     }
 
     int read(char* buffer, size_t bytes) {
@@ -117,7 +117,7 @@ public:
 
             stream->read(buffer, bytes);
         }
-        return bytes;
+        return (int)bytes;
     }
 
 

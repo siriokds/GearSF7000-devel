@@ -157,7 +157,7 @@ public:
 	{
 		size_t obtained = 0;
 
-		int nameLength = programName.length();
+		int nameLength = (int)programName.length();
 		if (nameLength > 16) nameLength = 16;
 		
 		for (int i = 0; i < 16; i++)
