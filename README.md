@@ -4,11 +4,14 @@
 [![Release](https://img.shields.io/github/v/tag/siriokds/GearSF7000-devel?label=version)](https://github.com/siriokds/GearSF7000-devel/releases)
 [![Activity](https://img.shields.io/github/commit-activity/t/siriokds/GearSF7000-devel)](https://github.com/siriokds/GearSF7000-devel/commits/main)
 
-GearSF7000 emulates two base systems: the Sega SG-1000 console and the Sega
-SC-3000 computer. The SC-3000 configuration can be expanded with the Sega
-SF-7000 Super Control Station and the Sega SR-1000 Tape Recorder. SF-7000 is
-an expansion peripheral, not a standalone computer: it connects through its
-dedicated IPL cartridge, which occupies the cartridge slot.
+GearSF7000 started from the Sega SG-1000 console and the Sega SC-3000
+computer, which remain its core. The SC-3000 configuration can be expanded with
+the Sega SF-7000 Super Control Station and the Sega SR-1000 Tape Recorder.
+SF-7000 is an expansion peripheral, not a standalone computer: it connects
+through its dedicated IPL cartridge, which occupies the cartridge slot.
+
+The same TMS9918-family hardware also runs the ColecoVision (with the Super
+Game Module), MSX1 and the Sord M5, each on its own motherboard model.
 
 The emulator combines accurate processor and video timing with disk and
 cassette support, an advanced frame recorder and a full development
@@ -23,8 +26,10 @@ understanding precisely what they are doing.
 
 ## Highlights
 
-- **Two base systems:** SG-1000 console and SC-3000 computer, each with its
-  own memory map and hardware configuration.
+- **SG-1000 and SC-3000:** console and computer, each with its own memory map
+  and hardware configuration, in Japanese and Export versions of the SC-3000.
+- **More TMS9918 machines:** ColecoVision with the Super Game Module and
+  MegaCart, MSX1 (NTSC/PAL) and Sord M5 (NTSC/PAL).
 - **SC-3000 peripherals:** Sega SK-1100 keyboard handling, Sega SF-7000 Super
   Control Station and Sega SR-1000 Tape Recorder.
 - **Timing you can inspect:** partial Z80 machine cycles, native PAL/NTSC
@@ -44,7 +49,7 @@ understanding precisely what they are doing.
   branching from earlier frames and analysis of memory changes over time.
 - **Deep integrated debugging:** CPU, disassembly, memory, symbols, VDP,
   sprites, raster, audio, cassette, disk, FDC765, serial and event tools.
-- **External tooling:** an optional MCP server with 132 commands and headless
+- **External tooling:** an optional MCP server with 150 commands and headless
   operation over standard input/output or local HTTP.
 
 ## Downloads
@@ -59,9 +64,12 @@ from source using the instructions below.
 | Area | Implemented hardware and behaviour |
 | --- | --- |
 | CPU | Zilog Z80 with documented and undocumented behaviour, register R, MEMPTR, interrupt lines, reset handling and instruction-level inspection. |
-| Video | TMS9918/TMS9929 VDP with raster timing, VRAM arbitration, sprite evaluation, status flags and its internal 171-slot scanline schedule. |
+| Video | TMS9918A, TMS9928A and TMS9929A VDPs with raster timing, VRAM arbitration, sprite evaluation, status flags and the internal 171-slot scanline schedule; the TMS9918B, a TMS9918A-compatible device whose extended registers unlock through a documented sequence; and the PICO9918 replacement board. |
 | Sound | SN76489 PSG, optional AY-3-8910 / YM2149 expansion, resampling, VGM/WAV capture and machine-speaker paths. |
 | Base systems | SG-1000 console mapping and SC-3000 computer memory map, PPI, keyboard, cartridge handling and Sega BASIC workflows. |
+| ColecoVision | 1 KiB console RAM, external 8 KiB BIOS, keypad controllers, the VDP interrupt on NMI and one wait state on every M1 cycle; Super Game Module RAM and AY; MegaCart banking. |
+| MSX1 | 64 KiB RAM, built-in C-BIOS or an external 32 KiB BIOS, linear 8/16/32 KiB cartridges, onboard AY, International keyboard, key click and WAV/MP3 cassette playback. Joysticks and banked cartridges are not implemented yet. |
+| Sord M5 | 4 KiB console RAM, external 8 KiB BIOS, optional EM-5 32 KiB RAM, Z80 CTC, keyboard and two joysticks; cartridges up to 20 KB. Tape and printer are not implemented. |
 | Sega SF-7000 Super Control Station | Expansion with dedicated IPL cartridge, FDC765 floppy subsystem, drive control, disk timing, SegaDOS media and Intel 8251A serial interface. |
 | Sega SR-1000 Tape Recorder | Cassette motor, tape transport, tape speaker and WAV/Sega BASIC tape handling. |
 
@@ -220,6 +228,10 @@ SF-7000 IPL cartridge cannot occupy it together.
   transport controls, tape files and speaker monitoring.
 - **Sega SP-400 Printer/Plotter:** planned peripheral; it is not presented as
   implemented.
+- **ColecoVision:** console with keypad controllers, optional Super Game Module
+  and MegaCart cartridges.
+- **MSX1:** NTSC and PAL computers with the International keyboard and cassette.
+- **Sord M5:** NTSC and PAL computers with optional EM-5 RAM expansion.
 
 Supported media include:
 
@@ -253,13 +265,17 @@ these configurations exactly as shown in the application:
 | `SC-3000 Survivors Megacart (4MB)` | 4 MiB ROM in switchable 32 KiB blocks at `$0000-$7FFF`, with 32 KiB cartridge RAM at `$8000-$FFFF`. |
 | `SG-1000 Othello (2K cart RAM)` | Cartridge ROM around a mirrored 2 KiB cartridge-RAM window at `$8000-$9FFF`, plus the console's mirrored RAM at `$C000-$FFFF`; also used by Hei Bai Qi. |
 | `SG-1000 The Castle (8K cart + console RAM)` | 32 KiB ROM at `$0000-$7FFF`, 8 KiB cartridge RAM at `$8000-$9FFF` mirrored to `$BFFF`, and the console's mirrored RAM at `$C000-$FFFF`. |
-| `SG-1000 Sega 315-5208 (console RAM)` | Late SG-1000-compatible cartridge with Sega's 16 KiB paging controller and no RAM of its own: `$C000-$FFFF` is the console's RAM (1 KiB SG-1000, 2 KiB SC-3000, 8 KiB Mark III); used by the 128 KiB Loretta no Shouzou. |
+| `SG-1000 Sega 315-5208 (console RAM)` | Late SG-1000-compatible cartridge with Sega's 16 KiB paging controller and no RAM of its own: `$C000-$FFFF` is the console's RAM (1 KiB SG-1000, 2 KiB SC-3000); used by the 128 KiB Loretta no Shouzou. |
+| `MSX linear (8/16/32K)` | MSX cartridge ROM mapped linearly in its slot; small BASIC cartridges sit in page 2. |
+| `Sord M5 standard (up to 20 KB)` | Sord M5 cartridge ROM up to 20 KB. |
+| `ColecoVision standard (32K at 8000)` | Up to 32 KiB of ROM at `$8000-$FFFF`. |
+| `Coleco MegaCart (128K-1MB)` | 128 KiB to 1 MiB of ROM in 16 KiB banks: the last bank fixed at `$8000-$BFFF`, the bank at `$C000-$FFFF` selected by reading `$FFC0-$FFFF`. |
 | `SG-1000 Sega 315-5208 + Dahjee B (8K)` | The same ROM paging with a Dahjee B's 8 KiB at `$C000-$DFFF` (mirrored to `$FFFF`) in place of the console's RAM; what an unidentified "TMR SEGA" image gets on the libretro core. |
 
 These profiles cover cartridge games as well as the memory arrangements used
 by the supported BASIC environments. "Console RAM" is the selected model's own
-work RAM: 1 KiB on the SG-1000 and 2 KiB on the SC-3000. Profiles that leave it out (32K, ASC16L, Survivors, Dahjee
-B, Flat 64K) are those whose cartridge switches it off through slot pin B3.
+work RAM: 1 KiB on the SG-1000 and 2 KiB on the SC-3000. Profiles that leave
+it out (32K, ASC16L, Survivors, Dahjee B, Flat 64K) are those whose cartridge switches it off through slot pin B3.
 
 Games using the **ASC16L (ASCII 16 Lite)** mapper can be launched directly.
 Its switchable page occupies `$8000-$BFFF`, while its 16 KiB RAM occupies
@@ -364,6 +380,13 @@ the same live machine state as the emulator.
   banking, navigation history, code coverage and export.
 - Call-stack inspection, symbol loading and lookup, automatic labels and
   disassembly bookmarks.
+- Live Disassembler: a map of the cartridge that classifies every byte as code
+  or data from what has executed and been read, with coverage, kept per ROM in
+  a project folder.
+- Deep Search: from the code proven by execution, rounds of jump-table reading
+  and guided static disassembly into what is still unknown.
+- A new Disassembler window, growing beside the original one, and a To Check
+  list of every stretch whose classification is not yet sure.
 
 ### Memory and program data
 
@@ -440,9 +463,9 @@ Headless mode runs the same emulation core without creating a window or
 opening an audio device. It requires an MCP transport so the machine can be
 controlled and inspected while running unattended.
 
-The current server exposes **132 commands** across execution, breakpoints,
-memory, CPU, disassembly, symbols, video, audio, SF-7000 hardware, media,
-capture, save states, recorder, input and trace categories. These commands use
+The current server exposes **150 commands** across execution, breakpoints,
+memory, CPU, disassembly, symbols, video, audio, Sord M5, MSX and SF-7000
+hardware, media, capture, save states, recorder, input and trace categories. These commands use
 the same debugger services as the desktop windows; they do not maintain a
 separate or approximate machine model.
 
@@ -499,6 +522,7 @@ recorder, MCP server and optional hardware without duplicating the core.
 | `GEARSF7000_ENABLE_AY` | AY-3-8910 / YM2149 expansion audio. |
 | `GEARSF7000_ENABLE_SF7000` | SF-7000 hardware. |
 | `GEARSF7000_ENABLE_SR1000` | SR-1000 cassette recorder. |
+| `GEARSF7000_ENABLE_PICO9918` | PICO9918 video device. |
 | `GEARSF7000_PRODUCT_SC3000` | Reduced cartridge-computer target. |
 
 ## Building from source
@@ -537,7 +561,8 @@ make -C platforms/linux computer USE_PICOSMSVDP_CORE=0
 GearSF7000 is based on a version of
 [GearColeco](https://github.com/drhelius/Gearcoleco) by
 [Ignacio Sánchez Gines (drhelius)](https://github.com/drhelius), adapted for
-the Sega SG-1000 and SC-3000 systems and their supported peripherals.
+the Sega SG-1000 and SC-3000 systems, their supported peripherals and the
+other machines described above.
 
 The Z80 processor integration uses an imported subset of
 [Clock Signal (CLK)](https://github.com/TomHarte/CLK) by
@@ -558,6 +583,8 @@ licence files and notices remain applicable to the corresponding components.
 | [Clock Signal (CLK)](https://github.com/TomHarte/CLK) | Tom Harte | Imported Z80 subset, adapted to the machine and stack requirements (MIT). |
 | [blueMSX](http://www.bluemsx.com/) | Daniel Vik and Tomas Karlsson | Original basis of the extensively modified FDC765 and SF-7000 modules. |
 | [Game Music Emu](https://bitbucket.org/mpyne/game-music-emu/) and [Blip_Buffer](https://www.slack.net/~ant/) | Shay Green | Sound generation and resampling components. |
+| [vrEmuTms9918](https://github.com/visrealm/vrEmuTms9918) | Troy Schrapel | TMS9918 core behind the PICO9918 device (MIT). |
+| [C-BIOS](https://cbios.sourceforge.net/) | C-BIOS team | Built-in MSX1 BIOS. |
 | [SDL3](https://github.com/libsdl-org/SDL) | SDL project contributors | Cross-platform desktop runtime, input, audio and GPU interface. |
 | [Dear ImGui](https://github.com/ocornut/imgui) | Omar Cornut and contributors | Desktop user interface and debugger windows (MIT). |
 | [ImPlot](https://github.com/epezent/implot) | Evan Pezent, Breno Cunha Queiroz and contributors | Diagnostic plots (MIT). |
