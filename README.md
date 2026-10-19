@@ -4,14 +4,14 @@
 [![Release](https://img.shields.io/github/v/tag/siriokds/GearSF7000-devel?label=version)](https://github.com/siriokds/GearSF7000-devel/releases)
 [![Activity](https://img.shields.io/github/commit-activity/t/siriokds/GearSF7000-devel)](https://github.com/siriokds/GearSF7000-devel/commits/main)
 
-GearSF7000 started from the Sega SG-1000 console and the Sega SC-3000
-computer, which remain its core. The SC-3000 configuration can be expanded with
-the Sega SF-7000 Super Control Station and the Sega SR-1000 Tape Recorder.
-SF-7000 is an expansion peripheral, not a standalone computer: it connects
-through its dedicated IPL cartridge, which occupies the cartridge slot.
+GearSF7000 emulates the Sega SG-1000 console, the Sega SC-3000 computer, the
+ColecoVision, MSX1 and the Sord M5: Z80 machines built around the TMS9918
+video family, each on its own motherboard model.
 
-The same TMS9918-family hardware also runs the ColecoVision (with the Super
-Game Module), MSX1 and the Sord M5, each on its own motherboard model.
+The SC-3000 can be expanded with the Sega SF-7000 Super Control Station and
+the Sega SR-1000 Tape Recorder. SF-7000 is an expansion peripheral, not a
+standalone computer: it connects through its dedicated IPL cartridge, which
+occupies the cartridge slot.
 
 The emulator combines accurate processor and video timing with disk and
 cassette support, an advanced frame recorder and a full development
@@ -28,8 +28,11 @@ understanding precisely what they are doing.
 
 - **SG-1000 and SC-3000:** console and computer, each with its own memory map
   and hardware configuration, in Japanese and Export versions of the SC-3000.
-- **More TMS9918 machines:** ColecoVision with the Super Game Module and
-  MegaCart, MSX1 (NTSC/PAL) and Sord M5 (NTSC/PAL).
+- **ColecoVision:** keypad controllers, the Super Game Module and MegaCart
+  cartridges.
+- **MSX1:** NTSC and PAL, built-in C-BIOS or an external BIOS, International
+  keyboard and cassette.
+- **Sord M5:** NTSC and PAL, with the optional EM-5 RAM expansion.
 - **SC-3000 peripherals:** Sega SK-1100 keyboard handling, Sega SF-7000 Super
   Control Station and Sega SR-1000 Tape Recorder.
 - **Timing you can inspect:** partial Z80 machine cycles, native PAL/NTSC
