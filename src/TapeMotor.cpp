@@ -1,12 +1,12 @@
 #include "TapeMotor.h"
 
-TapeMotor::TapeMotor() : MotorOn(false)
+TapeMotor::TapeMotor(Policy policy) : MotorOn(false), m_policy(policy)
 {
 }
 
-void TapeMotor::SetMotor(bool)
+void TapeMotor::SetMotor(bool motorOn)
 {
-	MotorOn = true; // motorOn;
+	MotorOn = m_policy == Policy::AlwaysOn || motorOn;
 }
 
 bool TapeMotor::IsMotorOn()

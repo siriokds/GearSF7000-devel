@@ -156,6 +156,8 @@ namespace mINI
 
 		INIMap() { }
 
+		INIMap& operator=(INIMap const&) = default;
+
 		INIMap(INIMap const& other) : dataIndexMap(other.dataIndexMap), data(other.data)
 		{
 		}

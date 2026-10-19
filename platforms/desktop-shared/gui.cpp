@@ -19,12 +19,16 @@
 
 #include <math.h>
 #include <algorithm>
+#include <filesystem>
 #include <string>
 #include <vector>
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+// Before windows.h: it would otherwise pull in the winsock 1.1 declarations,
+// which clash with the winsock2 ones mcp_transport.h brings in further down.
+#include <winsock2.h>
 #include <windows.h>
 #include "../windows/resource.h"
 #endif
@@ -40,8 +44,10 @@
 #include "imgui/fonts/IconsMaterialDesign.h"
 #include "imgui/fonts/SC3000Basic.h"
 #include "imgui/fonts/unifont.h"
-#include "nfd/nfd.h"
+#include "nfd_parented.h"
 #include "config.h"
+#include "VideoMenuOptions.h"
+#include "VideoOutputSettings.h"
 #include "rewind.h"
 #include "emu.h"
 #include "../../src/gearsf7000.h"
@@ -52,10 +58,17 @@
 #include "backers.h"
 #include "gui_debug.h"
 #include "gui_debug_rewind.h"
+#include "rom_map_project.h"
 #include "sk1100_keyboard_layout.h"
 
 #define GUI_IMPORT
 #include "gui.h"
+#include "ISystemBus.h"
+#include "coleco_keypad_layout.h"
+#include "md_pad_layout.h"
+#if GEARSF7000_ENABLE_MCP
+#include "mcp/mcp_manager.h"
+#endif
 #include "imgui/colors.h"
 
 #if defined(_WIN32)
@@ -125,6 +138,13 @@ static int input_capture_conflicting_player = -1;
 static char input_capture_message[160] = "";
 static bool show_sk1100_keyboard_config = false;
 static bool show_hotkey_config = false;
+static bool show_interface_settings = false;
+static bool apply_interface_settings = false;
+static bool restore_interface_settings_position = false;
+static ImVec2 interface_settings_position;
+static float pending_interface_scale = 1.0f;
+static int pending_interface_font = 0;
+static int pending_interface_density = 0;
 static ImTextureID sk1100_keyboard_texture = ImTextureID_Invalid;
 static int sk1100_keyboard_texture_width = 0;
 static int sk1100_keyboard_texture_height = 0;
@@ -132,7 +152,6 @@ static int sk1100_selected_key = -1;
 static bool sk1100_keyboard_configure_mode = false;
 static bool sk1100_virtual_key_down[SK1100_KEYBOARD_KEY_COUNT] = {};
 static int sk1100_mouse_key = -1;
-static ImVec4 custom_palette[16];
 static bool shortcut_open_rom = false;
 static ImFont* default_font[4];
 static ImFont* roboto_fonts[4];
@@ -184,9 +203,15 @@ static void file_dialog_save_state(void);
 static void file_dialog_save_vgm(void);
 #endif
 static void file_dialog_choose_savestate_path(void);
+static void file_dialog_choose_projects_folder(void);
+static void projects_folder_use(const std::string& path);
 static void file_dialog_load_bios(void);
+static void file_dialog_load_coleco_bios(void);
+static void file_dialog_load_m5_bios(void);
+static void file_dialog_load_msx_bios(void);
 static void file_dialog_load_disc(void);
 static void file_dialog_load_cassette(void);
+static void file_dialog_select_msx_cassette(void);
 static void file_dialog_load_symbols(void);
 static void file_dialog_save_screenshot(void);
 static void keyboard_configuration_item(const char* text, SDL_Scancode* key, int player);
@@ -194,12 +219,13 @@ static void gamepad_configuration_item(const char* text, int* button, int player
 static void popup_modal_input_binding(void);
 static void window_sk1100_keyboard_config(void);
 static void window_hotkey_config(void);
+static void window_interface_settings(void);
 static void popup_modal_about(void);
 static void popup_modal_bios(void);
-static GC_Color color_float_to_int(ImVec4 color);
-static ImVec4 color_int_to_float(GC_Color color);
 static void update_palette(void);
+static void draw_menu_bar_status(void);
 static void menu_reset(void);
+static void menu_continue(void);
 static void menu_reset_paused(void);
 static void menu_eject(void);
 static void menu_pause(void);
@@ -209,7 +235,6 @@ static void window_advanced_scaling_setup(void);
 static void show_info(void);
 static void show_fps(const ImVec2& content_origin);
 static void show_status_message(void);
-static Cartridge::CartridgeRegions get_vdp_selection(int index);
 static Cartridge::ForceConfiguration get_force_config(void);
 static void call_save_screenshot(const char* path);
 
@@ -252,8 +277,15 @@ static float explicit_scale_multiplier(int scale)
     }
 }
 
-static void apply_video_output_source(const config_VideoOutput& output)
+static const VideoOutputPolicy& video_output_policy(const config_VideoOutput& output, bool debug)
 {
+    return GetVideoCatalog().OutputPolicy(emu_get_core()->GetActiveVideoOptionCode(), debug, output.overscan == 4);
+}
+
+static void apply_video_output_source(const config_VideoOutput& preference)
+{
+    const auto output = ResolveVideoOutput(preference, emu_get_core()->GetActiveVideoOptionCode(),
+        &preference == &config_debug.video, emu_get_video_frame_descriptor());
     const bool full_frame = output.overscan == 4;
     emu_set_full_raster_debug_enabled(full_frame);
     if (!full_frame)
@@ -263,7 +295,7 @@ static void apply_video_output_source(const config_VideoOutput& output)
 static void menu_video_output_scale(config_VideoOutput& output, bool debug_output)
 {
     const char* preview = "Integer Scale (Auto)";
-    switch (output.scale)
+    switch (video_output_policy(output, debug_output).Resolve("SCALE", output.scale))
     {
         case SCALE_1X: preview = "Integer Scale (1x)"; break;
         case SCALE_1_5X: preview = "Integer Scale (1.5x)"; break;
@@ -283,9 +315,11 @@ static void menu_video_output_scale(config_VideoOutput& output, bool debug_outpu
     if (!ImGui::BeginCombo("##scale", preview))
         return;
 
-    const auto item = [&output](const char* label, int value)
+    const auto& policy = video_output_policy(output, debug_output);
+    const auto item = [&output, &policy](const char* label, int value)
     {
-        if (ImGui::Selectable(label, output.scale == value))
+        if (!policy.Allows("SCALE", value)) return;
+        if (ImGui::Selectable(label, policy.Resolve("SCALE", output.scale) == value))
             output.scale = value;
     };
     if (!debug_output)
@@ -309,28 +343,52 @@ static void menu_video_output_scale(config_VideoOutput& output, bool debug_outpu
     ImGui::EndCombo();
 }
 
+static void menu_video_output_overscan(config_VideoOutput& output, bool debug)
+{
+    const auto& policy = video_output_policy(output, debug);
+    if (!policy.values.count("OVERSCAN")) return;
+    if (!ImGui::BeginMenu("Overscan")) return;
+    static const char* labels[] = {"Disabled", "Top+Bottom", "Full (narrow border)", "Full (wide border)", "Full Frame"};
+    for (int value = 0; value < 5; ++value)
+        if (policy.Allows("OVERSCAN", value) && ImGui::MenuItem(labels[value], "", policy.Resolve("OVERSCAN", output.overscan) == value)) {
+            output.overscan = value;
+            if (debug || !config_debug.debug || config_debug.video_as_main_settings) apply_video_output_source(output);
+        }
+    ImGui::EndMenu();
+}
+
+static void menu_video_output_aspect(config_VideoOutput& output, bool debug)
+{
+    const auto& policy = video_output_policy(output, debug);
+    if (!policy.values.count("ASPECT_RATIO") || (!debug && policy.Resolve("SCALE", output.scale) == SCALE_WIN_WIDTH_HEIGHT)) return;
+    if (!ImGui::BeginMenu("Aspect Ratio")) return;
+    static const char* labels[] = {"Device Pixel Aspect Ratio", "Standard (4:3 DAR)", "Wide (16:9 DAR)"};
+    for (int value = 0; value < 3; ++value)
+        if (policy.Allows("ASPECT_RATIO", value) && ImGui::MenuItem(labels[value], "", policy.Resolve("ASPECT_RATIO", output.ratio) == value)) output.ratio = value;
+    ImGui::EndMenu();
+}
+
 static void menu_video_output_postprocessing(config_VideoOutput& output)
 {
-    if (ImGui::MenuItem("None", "", output.postprocessing == POSTPROCESSING_NONE))
-        output.postprocessing = POSTPROCESSING_NONE;
-    if (ImGui::MenuItem("Bilinear", "", output.postprocessing == POSTPROCESSING_BILINEAR))
-        output.postprocessing = POSTPROCESSING_BILINEAR;
-    if (ImGui::MenuItem("Advanced Scaling", "", output.postprocessing == POSTPROCESSING_ADVANCED_SCALING))
-        output.postprocessing = POSTPROCESSING_ADVANCED_SCALING;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Sharper XY resampling than plain Bilinear plus dark-edge controls.");
-    if (ImGui::MenuItem("CRT (Lottes)", "", output.postprocessing == POSTPROCESSING_CRT_LOTTES))
-        output.postprocessing = POSTPROCESSING_CRT_LOTTES;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Trimmed crt-lottes-fast.glsl port: scanlines, optional phosphor mask and auto-exposure.");
+    const bool debug = &output == &config_debug.video;
+    const auto& policy = video_output_policy(output, debug);
+    const auto effective = ResolveVideoOutput(output, emu_get_core()->GetActiveVideoOptionCode(), debug, emu_get_video_frame_descriptor());
+    const auto supported = [&](int value) { return policy.Allows("POST_PROCESSING", value) && renderer_postprocessing_supported(value); };
+    const auto item = [&](const char* label, int value) {
+        if (supported(value) && ImGui::MenuItem(label, "", effective.postprocessing == value)) output.postprocessing = value;
+    };
+    item("None", POSTPROCESSING_NONE);
+    item("Bilinear", POSTPROCESSING_BILINEAR);
+    item("Advanced Scaling", POSTPROCESSING_ADVANCED_SCALING);
+    item("CRT (Lottes)", POSTPROCESSING_CRT_LOTTES);
+    if (effective.postprocessing != output.postprocessing)
+        ImGui::TextDisabled("Saved filter is unavailable for this output");
     ImGui::Separator();
-    if (ImGui::MenuItem("Configure Advanced Scaling..."))
-    {
+    if (supported(POSTPROCESSING_ADVANCED_SCALING) && ImGui::MenuItem("Configure Advanced Scaling...")) {
         video_setup_profile = &output;
         show_advanced_scaling_setup = true;
     }
-    if (ImGui::MenuItem("Configure CRT (Lottes)..."))
-    {
+    if (supported(POSTPROCESSING_CRT_LOTTES) && ImGui::MenuItem("Configure CRT (Lottes)...")) {
         video_setup_profile = &output;
         show_crt_lottes_setup = true;
     }
@@ -582,6 +640,16 @@ float gui_get_default_font_size(void)
     return 13.0f + (static_cast<float>(config_debug.font_size & 3) * 3.0f);
 }
 
+void gui_set_next_window_size_em(float width_em, float height_em, ImGuiCond cond)
+{
+    const float em = ImGui::GetFontSize();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float max_width = std::max(1.0f, viewport->WorkSize.x);
+    const float max_height = std::max(1.0f, viewport->WorkSize.y);
+    ImGui::SetNextWindowSize(ImVec2(std::min(width_em * em, max_width),
+                                    std::min(height_em * em, max_height)), cond);
+}
+
 float gui_combo_width_for_text(const char* longest_item)
 {
     const ImGuiStyle& style = ImGui::GetStyle();
@@ -738,7 +806,7 @@ void gui_init(void)
 
     strcpy(bios_path, config_emulator.bios_path.c_str());
     strcpy(disc_path, config_emulator.disc_path.c_str());
-    strcpy(cassette_path, config_emulator.cassette_path.c_str());
+    strcpy(cassette_path, config_emulator.sr1000_tape.path.c_str());
     strcpy(savefiles_path, config_emulator.savefiles_path.c_str());
     strcpy(savestates_path, config_emulator.savestates_path.c_str());
 
@@ -763,6 +831,18 @@ void gui_destroy(void)
 
 bool gui_render(void)
 {
+    // Rebuild style/font defaults between frames, with no active windows or
+    // style stacks. Editing the settings never changes the controls in flight.
+    if (apply_interface_settings)
+    {
+        config_debug.ui_scale = pending_interface_scale;
+        config_debug.font_size = pending_interface_font;
+        config_debug.ui_density = pending_interface_density;
+        gui_default_font = default_font[config_debug.font_size];
+        set_style();
+        apply_interface_settings = false;
+        restore_interface_settings_position = true;
+    }
     ImGui::NewFrame();
 
     gui_in_use = dialog_in_use;
@@ -792,6 +872,8 @@ bool gui_render(void)
         window_sk1100_keyboard_config();
     if (show_hotkey_config)
         window_hotkey_config();
+    if (show_interface_settings)
+        window_interface_settings();
     popup_modal_input_binding();
 
     show_status_message();
@@ -814,8 +896,10 @@ void gui_shortcut(gui_ShortCutEvent event)
         if (path && path[0])
         {
             const std::string current_path(path);
-            application_load_rom(current_path.c_str());
-            gui_set_status_message("ROM reloaded", 3000);
+            if (application_load_rom(current_path.c_str()))
+                gui_set_status_message("ROM reloaded", 3000);
+            else
+                gui_set_status_message("ROM reload failed", 3000);
         }
         else
             gui_set_status_message("No ROM to reload", 3000);
@@ -872,8 +956,9 @@ void gui_shortcut(gui_ShortCutEvent event)
             emu_debug_break();
         break;
     case gui_ShortcutDebugContinue:
-        if (config_debug.debug)
-            emu_debug_continue();
+        if (config_debug.debug || emu_get_core()->GetMachineType() == MachineType::SordM5 || emu_get_core()->GetMachineType() == MachineType::MSX ||
+            emu_get_core()->GetMachineType() == MachineType::Coleco)
+            menu_continue();
         break;
     case gui_ShortcutDebugContinueFromHere:
         if (config_debug.debug)
@@ -941,6 +1026,12 @@ static void gui_apply_ay_config(void)
 {
     emu_set_ay_config(config_audio.ay_enable, config_audio.ay_chip,
                       config_audio.ay_port_base);
+}
+#endif
+#if GEARSF7000_ENABLE_YM2413
+static void gui_apply_ym2413_config(void)
+{
+    emu_set_ym2413_config(config_audio.ym2413_enable);
 }
 #endif
 
@@ -1105,7 +1196,7 @@ static int recent_list_menu(std::string* entries, int count)
     return chosen;
 }
 
-// One line per open debug panel in the Windows menu below. Focuses the
+// One line per open window in the Windows menu below. Focuses the
 // window instead of the hide/show round trip that was the only way to find
 // a panel buried under others - docking helps for panels grouped as tabs,
 // but nothing stops a floating window from still covering another.
@@ -1115,6 +1206,33 @@ static void window_menu_item(const char* label, bool is_open, const char* window
         return;
     if (ImGui::MenuItem(label))
         ImGui::SetWindowFocus(window_id);
+}
+
+// Informational content is deliberately smaller and muted, below a separator.
+static void firmware_note(const char* text)
+{
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size() * 0.85f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 360.0f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+}
+static void firmware_file_label(const std::string& path, const char* emptyLabel = "No external BIOS selected")
+{
+    const auto slash = path.find_last_of("/\\");
+    std::string name = path.empty() ? emptyLabel : path.substr(slash == std::string::npos ? 0 : slash + 1);
+    const float maxWidth = 360.0f;
+    bool trimmed = false;
+    while (name.size() > 1 && ImGui::CalcTextSize(name.c_str()).x > maxWidth) {
+        name.erase(0, 1);
+        while (!name.empty() && (static_cast<unsigned char>(name[0]) & 0xC0) == 0x80) name.erase(0, 1);
+        trimmed = true;
+    }
+    if (trimmed) name = "..." + name;
+    ImGui::TextDisabled("%s", name.c_str());
+    if (!path.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
 }
 
 static void main_menu(void)
@@ -1133,11 +1251,12 @@ static void main_menu(void)
     bool choose_savestates_path = false;
     bool open_bios = false;
     bool open_bios_warning = false;
+    bool open_coleco_bios = false;
+    bool open_m5_bios = false;
+    bool open_msx_bios = false;
     bool open_disc = false;
     bool open_cassette = false;
-
-    for (int i = 0; i < 16; i++)
-        custom_palette[i] = color_int_to_float(config_video.color[i]);
+    bool select_msx_cassette = false;
 
     gui_main_menu_hovered = false;
 
@@ -1152,10 +1271,7 @@ static void main_menu(void)
 
             if (ImGui::MenuItem("Open ROM...", config_hotkeys[config_HotkeyIndex_OpenROM].str))
             {
-                if (emu_is_bios_loaded())
-                    open_rom = true;
-                else
-                    open_bios_warning = true;
+                open_rom = true;
             }
 
             if (ImGui::MenuItem("Reload Current ROM",
@@ -1171,15 +1287,10 @@ static void main_menu(void)
                                                     config_max_recent_roms);
                 if (chosen >= 0)
                 {
-                    if (emu_is_bios_loaded())
-                    {
-                        char rom_path[4096];
-                        snprintf(rom_path, sizeof(rom_path), "%s",
-                                 config_emulator.recent_roms[chosen].c_str());
-                        gui_load_rom(rom_path);
-                    }
-                    else
-                        open_bios_warning = true;
+                    char rom_path[4096];
+                    snprintf(rom_path, sizeof(rom_path), "%s",
+                             config_emulator.recent_roms[chosen].c_str());
+                    gui_load_rom(rom_path);
                 }
 
                 ImGui::EndMenu();
@@ -1192,80 +1303,79 @@ static void main_menu(void)
 
             ImGui::Separator();
 
-            // A .bas is already tokenised, so it can go straight into the
-            // program area. A .basic is source text, which BASIC has to
-            // tokenise itself - that is what the typer and the cassette are
-            // for.
-            if (ImGui::MenuItem("Load BASIC Program...", "", false, !emu_is_empty()))
+            if (emu_get_core()->HasKeyboardInterface() && emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5 && ImGui::BeginMenu("BASIC"))
             {
-                open_basic_program = true;
-            }
-
-            if (ImGui::MenuItem("Save BASIC Program As...", "", false, !emu_is_empty()))
-            {
-                save_basic_program = true;
-            }
-
-            // Where BASIC keeps its pointer block differs per BASIC, so it is
-            // picked here rather than assumed. Auto scans for it and proceeds
-            // only on a single match, which covers both known layouts without
-            // the user having to look anything up; the named entries are for
-            // pinning a choice, and the scan results are listed so a BASIC
-            // nobody has measured yet can be found from here too.
-            if (ImGui::BeginMenu("BASIC Pointer Block", !emu_is_empty()))
-            {
-                int& chosen = config_debug.basic_pointer_block;
-
-                if (ImGui::MenuItem("Auto (single match)", "", chosen == 0))
-                    chosen = 0;
-                ImGui::Separator();
-                if (ImGui::MenuItem("$8160  Level III cartridge", "", chosen == 0x8160))
-                    chosen = 0x8160;
-                if (ImGui::MenuItem("$9954  Disk BASIC", "", chosen == 0x9954))
-                    chosen = 0x9954;
-
-                u16 found[8];
-                const int count = emu_find_basic_blocks(found, 8);
-                bool header = false;
-                for (int i = 0; i < count; i++)
+                // A .bas is already tokenised, so it can go straight into the
+                // program area. A .basic is source text, which BASIC has to
+                // tokenise itself - that is what the typer and the cassette are
+                // for.
+                if (ImGui::MenuItem("Load BASIC Program...", "", false, !emu_is_empty()))
                 {
-                    if (found[i] == 0x8160 || found[i] == 0x9954)
-                        continue;
-                    if (!header)
-                    {
-                        ImGui::Separator();
-                        ImGui::TextDisabled("Found in this machine");
-                        header = true;
-                    }
-                    char label[32];
-                    snprintf(label, sizeof(label), "$%04X", found[i]);
-                    if (ImGui::MenuItem(label, "", chosen == found[i]))
-                        chosen = found[i];
+                    open_basic_program = true;
                 }
 
-                if (count == 0)
+                if (ImGui::MenuItem("Save BASIC Program As...", "", false, !emu_is_empty()))
                 {
+                    save_basic_program = true;
+                }
+
+                // Where BASIC keeps its pointer block differs per BASIC, so it is
+                // picked here rather than assumed. Auto scans for it and proceeds
+                // only on a single match, which covers both known layouts without
+                // the user having to look anything up; the named entries are for
+                // pinning a choice, and the scan results are listed so a BASIC
+                // nobody has measured yet can be found from here too.
+                if (ImGui::BeginMenu("BASIC Pointer Block", !emu_is_empty()))
+                {
+                    int& chosen = config_debug.basic_pointer_block;
+
+                    if (ImGui::MenuItem("Auto (single match)", "", chosen == 0))
+                        chosen = 0;
                     ImGui::Separator();
-                    ImGui::TextDisabled("Nothing consistent found right now");
+                    if (ImGui::MenuItem("$8160  Level III cartridge", "", chosen == 0x8160))
+                        chosen = 0x8160;
+                    if (ImGui::MenuItem("$9954  Disk BASIC", "", chosen == 0x9954))
+                        chosen = 0x9954;
+
+                    u16 found[8];
+                    const int count = emu_find_basic_blocks(found, 8);
+                    bool header = false;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (found[i] == 0x8160 || found[i] == 0x9954)
+                            continue;
+                        if (!header)
+                        {
+                            ImGui::Separator();
+                            ImGui::TextDisabled("Found in this machine");
+                            header = true;
+                        }
+                        char label[32];
+                        snprintf(label, sizeof(label), "$%04X", found[i]);
+                        if (ImGui::MenuItem(label, "", chosen == found[i]))
+                            chosen = found[i];
+                    }
+
+                    if (count == 0)
+                    {
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Nothing consistent found right now");
+                    }
+
+                    ImGui::EndMenu();
                 }
 
                 ImGui::EndMenu();
             }
 
             ImGui::Separator();
-
-
             if (ImGui::MenuItem("Reset", config_hotkeys[config_HotkeyIndex_Reset].str))
             {
                 menu_reset();
             }
 
-            if (ImGui::MenuItem("Reset (Paused at 0000)", "", false, !emu_is_empty()))
-            {
-                menu_reset_paused();
-            }
-
-            if (ImGui::MenuItem("Soft Reset (NMI)", "F1"))
+            if (emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5 &&
+                ImGui::MenuItem("Soft Reset (NMI)", "F1"))
             {
                 emu_pause_key_pressed();
             }
@@ -1344,6 +1454,32 @@ static void main_menu(void)
 
             ImGui::Separator();
 
+            if (ImGui::MenuItem("Interface Settings..."))
+            {
+                pending_interface_scale = config_debug.ui_scale;
+                pending_interface_font = config_debug.font_size;
+                pending_interface_density = config_debug.ui_density;
+                show_interface_settings = true;
+                ImGui::SetWindowFocus("Interface Settings");
+            }
+
+#ifdef DEBUG_TOOLS
+            if (ImGui::MenuItem("Debug Mode", "", &config_debug.debug))
+            {
+                apply_video_output_source(config_video_output_for_mode(config_debug.debug));
+                if (config_debug.debug)
+                    emu_debug_step();
+                else
+                    menu_continue();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Show debugging tools and enable local analysis.\n"
+                    "When off, collection is suspended unless MCP is running.\n"
+                    "Recording starts a new history after an unrecorded interval.");
+#endif
+
+            ImGui::Separator();
+
             if (ImGui::MenuItem("Quit", ""))
             {
                 application_trigger_quit();
@@ -1356,27 +1492,87 @@ static void main_menu(void)
         {
             gui_in_use = true;
 
+            if (ImGui::BeginMenu("Machine"))
+            {
+                const auto running = emu_get_core()->GetSystemModel();
+                ImGui::TextDisabled("Active: %s", GetMachineMenuGroup(running).label);
+                ImGui::Separator();
+                for (const auto& group : GetMachineMenuGroups()) {
+                    const auto target = config_machine_group_selection(group);
+                    if (ImGui::MenuItem(group.label, "", MachineGroupContains(group, static_cast<SystemModel>(config_emulator.machine)),
+                            MachineMenuModelAvailable(target))) {
+                        config_select_machine(target);
+                        menu_reset();
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Board configuration"))
+            {
+                const auto running = emu_get_core()->GetSystemModel();
+                ImGui::TextDisabled("Active: %s", GetSystemModelName(running));
+                ImGui::TextDisabled("VDP is selected separately");
+                ImGui::Separator();
+                const auto& group = GetMachineMenuGroup(static_cast<SystemModel>(config_emulator.machine));
+                for (const auto model : group.models) {
+                    if (!MachineMenuModelAvailable(model)) continue;
+                    if (ImGui::MenuItem(GetSystemModelName(model), model == running ? "Active" : "Restart",
+                            config_emulator.machine == static_cast<int>(model))) {
+                        config_select_machine(model);
+                        menu_reset();
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Board CPU/PSG clock: %.6f MHz",
+                        GetSystemModelDescriptor(model).cpuPsgClockHz / 1000000.0);
+                }
+                ImGui::EndMenu();
+            }
+
             // The selected VDP determines the video standard and its native
             // timing. It is not a geographical region setting.
             if (ImGui::BeginMenu("VDP"))
             {
-                ImGui::PushItemWidth(gui_combo_width_for_text("TMS9918 (NTSC, 59.9227 Hz)"));
-                if (ImGui::Combo("##emu_vdp", &config_emulator.vdp,
-                    "Automatic (database)\0TMS9918 (NTSC, 59.9227 Hz)\0TMS9929 (PAL, 50.1590 Hz)\0\0"))
+                GearSF7000Core* core = emu_get_core();
+                const auto* active = GetVideoCatalog().FindOption(core->GetActiveVideoOptionCode());
+                ImGui::TextDisabled("Active: %s", active ? active->label.c_str() : "Unknown");
+                ImGui::Separator();
+
+                SystemModel requested = static_cast<SystemModel>(config_emulator.machine);
+                if (!IsValidSystemModel(requested)) requested = core->GetSystemModel();
+                const auto rows = BuildVideoMenuOptions(GetMachineVideoOptions(requested),
+                    GetDefaultMachineVideoOption(requested), config_selected_video_option(),
+                    core->GetActiveVideoOptionCode(), core->IsUsingDefaultVideoDevice(),
+                    requested == core->GetSystemModel());
+                if (rows.empty()) ImGui::TextDisabled("No video core available in this build");
+                for (const auto& row : rows)
                 {
-                    if (config_emulator.vdp > 0)
+                    ImGui::PushID(row.code.empty() ? "machine-default" : row.code.c_str());
+                    if (ImGui::MenuItem(row.label.c_str(), row.applied ? "Active" : "Reset to apply", row.selected))
                     {
-                        // Changing the VDP no longer has to touch audio: it
-                        // used to force the queue back into pacing duty.
-                        config_emulator.ffwd = false;
+                        if (config_select_video_option(row.code)) config_emulator.ffwd = false;
                     }
+                    ImGui::PopID();
+                    if (row.code.empty()) ImGui::Separator();
                 }
-                ImGui::PopItemWidth();
                 ImGui::EndMenu();
             }
 
             if (ImGui::BeginMenu("Mapper"))
             {
+                const auto* cart = emu_get_core()->GetCartridge();
+                ImGui::TextDisabled("System: %s", GetSystemModelName(emu_get_core()->GetSystemModel()));
+                if (cart->IsReady())
+                {
+                    ImGui::TextDisabled("Active: %s", emu_get_mapper_name(cart->GetType()));
+                    const char* reason = nullptr;
+                    if (!Cartridge::IsTypeCompatible(cart->GetType(), cart->GetROMSize(), &reason))
+                        ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", reason);
+                    if (cart->GetType() == Cartridge::COLECO_MEGACART)
+                        ImGui::TextDisabled("%d KiB, %d banks; selected: %d",
+                            cart->GetROMSize() / 1024, cart->GetROMBankCount(),
+                            emu_get_core()->GetMemory()->GetRomBank());
+                }
+                ImGui::TextDisabled("SGM is an expansion: select it under System");
+                ImGui::Separator();
                 ImGui::PushItemWidth(gui_combo_width_for_text("Auto (detect)"));
                 ImGui::Combo("##mapper_mode", &config_emulator.mapper_mode,
                     "Auto (detect)\0Manual\0\0");
@@ -1387,30 +1583,37 @@ static void main_menu(void)
                 static const struct { Cartridge::CartridgeTypes type; const char* name; } kTypes[] = {
                     { Cartridge::SC3000_FLAT64K, "Flat 64K (RAM)" },
                     { Cartridge::SC3000_ASC16L,  "ASC16L" },
+                    { Cartridge::SC3000_ASC16LS, "Internal" },
                     { Cartridge::SC3000_32K,     "SC-3000 (32K RAM)" },
-                    { Cartridge::SC3000_16K_AT_8000, "SC-3000 (16K cart + 2K internal)" },
-                    { Cartridge::SC3000_2K,      "SC-3000 (2K RAM)" },
+                    { Cartridge::SC3000_16K_AT_8000, "SC-3000 (16K cart + console RAM)" },
+                    { Cartridge::SC3000_2K,      "SC-3000 standard (console RAM at 8000)" },
                     { Cartridge::SG1000_16K,     "SG-1000 (16K RAM)" },
-                    { Cartridge::SG1000_1K,      "SG-1000 (1K RAM)" },
+                    { Cartridge::SG1000_1K,      "SG-1000 standard (console RAM)" },
+                    { Cartridge::SG1000_DAHJEE_TYPE_A, "SG-1000 Dahjee A (8K ext + console RAM)" },
+                    { Cartridge::SG1000_DAHJEE_TYPE_B, "SG-1000 Dahjee B (8K at C000)" },
+                    { Cartridge::SC3000_SURVIVORS_MULTICART, "SC-3000 Survivors Multicart (2MB)" },
+                    { Cartridge::SC3000_SURVIVORS_MEGACART, "SC-3000 Survivors Megacart (4MB)" },
+                    { Cartridge::SG1000_OTHELLO_2K, "SG-1000 Othello (2K cart RAM)" },
+                    { Cartridge::SG1000_CASTLE_8K, "SG-1000 The Castle (8K cart + console RAM)" },
+                    { Cartridge::SG1000_SEGA_315_5208, "SG-1000 Sega 315-5208 (console RAM)" },
+                    { Cartridge::SG1000_SEGA_315_5208_DAHJEE_B, "SG-1000 Sega 315-5208 + Dahjee B (8K)" },
+                    { Cartridge::SMS_SEGA_MAPPER, "Master System Sega mapper" },
+                    { Cartridge::MSX_LINEAR, "MSX linear (8/16/32K)" },
+                    { Cartridge::SORD_M5_LINEAR, "Sord M5 standard (up to 20 KB)" },
+                    { Cartridge::COLECOVISION,   "ColecoVision standard (32K at 8000)" },
+                    { Cartridge::COLECO_MEGACART, "Coleco MegaCart (128K-1MB)" },
                 };
 
                 if (config_emulator.mapper_mode == 0)
                 {
-                    ImGui::TextDisabled("ASC16 signature and CRC decide");
-
-                    // What auto uses when neither recognises the image. It
-                    // always had one - SG-1000 16K, hardcoded and invisible -
-                    // so this only makes the existing choice visible.
-                    if (ImGui::BeginMenu("Fallback"))
-                    {
-                        for (const auto& entry : kTypes)
-                        {
-                            if (ImGui::MenuItem(entry.name, "",
-                                    config_emulator.mapper_fallback == (int)entry.type))
-                                config_emulator.mapper_fallback = (int)entry.type;
-                        }
-                        ImGui::EndMenu();
-                    }
+                    ImGui::TextDisabled("Signatures, CRC database and mapper heuristics decide");
+                    const Cartridge::CartridgeTypes fallback =
+                        config_fallback_cartridge_type();
+                    const char* fallbackName = "Unknown";
+                    for (const auto& entry : kTypes)
+                        if (entry.type == fallback)
+                            fallbackName = entry.name;
+                    ImGui::TextDisabled("Machine default: %s", fallbackName);
                 }
                 else
                 {
@@ -1424,6 +1627,8 @@ static void main_menu(void)
 
                     for (const auto& entry : kTypes)
                     {
+                        if (IsMSXSystem(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::MSX_LINEAR) continue;
+                        if (IsM5System(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::SORD_M5_LINEAR) continue;
                         const char* reason = NULL;
                         const bool fits = romSize == 0
                             || Cartridge::IsTypeCompatible(entry.type, romSize, &reason);
@@ -1467,10 +1672,6 @@ static void main_menu(void)
 
             ImGui::Separator();
 
-            ImGui::MenuItem("Start Paused", "", &config_emulator.start_paused);
-            
-            ImGui::Separator();
-
             if (ImGui::BeginMenu("Save State Location"))
             {
                 ImGui::PushItemWidth(gui_combo_width_for_text("Savestates In Custom Folder"));
@@ -1510,18 +1711,17 @@ static void main_menu(void)
 
 
 
+        // Menus of the emulated machine's own hardware: present when the
+        // running board has the device, absent otherwise, never greyed.
 #if GEARSF7000_ENABLE_SR1000
-        if (ImGui::BeginMenu("SR-1000"))
+        if (emu_get_core()->HasCassetteInterface() &&
+            emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5 &&
+            ImGui::BeginMenu("SR-1000"))
         {
             gui_in_use = true;
 
-            ImGui::MenuItem("Show Cassette", "", &config_debug.show_cassette, 
-#ifdef DEBUG_TOOLS
-                config_debug.debug
-#else
-                true
-#endif
-            );
+            // Tape transport is a normal computer peripheral, not a debugger.
+            ImGui::MenuItem("Cassette Controls", "", &config_debug.show_cassette);
 
             if (ImGui::BeginMenu("Cassette"))
             {
@@ -1537,16 +1737,16 @@ static void main_menu(void)
                 }
                 ImGui::PopItemWidth();
 
-                if (ImGui::MenuItem("Cassette write protected", "", &config_emulator.cassette_write_protected))
+                if (ImGui::MenuItem("Cassette write protected", "", &config_emulator.sr1000_tape.write_protected))
                 {
-                    emu_writeprotect_cassette(config_emulator.cassette_write_protected);
+                    emu_writeprotect_cassette(config_emulator.sr1000_tape.write_protected);
                 }
 
 
                 if (ImGui::MenuItem("Eject Cassette"))
                 {
                     strcpy(cassette_path, "");
-                    config_emulator.cassette_path.assign(cassette_path);
+                    config_emulator.sr1000_tape.path.assign(cassette_path);
                     emu_eject_cassette();
 
                     //WavPlayer *player = emu_get_core()->GetAudio()->GetWavPlayer();
@@ -1557,12 +1757,12 @@ static void main_menu(void)
                 if (ImGui::BeginMenu("Open Recent"))
                 {
                     const int chosen = recent_list_menu(
-                        config_emulator.recent_cassettes,
+                        config_emulator.sr1000_tape.recent,
                         config_max_recent_cassettes);
                     if (chosen >= 0)
                     {
                         snprintf(cassette_path, sizeof(cassette_path), "%s",
-                                 config_emulator.recent_cassettes[chosen].c_str());
+                                 config_emulator.sr1000_tape.recent[chosen].c_str());
                         gui_load_cassette(cassette_path);
                     }
 
@@ -1583,7 +1783,8 @@ static void main_menu(void)
 
 
 #if GEARSF7000_ENABLE_SF7000
-        if (ImGui::BeginMenu("SF-7000"))
+        if (emu_get_core()->CanAttachSF7000() &&
+            ImGui::BeginMenu("SF-7000"))
         {
             gui_in_use = true;
 
@@ -1672,6 +1873,89 @@ static void main_menu(void)
         }
 #endif // GEARSF7000_ENABLE_SF7000
 
+        const bool msxMachine = emu_get_core()->GetMachineType() == MachineType::MSX;
+        const bool m5Machine = emu_get_core()->GetMachineType() == MachineType::SordM5;
+        const bool colecoMachine = emu_get_core()->GetMachineType() == MachineType::Coleco;
+        if ((msxMachine || colecoMachine || m5Machine) && ImGui::BeginMenu(msxMachine ? "MSX1" : m5Machine ? "Sord M5" : "ColecoVision"))
+        {
+            gui_in_use = true;
+            if (ImGui::MenuItem(msxMachine ? "Start MSX1" : m5Machine ? "Start Sord M5" : "Start ColecoVision")) {
+                menu_reset();
+                gui_debug_reset();
+                if (!config_emulator.start_paused || !emu_debug_runtime_requested()) menu_continue();
+            }
+            ImGui::Separator();
+            if (ImGui::BeginMenu("BIOS")) {
+                if (ImGui::MenuItem("Load BIOS...")) {
+                    if (msxMachine) open_msx_bios = true;
+                    else if (m5Machine) open_m5_bios = true;
+                    else open_coleco_bios = true;
+                }
+                if (msxMachine && ImGui::MenuItem("Use C-BIOS", nullptr, &config_emulator.msx_use_cbios)) {
+                    emu_reload_machine_firmware();
+                    gui_debug_reset();
+                }
+                ImGui::Separator();
+                firmware_file_label(msxMachine ? config_emulator.msx_bios_path : m5Machine ? config_emulator.m5_bios_path : config_emulator.coleco_bios_path);
+                firmware_note(msxMachine && config_emulator.msx_use_cbios
+                    ? "Active: built-in C-BIOS. Runs compatible cartridges; no full BASIC."
+                    : msxMachine ? "External BIOS: 32 KB, normally BIOS + BASIC."
+                    : m5Machine ? "External BIOS: 8 KB (e.g. sordint.ic21). BASIC requires a cartridge."
+                    : "External BIOS: 8 KB. Can start without a cartridge.");
+                if (!emu_get_machine_start_error().empty())
+                    firmware_note(emu_get_machine_start_error().c_str());
+                ImGui::EndMenu();
+            }
+            if (m5Machine) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("EM-5 RAM (32 KB)", nullptr, &config_emulator.m5_em5_installed)) {
+                    menu_reset();
+                    gui_debug_reset();
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+#if GEARSF7000_ENABLE_SR1000
+        // Machine menu first, followed by its peripherals.
+        if (emu_get_core()->GetMachineType() == MachineType::MSX &&
+            ImGui::BeginMenu("MSX Tape"))
+        {
+            gui_in_use = true;
+            auto& tape = config_emulator.msx_tape;
+            ImGui::MenuItem("Cassette Controls", nullptr, &config_debug.show_cassette);
+            auto* recorder = emu_get_core()->GetCassette();
+            if (ImGui::MenuItem("Play", nullptr, false, recorder->IsLoaded())) emu_cassette_play();
+            if (ImGui::MenuItem("Stop", nullptr, false, recorder->IsLoaded())) emu_cassette_stop();
+            if (ImGui::MenuItem("Rewind", nullptr, false, recorder->IsLoaded())) emu_cassette_rewind();
+            if (ImGui::BeginMenu("Cassette"))
+            {
+                if (ImGui::MenuItem("Load Cassette..."))
+                    select_msx_cassette = true;
+                ImGui::Separator();
+                firmware_file_label(tape.path, "No cassette selected");
+                ImGui::Separator();
+                ImGui::MenuItem("Cassette write protected", nullptr, true, false);
+                if (ImGui::MenuItem("Eject Cassette", nullptr, false, !tape.path.empty() || recorder->IsLoaded()))
+                {
+                    emu_eject_cassette();
+                    tape.path.clear();
+                    config_write();
+                }
+                if (ImGui::BeginMenu("Open Recent"))
+                {
+                    const int chosen = recent_list_menu(tape.recent, config_max_recent_cassettes);
+                    if (chosen >= 0 && !application_load_tape(tape.recent[chosen].c_str()))
+                        gui_set_status_message("Unable to load MSX tape (WAV/MP3 supported)", 4000);
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            firmware_note("Start loading in BASIC, then press Play. Requires an external BIOS with BASIC.");
+            ImGui::EndMenu();
+        }
+#endif // GEARSF7000_ENABLE_SR1000
 
         if (ImGui::BeginMenu("Video"))
         {
@@ -1702,26 +1986,8 @@ static void main_menu(void)
                 ImGui::EndMenu();
             }
 
-            if (ImGui::BeginMenu("Aspect Ratio"))
-            {
-                ImGui::PushItemWidth(gui_combo_width_for_text("Square Pixels (1:1 PAR)"));
-                ImGui::Combo("##ratio", &config_video.ratio, "Square Pixels (1:1 PAR)\0Standard (4:3 DAR)\0Wide (16:9 DAR)\0\0");
-                ImGui::PopItemWidth();
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("Overscan"))
-            {
-                ImGui::PushItemWidth(gui_combo_width_for_text("Full (284 width)"));
-                if (ImGui::Combo("##overscan", &config_video.overscan, "Disabled\0Top+Bottom\0Full (272 width)\0Full (284 width)\0\0"))
-                {
-                    if (!config_debug.debug || config_debug.video_as_main_settings)
-                        apply_video_output_source(config_video);
-                }
-                ImGui::PopItemWidth();
-
-                ImGui::EndMenu();
-            }
+            menu_video_output_aspect(config_video, false);
+            menu_video_output_overscan(config_video, false);
 
             ImGui::Separator();
 
@@ -1934,43 +2200,27 @@ static void main_menu(void)
             }
 #endif
 
-            if (ImGui::BeginMenu("Scanlines"))
-            {
-                ImGui::MenuItem("Enable Scanlines", "", &config_video.scanlines);
-                ImGui::SliderFloat("##scanlines", &config_video.scanlines_intensity, 0.0f, 1.0f, "Intensity = %.2f");
-                ImGui::EndMenu();
-            }
+
 
             ImGui::Separator();
 
-            if (ImGui::BeginMenu("Palette"))
+            const std::size_t colorProfileCount =
+                emu_get_core()->GetVideoColorProfileCount();
+            if (colorProfileCount > 0 && ImGui::BeginMenu("Palette"))
             {
-#if GEARSF7000_PRODUCT_SC3000
-                const char* palette_names = "Original\0TMS9918\0TMS9918 Analog\0Custom\0\0";
-#else
-                const char* palette_names = "Coleco\0TMS9918\0TMS9918 Analog\0Custom\0\0";
-#endif
-                ImGui::PushItemWidth(gui_combo_width_for_items(palette_names));
-                if (ImGui::Combo("##palette", &config_video.palette, palette_names, 11))
+                for (std::size_t index = 0; index < colorProfileCount; ++index)
                 {
-                    update_palette();
-                }
-                ImGui::PopItemWidth();
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("Custom Palette"))
-            {
-                for (int i = 0; i < 16; i++)
-                {
-                    char text[10] = {0};
-                    sprintf(text,"Color #%d", i + 1);
-                    if (ImGui::ColorEdit3(text, (float*)&custom_palette[i], ImGuiColorEditFlags_NoInputs))
+                    GC_VideoColorProfileDescriptor profile;
+                    if (!emu_get_core()->DescribeVideoColorProfile(index, profile))
+                        continue;
+                    int* setting = emu_palette_setting();
+                    const bool selected = *setting == profile.value;
+                    if (ImGui::MenuItem(profile.label, nullptr, selected))
                     {
+                        *setting = static_cast<int>(profile.value);
                         update_palette();
                     }
                 }
-
                 ImGui::EndMenu();
             }
 
@@ -1981,18 +2231,101 @@ static void main_menu(void)
         {
             gui_in_use = true;
 
-            if (ImGui::MenuItem("Keyboard Mode", "", &config_emulator.keyboard_mode))
-                emu_set_keyboard_mode(config_emulator.keyboard_mode);
-
-            ImGui::MenuItem("SC-3000 Keyboard...", NULL,
-                            &show_sk1100_keyboard_config);
+            // The menu is the board's: what the running system bus says it
+            // offers is what appears. A board without a keyboard has no
+            // Keyboard Mode to show, and the saved choice waits for a board
+            // that has one.
+            const ISystemBus* bus = emu_get_core()->GetSystemBus();
+            const SystemInputDescriptor input =
+                bus ? bus->DescribeInput() : kSegaJoypadInput;
+            if (input.machineKeyboard)
+            {
+                bool keyboardMode = config_emulator.keyboard_mode;
+                if (ImGui::MenuItem("Keyboard Mode", "", &keyboardMode))
+                    emu_set_keyboard_mode(keyboardMode);
+                if (emu_get_core()->GetMachineType() == MachineType::SordM5 && ImGui::BeginMenu("Sord M5 Keyboard")) {
+                    firmware_note("Physical layout. Tab: FUNC; Escape: RESET; F5: Run.");
+                    ImGui::Separator();
+                    firmware_note("Left/right Shift are separate contacts. ISO < > maps to underscore.");
+                    firmware_note("Fire 1/2 share the contacts of 1/2 (P1) and 5/6 (P2).");
+                    ImGui::EndMenu();
+                }
+                if (emu_get_core()->GetMachineType() == MachineType::MSX &&
+                    ImGui::BeginMenu("MSX International Keyboard"))
+                {
+                    ImGui::TextUnformatted("Physical key layout; key remapping is not available yet.");
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("F1-F4 -> F1-F4; F5 has no host binding");
+#ifdef __APPLE__
+                    ImGui::TextUnformatted("Left Option -> GRAPH; Right Option -> CODE");
+#else
+                    ImGui::TextUnformatted("Left Alt -> GRAPH; Right Alt / AltGr -> CODE");
+#endif
+                    ImGui::TextUnformatted("ISO < > (left of Z) -> accent / DEAD");
+                    ImGui::TextUnformatted("Home -> HOME; End / Insert -> INS");
+                    ImGui::TextUnformatted("Page Up -> SELECT; Page Down -> STOP");
+                    ImGui::TextUnformatted("Forward Delete -> DEL; Backspace -> BS");
+#ifdef __APPLE__
+                    ImGui::TextUnformatted("Mac Fn + arrows: Home / End / Page Up / Page Down");
+                    ImGui::TextUnformatted("Mac Fn + Delete: Forward Delete");
+                    ImGui::TextDisabled("Physical Mac Fn combinations still need verification.");
+#endif
+                    ImGui::EndMenu();
+                }
+                if (emu_get_core()->GetMachineType() == MachineType::MSX)
+                    ImGui::TextDisabled("MSX joysticks are not implemented yet.");
+                if (emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5)
+                    ImGui::MenuItem("SC-3000 Keyboard...", NULL,
+                                &show_sk1100_keyboard_config);
+            }
 
             ImGui::MenuItem("Configure Emulator Hotkeys...", NULL,
                             &show_hotkey_config);
 
-            ImGui::Separator();
+            // What each controller port holds. Only the Master System family
+            // drives TH, which a Mega Drive pad needs; the SG-1000 and SC-3000
+            // keep their own joysticks.
+            const bool smsPorts = emu_get_core()->GetMachineType() == MachineType::SMS;
+            if (smsPorts && ImGui::BeginMenu("Controller Type"))
+            {
+                for (int player = 0; player < 2; ++player)
+                {
+                    if (!ImGui::BeginMenu(player == 0 ? "Player 1 (Port A)" : "Player 2 (Port B)"))
+                        continue;
+                    for (int d = 0; d <= static_cast<int>(SystemControllerDevice::MegaDrive6); ++d)
+                        if (ImGui::MenuItem(GetControllerDeviceName(static_cast<SystemControllerDevice>(d)),
+                                            "", config_input[player].controller_device == d))
+                        {
+                            emu_set_controller_device(player, d);
+                            config_write();
+                        }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
 
-            if (ImGui::BeginMenu("Keyboard"))
+            ImGui::Separator();
+            // The board names its two buttons; a Mega Drive pad in a port calls
+            // the same two lines B and C, so that player's menus say both.
+            char fire[2][2][48];
+            for (int player = 0; player < 2; ++player)
+            {
+                const bool megaDrive = smsPorts && config_input[player].controller_device != 0;
+                // Short: the label column is 100 pixels, and the board's own
+                // names ("Fire 1 (Left)") already fill it.
+                if (megaDrive)
+                {
+                    snprintf(fire[player][0], sizeof(fire[player][0]), "B (Fire 1):");
+                    snprintf(fire[player][1], sizeof(fire[player][1]), "C (Fire 2):");
+                }
+                else
+                {
+                    snprintf(fire[player][0], sizeof(fire[player][0]), "%s:", input.fire1Name);
+                    snprintf(fire[player][1], sizeof(fire[player][1]), "%s:", input.fire2Name);
+                }
+            }
+
+            if (input.joypads > 0 && ImGui::BeginMenu("Keyboard"))
             {
                 if (ImGui::BeginMenu("Player 1"))
                 {
@@ -2000,8 +2333,34 @@ static void main_menu(void)
                     keyboard_configuration_item("Right:", &config_input[0].key_right, 0);
                     keyboard_configuration_item("Up:", &config_input[0].key_up, 0);
                     keyboard_configuration_item("Down:", &config_input[0].key_down, 0);
-                    keyboard_configuration_item("Fire 1 (Left):", &config_input[0].key_left_button, 0);
-                    keyboard_configuration_item("Fire 2 (Right):", &config_input[0].key_right_button, 0);
+                    if (input.fire1Name[0]) keyboard_configuration_item(fire[0][0], &config_input[0].key_left_button, 0);
+                    if (input.fire2Name[0]) keyboard_configuration_item(fire[0][1], &config_input[0].key_right_button, 0);
+                    if (input.startName[0])
+                        keyboard_configuration_item("Start:", &config_input[0].gg_start_key, 0);
+                    if (smsPorts && config_input[0].controller_device != 0)
+                    {
+                        // The Mega Drive pad's buttons beyond B and C.
+                        ImGui::Separator();
+                        static char mdLabel[MD_PAD_BUTTON_COUNT][16];
+                        for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+                        {
+                            snprintf(mdLabel[b], sizeof(mdLabel[b]), "%s:", md_pad_layout[b].label);
+                            keyboard_configuration_item(mdLabel[b], &config_input[0].md_key[b], 0);
+                        }
+                    }
+                    if (input.joypadKeypad)
+                    {
+                        // The keypad is part of this controller (ColecoVision).
+                        ImGui::Separator();
+                        static char keypadLabel[COLECO_KEYPAD_KEY_COUNT][16];
+                        for (int k = 0; k < COLECO_KEYPAD_KEY_COUNT; ++k)
+                        {
+                            snprintf(keypadLabel[k], sizeof(keypadLabel[k]), "Keypad %s:",
+                                     coleco_keypad_layout[k].label);
+                            keyboard_configuration_item(keypadLabel[k],
+                                &config_input[0].keypad_key[k], 0);
+                        }
+                    }
                     //keyboard_configuration_item("Purple:", &config_input[0].key_purple, 0);
                     //keyboard_configuration_item("Blue:", &config_input[0].key_blue, 0);
                     //keyboard_configuration_item("Keypad 0:", &config_input[0].key_0, 0);
@@ -2020,14 +2379,38 @@ static void main_menu(void)
                     ImGui::EndMenu();
                 }
 
-                if (ImGui::BeginMenu("Player 2"))
+                if (input.joypads > 1 && ImGui::BeginMenu("Player 2"))
                 {
                     keyboard_configuration_item("Left:", &config_input[1].key_left, 1);
                     keyboard_configuration_item("Right:", &config_input[1].key_right, 1);
                     keyboard_configuration_item("Up:", &config_input[1].key_up, 1);
                     keyboard_configuration_item("Down:", &config_input[1].key_down, 1);
-                    keyboard_configuration_item("Fire 1 (Left):", &config_input[1].key_left_button, 1);
-                    keyboard_configuration_item("Fire 2 (Right):", &config_input[1].key_right_button, 1);
+                    if (input.fire1Name[0]) keyboard_configuration_item(fire[1][0], &config_input[1].key_left_button, 1);
+                    if (input.fire2Name[0]) keyboard_configuration_item(fire[1][1], &config_input[1].key_right_button, 1);
+                    if (smsPorts && config_input[1].controller_device != 0)
+                    {
+                        // The Mega Drive pad's buttons beyond B and C.
+                        ImGui::Separator();
+                        static char mdLabel[MD_PAD_BUTTON_COUNT][16];
+                        for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+                        {
+                            snprintf(mdLabel[b], sizeof(mdLabel[b]), "%s:", md_pad_layout[b].label);
+                            keyboard_configuration_item(mdLabel[b], &config_input[1].md_key[b], 1);
+                        }
+                    }
+                    if (input.joypadKeypad)
+                    {
+                        // The keypad is part of this controller (ColecoVision).
+                        ImGui::Separator();
+                        static char keypadLabel[COLECO_KEYPAD_KEY_COUNT][16];
+                        for (int k = 0; k < COLECO_KEYPAD_KEY_COUNT; ++k)
+                        {
+                            snprintf(keypadLabel[k], sizeof(keypadLabel[k]), "Keypad %s:",
+                                     coleco_keypad_layout[k].label);
+                            keyboard_configuration_item(keypadLabel[k],
+                                &config_input[1].keypad_key[k], 1);
+                        }
+                    }
                     //keyboard_configuration_item("Purple:", &config_input[1].key_purple, 1);
                     //keyboard_configuration_item("Blue:", &config_input[1].key_blue, 1);
                     //keyboard_configuration_item("Keypad 0:", &config_input[1].key_0, 1);
@@ -2049,7 +2432,7 @@ static void main_menu(void)
                 ImGui::EndMenu();
             }
 
-            if (ImGui::BeginMenu("Gamepads"))
+            if (input.joypads > 0 && ImGui::BeginMenu("Gamepads"))
             {
                 if (ImGui::BeginMenu("Player 1"))
                 {
@@ -2065,8 +2448,20 @@ static void main_menu(void)
 
                     if (ImGui::BeginMenu("Button Configuration"))
                     {
-                        gamepad_configuration_item("Fire 1 (Left):", &config_input[0].gamepad_left_button, 0);
-                        gamepad_configuration_item("Fire 2 (Right):", &config_input[0].gamepad_right_button, 0);
+                        if (input.fire1Name[0]) gamepad_configuration_item(fire[0][0], &config_input[0].gamepad_left_button, 0);
+                        if (input.fire2Name[0]) gamepad_configuration_item(fire[0][1], &config_input[0].gamepad_right_button, 0);
+                        if (input.startName[0])
+                            gamepad_configuration_item("Start:", &config_input[0].gamepad_gg_start_button, 0);
+                        if (smsPorts && config_input[0].controller_device != 0)
+                        {
+                            ImGui::Separator();
+                            static char mdLabel[MD_PAD_BUTTON_COUNT][16];
+                            for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+                            {
+                                snprintf(mdLabel[b], sizeof(mdLabel[b]), "%s:", md_pad_layout[b].label);
+                                gamepad_configuration_item(mdLabel[b], &config_input[0].gamepad_md_button[b], 0);
+                            }
+                        }
                         //gamepad_configuration_item("Purple:", &config_input[0].gamepad_purple, 0);
                         //gamepad_configuration_item("Blue:", &config_input[0].gamepad_blue, 0);
                         //gamepad_configuration_item("Keypad 0:", &config_input[0].gamepad_0, 0);
@@ -2088,7 +2483,7 @@ static void main_menu(void)
                     ImGui::EndMenu();
                 }
 
-                if (ImGui::BeginMenu("Player 2"))
+                if (input.joypads > 1 && ImGui::BeginMenu("Player 2"))
                 {
                     ImGui::MenuItem("Enable Gamepad P2", "", &config_input[1].gamepad);
 
@@ -2102,8 +2497,18 @@ static void main_menu(void)
 
                     if (ImGui::BeginMenu("Button Configuration"))
                     {
-                        gamepad_configuration_item("Fire 1 (Left):", &config_input[1].gamepad_left_button, 1);
-                        gamepad_configuration_item("Fire 2 (Right):", &config_input[1].gamepad_right_button, 1);
+                        if (input.fire1Name[0]) gamepad_configuration_item(fire[1][0], &config_input[1].gamepad_left_button, 1);
+                        if (input.fire2Name[0]) gamepad_configuration_item(fire[1][1], &config_input[1].gamepad_right_button, 1);
+                        if (smsPorts && config_input[1].controller_device != 0)
+                        {
+                            ImGui::Separator();
+                            static char mdLabel[MD_PAD_BUTTON_COUNT][16];
+                            for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+                            {
+                                snprintf(mdLabel[b], sizeof(mdLabel[b]), "%s:", md_pad_layout[b].label);
+                                gamepad_configuration_item(mdLabel[b], &config_input[1].gamepad_md_button[b], 1);
+                            }
+                        }
                         //gamepad_configuration_item("Purple:", &config_input[1].gamepad_purple, 1);
                         //gamepad_configuration_item("Blue:", &config_input[1].gamepad_blue, 1);
                         //gamepad_configuration_item("Keypad 0:", &config_input[1].gamepad_0, 1);
@@ -2159,6 +2564,8 @@ static void main_menu(void)
             }
 
             ImGui::Separator();
+            ImGui::TextDisabled("PSG: %s",
+                emu_get_core()->GetAudio()->GetApu()->GetVariantName());
 
 #if GEARSF7000_ENABLE_RECORDER
             // Register-write log, not a sample recording - see
@@ -2185,7 +2592,7 @@ static void main_menu(void)
 #if GEARSF7000_ENABLE_AY
             ImGui::Separator();
 
-            if (ImGui::BeginMenu("AY Expansion"))
+            if (ImGui::BeginMenu("AY Expansion", emu_get_core()->GetMachineType() == MachineType::SC3000))
             {
                 // The expansion is hardware, not an effect: fitting it,
                 // removing it or swapping the chip only takes hold at the next
@@ -2238,128 +2645,99 @@ static void main_menu(void)
             }
 #endif
 
+#if GEARSF7000_ENABLE_YM2413
+            ImGui::Separator();
+            if (ImGui::BeginMenu("YM2413 FM Sound Unit"))
+            {
+                if (ImGui::MenuItem("Connected", "",
+                                    &config_audio.ym2413_enable))
+                    gui_apply_ym2413_config();
+                ImGui::Separator();
+                ImGui::TextDisabled("Mark III / SMS FM interface; reset required");
+                ImGui::TextDisabled("$F2 selects PSG or FM");
+                ImGui::EndMenu();
+            }
+#endif
+
             ImGui::EndMenu();
         }
 
 #ifdef DEBUG_TOOLS
-        if (ImGui::BeginMenu("UI Settings"))
-        {
-            static float pending_ui_scale = 0.0f;
-            if (pending_ui_scale <= 0.0f)
-                pending_ui_scale = config_debug.ui_scale;
-
-            const float setup_label_width = std::max(
-                ImGui::CalcTextSize("Global scale").x,
-                ImGui::CalcTextSize("Font Size").x);
-            const float setup_control_x = ImGui::GetCursorPosX() +
-                setup_label_width + ImGui::GetStyle().ItemSpacing.x;
-
-            ImGui::TextUnformatted("Global scale");
-            ImGui::SameLine(setup_control_x);
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-            if (ImGui::InputFloat("##global_scale", &pending_ui_scale, 0.025f, 0.10f, "%.3f"))
-            {
-                pending_ui_scale = std::clamp(pending_ui_scale, 0.75f, 2.0f);
-                config_debug.ui_scale = pending_ui_scale;
-                set_style();
-            }
-
-            ImGui::TextUnformatted("Font Size");
-            ImGui::SameLine(setup_control_x);
-            ImGui::SetNextItemWidth(gui_combo_width_for_text("Very Small"));
-            if (ImGui::Combo("##font_size", &config_debug.font_size,
-                "Very Small\0Small\0Medium\0Large\0\0"))
-                gui_default_font = default_font[config_debug.font_size];
-            ImGui::Separator();
-            if (ImGui::MenuItem("Normal", "", config_debug.ui_density == 0))
-            {
-                config_debug.ui_density = 0;
-                set_style();
-            }
-            if (ImGui::MenuItem("Compact", "", config_debug.ui_density == 2))
-            {
-                config_debug.ui_density = 2;
-                set_style();
-            }
-            if (ImGui::MenuItem("Minimal", "", config_debug.ui_density == 1))
-            {
-                config_debug.ui_density = 1;
-                set_style();
-            }
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Debug"))
+        if (config_debug.debug && ImGui::BeginMenu("Debug"))
         {
             gui_in_use = true;
 
-            if (ImGui::MenuItem("Enable", "", &config_debug.debug))
+            ImGui::MenuItem("Start Paused", "", &config_emulator.start_paused);
+
+            if (ImGui::MenuItem("Reset (Paused at 0000)", "", false, !emu_is_empty()))
             {
-                apply_video_output_source(config_video_output_for_mode(config_debug.debug));
-                if (config_debug.debug)
-                    emu_debug_step();
-                else
-                    emu_debug_continue();
+                menu_reset_paused();
             }
 
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Step Into", "F11", (void*)0, config_debug.debug))
+            // Grouped by what they are for (Saverio: the flat menu had grown
+            // too long): running the CPU, the core views, then one submenu per
+            // family of tools.
+            if (ImGui::BeginMenu("Execution", config_debug.debug))
             {
-                emu_debug_step_into();
-            }
+                if (ImGui::MenuItem("Step Into", "F11", (void*)0, config_debug.debug))
+                {
+                    emu_debug_step_into();
+                }
 
-            if (ImGui::MenuItem("Step Over", "F10", (void*)0, config_debug.debug))
-            {
-                emu_debug_step_over();
-            }
+                if (ImGui::MenuItem("Step Over", "F10", (void*)0, config_debug.debug))
+                {
+                    emu_debug_step_over();
+                }
 
-            if (ImGui::MenuItem("Step Line",
-                                config_hotkeys[config_HotkeyIndex_DebugStepLine].str,
-                                (void*)0, config_debug.debug))
-            {
-                emu_debug_step_line();
-            }
+                if (ImGui::MenuItem("Step Line",
+                                    config_hotkeys[config_HotkeyIndex_DebugStepLine].str,
+                                    (void*)0, config_debug.debug))
+                {
+                    emu_debug_step_line();
+                }
 
-            if (ImGui::MenuItem("Step Frame", "F6", (void*)0, config_debug.debug))
-            {
-                emu_debug_next_frame();
-            }
+                if (ImGui::MenuItem("Step Frame", "F6", (void*)0, config_debug.debug))
+                {
+                    emu_debug_next_frame();
+                }
 
-            if (ImGui::MenuItem("Break", "F7", (void*)0, config_debug.debug))
-            {
-                gui_shortcut(gui_ShortcutDebugBreak);
-            }
+                if (ImGui::MenuItem("Break", "F7", (void*)0, config_debug.debug))
+                {
+                    gui_shortcut(gui_ShortcutDebugBreak);
+                }
 
-            if (ImGui::MenuItem("Continue Live",
-                                config_hotkeys[config_HotkeyIndex_DebugContinue].str,
-                                (void*)0, config_debug.debug))
-            {
-                emu_debug_continue();
-            }
+                if (ImGui::MenuItem("Continue Live",
+                                    config_hotkeys[config_HotkeyIndex_DebugContinue].str,
+                                    (void*)0, config_debug.debug))
+                {
+                    menu_continue();
+                }
 
-            if (ImGui::MenuItem(
-                    "Continue From Here",
-                    config_hotkeys[config_HotkeyIndex_DebugContinueFromHere].str,
-                    (void*)0, config_debug.debug))
-            {
-                gui_debug_rewind_resume_from_here();
-            }
+                if (ImGui::MenuItem(
+                        "Continue From Here",
+                        config_hotkeys[config_HotkeyIndex_DebugContinueFromHere].str,
+                        (void*)0, config_debug.debug))
+                {
+                    gui_debug_rewind_resume_from_here();
+                }
 
-            if (ImGui::MenuItem("Run To Cursor", "F8", (void*)0, config_debug.debug))
-            {
-                gui_debug_runtocursor();
-            }
+                if (ImGui::MenuItem("Run To Cursor", "F8", (void*)0, config_debug.debug))
+                {
+                    gui_debug_runtocursor();
+                }
 
-            ImGui::Separator();
-
-            if (ImGui::MenuItem("Go Back", "Ctrl+Backspace", (void*)0, config_debug.debug))
-            {
-                gui_debug_go_back();
-            }
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Return to the address you were at before\nthe last JP/JR/CALL double-click or Goto,\nlike a browser back button.");
+                ImGui::Separator();
+                if (ImGui::MenuItem("Go Back", "Ctrl+Backspace", (void*)0, config_debug.debug))
+                {
+                    gui_debug_go_back();
+                }
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Return to the address you were at before\nthe last JP/JR/CALL double-click or Goto,\nlike a browser back button.");
+                }
+                ImGui::EndMenu();
             }
 
             ImGui::Separator();
@@ -2383,27 +2761,24 @@ static void main_menu(void)
                     gui_debug_reset_breakpoints_mem();
                 }
 
-                if (ImGui::MenuItem("Clear All VRAM Breakpoints"))
-                {
-                    gui_debug_reset_breakpoints_vram();
-                }
-
                 ImGui::Separator();
 
                 ImGui::MenuItem("Disable All Processor Breakpoints", 0, &emu_debug_disable_breakpoints_cpu);
                 ImGui::MenuItem("Disable All Memory Breakpoints", 0, &emu_debug_disable_breakpoints_mem);
-                ImGui::MenuItem("Disable All VRAM Breakpoints", 0, &emu_debug_disable_breakpoints_vram);
-
                 ImGui::EndMenu();
             }
-
-            ImGui::Separator();
 
             ImGui::Separator();
 
             ImGui::MenuItem("Show Output Screen", "", &config_debug.show_screen, config_debug.debug);
 
             ImGui::MenuItem("Show Disassembler", "", &config_debug.show_disassembler, config_debug.debug);
+
+            ImGui::MenuItem("Show Disassembler (new)", "", &config_debug.show_disassembler_new, config_debug.debug);
+
+            ImGui::MenuItem("Show Deep Search", "", &config_debug.show_deep_search, config_debug.debug);
+
+            ImGui::MenuItem("Show To Check", "", &config_debug.show_to_check, config_debug.debug);
 
             ImGui::MenuItem("Show Z80 Status", "", &config_debug.show_processor, config_debug.debug);
 
@@ -2428,28 +2803,8 @@ static void main_menu(void)
                     ImGui::EndMenu();
                 }
 
-                if (ImGui::BeginMenu("Aspect Ratio"))
-                {
-                    ImGui::PushItemWidth(gui_combo_width_for_text("Square Pixels (1:1 PAR)"));
-                    ImGui::Combo("##debug_ratio", &config_debug.video.ratio,
-                        "Square Pixels (1:1 PAR)\0Standard (4:3 DAR)\0Wide (16:9 DAR)\0\0");
-                    ImGui::PopItemWidth();
-                    ImGui::EndMenu();
-                }
-
-                if (ImGui::BeginMenu("Overscan"))
-                {
-                    ImGui::PushItemWidth(gui_combo_width_for_text("Full (284 width)"));
-                    if (ImGui::Combo("##debug_overscan", &config_debug.video.overscan,
-                        "Disabled\0Top+Bottom\0Full (272 width)\0Full (284 width)\0Full Frame\0\0"))
-                    {
-                        apply_video_output_source(config_debug.video);
-                    }
-                    if (ImGui::IsItemHovered() && config_debug.video.overscan == 4)
-                        ImGui::SetTooltip("Full 342-dot raster, including blanking and borders.");
-                    ImGui::PopItemWidth();
-                    ImGui::EndMenu();
-                }
+                menu_video_output_aspect(config_debug.video, true);
+                menu_video_output_overscan(config_debug.video, true);
 
                 if (ImGui::BeginMenu("Postprocessing"))
                 {
@@ -2460,48 +2815,63 @@ static void main_menu(void)
                 ImGui::EndDisabled();
 
                 ImGui::Separator();
-                ImGui::MenuItem("Show VRAM Viewer", "", &config_debug.show_video);
-                ImGui::MenuItem("Show VRAM Registers", "", &config_debug.show_video_registers);
+                ImGui::MenuItem("Show Pattern Table", "", &config_debug.show_pattern_table);
+                ImGui::MenuItem("Show Sprites", "", &config_debug.show_sprites);
+                ImGui::MenuItem("Show Name Table", "", &config_debug.show_nametable);
+                ImGui::MenuItem("Show Palettes", "", &config_debug.show_palettes);
+                ImGui::MenuItem("Show VDP Register Explorer", "", &config_debug.show_video_register_explorer);
                 ImGui::Separator();
-                ImGui::MenuItem("Show CRT Test Pass", "", &config_debug.show_crt_test_pass);
-                // No renderer_set_crt_test_enabled call here: the window
-                // itself is the single source of truth for whether the GPU
-                // pass runs, synced right after ImGui::Begin in
-                // debug_window_crt_test_pass - that covers this checkbox,
-                // the window's own close button, and startup alike, so
-                // there is nowhere else this can get out of sync.
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("GPU render-to-texture proof of concept (horizontal blur), not a real CRT decode.");
-                ImGui::MenuItem("Show CRT Composite Decode", "", &config_debug.show_composite_decode_test);
-                // Same reasoning as CRT Test Pass above: no call here, the
-                // window syncs renderer_set_composite_decode_enabled itself.
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Real composite/S-Video decode (quadrature demod + PAL delay line), run on a captured GCRT signal file.");
-                ImGui::MenuItem("Show CRT Consumer Test", "", &config_debug.show_crt_consumer_test);
-                // Same reasoning as CRT Test Pass above: no call here, the
-                // window syncs renderer_set_crt_consumer_enabled itself.
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Display-stage test: trimmed GearSystem crt_consumer.glsl port (blur+scanline+mask+brightboost+gamma), run on live output.");
-                ImGui::MenuItem("Show CRT Lottes Test", "", &config_debug.show_crt_lottes_test);
-                // Same reasoning as CRT Test Pass above: no call here, the
-                // window syncs renderer_set_crt_lottes_enabled itself.
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Display-stage test, second candidate: trimmed crt-lottes-fast.glsl port (scanline+optional mask+auto-exposure+gamma), run on live output.");
+                if (ImGui::BeginMenu("CRT Experiments"))
+                {
+                    ImGui::MenuItem("Show CRT Test Pass", "", &config_debug.show_crt_test_pass);
+                    // No renderer_set_crt_test_enabled call here: the window
+                    // itself is the single source of truth for whether the GPU
+                    // pass runs, synced right after ImGui::Begin in
+                    // debug_window_crt_test_pass - that covers this checkbox,
+                    // the window's own close button, and startup alike, so
+                    // there is nowhere else this can get out of sync.
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("GPU render-to-texture proof of concept (horizontal blur), not a real CRT decode.");
+                    ImGui::MenuItem("Show CRT Composite Decode", "", &config_debug.show_composite_decode_test);
+                    // Same reasoning as CRT Test Pass above: no call here, the
+                    // window syncs renderer_set_composite_decode_enabled itself.
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Real composite/S-Video decode (quadrature demod + PAL delay line), run on a captured GCRT signal file.");
+                    ImGui::MenuItem("Show CRT Consumer Test", "", &config_debug.show_crt_consumer_test);
+                    // Same reasoning as CRT Test Pass above: no call here, the
+                    // window syncs renderer_set_crt_consumer_enabled itself.
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Display-stage test: trimmed GearSystem crt_consumer.glsl port (blur+scanline+mask+brightboost+gamma), run on live output.");
+                    ImGui::MenuItem("Show CRT Lottes Test", "", &config_debug.show_crt_lottes_test);
+                    // Same reasoning as CRT Test Pass above: no call here, the
+                    // window syncs renderer_set_crt_lottes_enabled itself.
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Display-stage test, second candidate: trimmed crt-lottes-fast.glsl port (scanline+optional mask+auto-exposure+gamma), run on live output.");
+                    ImGui::EndMenu();
+                }
                 ImGui::EndMenu();
             }
 
             if (ImGui::BeginMenu("Peripherals", config_debug.debug))
             {
-                ImGui::MenuItem("Show PSG SN76489", "", &config_debug.show_psg);
+                if (emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5)
+                    ImGui::MenuItem("SN76489A/SMS PSG", "", &config_debug.show_psg);
 #if GEARSF7000_ENABLE_AY
-                ImGui::MenuItem("Show AY-3-8910 / YM2149", "", &config_debug.show_ay);
+                ImGui::MenuItem("AY-3-8910 / YM2149", "", &config_debug.show_ay);
+#endif
+#if GEARSF7000_ENABLE_YM2413
+                if (emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5)
+                    ImGui::MenuItem("YM2413 FM Sound Unit", "", &config_debug.show_ym2413);
 #endif
 #if GEARSF7000_ENABLE_SR1000
-                ImGui::MenuItem("Show Cassette", "", &config_debug.show_cassette);
+                if (emu_get_core()->HasCassetteInterface())
+                    ImGui::MenuItem("Show Cassette", "", &config_debug.show_cassette);
 #endif
-                ImGui::MenuItem("Show PPI 8255A", "", &config_debug.show_ppi_registers);
+                if (emu_get_core()->HasKeyboardPPI() || emu_get_core()->GetMachineType() == MachineType::MSX)
+                    ImGui::MenuItem("Show PPI 8255A", "", &config_debug.show_ppi_registers);
 #if GEARSF7000_ENABLE_SF7000
-                ImGui::MenuItem("Show SF-7000", "", &config_debug.show_sf7000);
+                if (IsSF7000System(emu_get_core()->GetSystemModel()))
+                    ImGui::MenuItem("Show SF-7000", "", &config_debug.show_sf7000);
 #endif
                 ImGui::EndMenu();
             }
@@ -2558,22 +2928,64 @@ static void main_menu(void)
 
                 ImGui::EndMenu();
             }
-            ImGui::MenuItem("Show Debug Events", "", &config_debug.show_events, config_debug.debug);
+            // Reverse engineering a ROM: what it is made of and what it does.
+            if (ImGui::BeginMenu("Analysis", config_debug.debug))
+            {
+                ImGui::MenuItem("Show Live Disassembler", "", &config_debug.show_rom_map);
+                ImGui::MenuItem("Show Debug Events", "", &config_debug.show_events);
+                ImGui::MenuItem("Show ROM Inspector", "", &config_debug.show_rom_inspector);
+#if GEARSF7000_ENABLE_MCP
+                // The watch/freeze/trigger system is reachable over MCP but is
+                // not about MCP: WatchTick() runs from emu_update() whether or
+                // not a client is connected, so the window belongs with the
+                // other analysis tools. It stays behind the MCP flag because
+                // that is what compiles the adapter holding the watch state.
+                ImGui::MenuItem("Show Watch Monitor", "", &config_debug.show_watch_monitor);
+#endif
+
+                // Where the ROM map projects are saved. Shown, not just kept:
+                // a folder one has to hunt for is a folder one loses.
+                ImGui::Separator();
+                const std::string projects_root = rom_map_project_root();
+                std::string projects_shown = projects_root;
+                if (projects_shown.size() > 44)
+                    projects_shown = "..." + projects_shown.substr(projects_shown.size() - 41);
+                ImGui::TextDisabled("Projects folder");
+                ImGui::TextDisabled("%s", projects_shown.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", projects_root.c_str());
+                if (ImGui::MenuItem("Change Projects Folder..."))
+                    file_dialog_choose_projects_folder();
+                if (ImGui::MenuItem("Open Projects Folder"))
+                    rom_map_project_open_folder(projects_root);
+                if (ImGui::MenuItem("Use Default Projects Folder", "", false, !rom_map_project_root_is_default()))
+                    projects_folder_use(std::string());
+                ImGui::EndMenu();
+            }
+
+            // Getting programs and data in and out of the machine.
+            if (ImGui::BeginMenu("Tools", config_debug.debug))
+            {
+                // Not behind the MCP flag: it drives the SK-1100 injector
+                // directly, which every build has.
+                ImGui::MenuItem("Show BASIC Typer", "", &config_debug.show_basic_typer);
+#ifdef   SC3KSYSTEM_MEM_IMPORT_EXPORT
+                ImGui::MenuItem("Show Memory Import", "", &config_debug.show_memory_import);
+#endif
+#if GEARSF7000_ENABLE_SF7000
+                ImGui::MenuItem("Show Disc Explorer", "", &config_debug.show_disc_explorer);
+#endif
+                ImGui::EndMenu();
+            }
 
 #if GEARSF7000_ENABLE_MCP
-            ImGui::MenuItem("Show MCP Server", "", &config_debug.show_mcp_server, config_debug.debug);
-            ImGui::MenuItem("Show Watch Monitor", "", &config_debug.show_watch_monitor, config_debug.debug);
-#endif
-            // Not behind the MCP flag: it drives the SK-1100 injector directly,
-            // which every build has.
-            ImGui::MenuItem("Show BASIC Typer", "", &config_debug.show_basic_typer, config_debug.debug);
-
-#ifdef   SC3KSYSTEM_MEM_IMPORT_EXPORT
-            ImGui::MenuItem("Show Memory Import", "", &config_debug.show_memory_import, config_debug.debug);
-#endif
-            ImGui::MenuItem("Show ROM Inspector", "", &config_debug.show_rom_inspector, config_debug.debug);
-#if GEARSF7000_ENABLE_SF7000
-            ImGui::MenuItem("Show Disc Explorer", "", &config_debug.show_disc_explorer, config_debug.debug);
+            if (ImGui::BeginMenu("MCP", config_debug.debug))
+            {
+                // Watch Monitor lives under Analysis: this menu is the
+                // transport itself, not what the tools inspect.
+                ImGui::MenuItem("Show MCP Server", "", &config_debug.show_mcp_server);
+                ImGui::EndMenu();
+            }
 #endif
 
             ImGui::Separator();
@@ -2583,61 +2995,20 @@ static void main_menu(void)
             ImGui::Separator();
 #endif
 
-            if (ImGui::MenuItem("Load Symbols...", "", (void*)0, config_debug.debug))
+            if (ImGui::BeginMenu("Symbols", config_debug.debug))
             {
-                open_symbols = true;
+                if (ImGui::MenuItem("Load Symbols..."))
+                {
+                    open_symbols = true;
+                }
+
+                if (ImGui::MenuItem("Clear Symbols"))
+                {
+                    gui_debug_reset_symbols();
+                }
+                ImGui::EndMenu();
             }
 
-            if (ImGui::MenuItem("Clear Symbols", "", (void*)0, config_debug.debug))
-            {
-                gui_debug_reset_symbols();
-            }
-
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Windows"))
-        {
-            gui_in_use = true;
-
-            // Listed only while open, per Saverio's call: a fixed list of
-            // every possible panel with checkboxes would just duplicate the
-            // Debug submenus above. This one is for finding a window that is
-            // already open but buried, so it should shrink to nothing when
-            // there is nothing to find.
-            window_menu_item("Output", config_debug.show_screen, "Output###debug_output");
-            window_menu_item("Disassembler", config_debug.show_disassembler, "Disassembler");
-            window_menu_item("Z80 Status", config_debug.show_processor, "Z80 Status");
-            window_menu_item("Memory Editor", config_debug.show_memory, "Memory Editor");
-            window_menu_item("VDP Viewer", config_debug.show_video, "VDP Viewer");
-            window_menu_item("VDP Registers", config_debug.show_video_registers, "VDP Registers");
-            window_menu_item("PSG", config_debug.show_psg, "PSG");
-#if GEARSF7000_ENABLE_AY
-            window_menu_item("AY-3-8910 / YM2149", config_debug.show_ay, "AY-3-8910 / YM2149");
-#endif
-#if GEARSF7000_ENABLE_SR1000
-            window_menu_item("Cassette", config_debug.show_cassette, "Cassette");
-#endif
-#if GEARSF7000_ENABLE_SF7000
-            window_menu_item("SF-7000", config_debug.show_sf7000, "SF-7000");
-#endif
-            window_menu_item("Recorder", config_debug.show_rewind, "Recorder");
-            window_menu_item("Debug Events", config_debug.show_events, "Debug Events");
-            window_menu_item("BASIC Typer", config_debug.show_basic_typer, "BASIC Typer");
-            window_menu_item("Mem Import", config_debug.show_memory_import, "Mem Import");
-            window_menu_item("ROM Inspector", config_debug.show_rom_inspector, "ROM Inspector");
-#if GEARSF7000_ENABLE_SF7000
-            window_menu_item("Disc Explorer", config_debug.show_disc_explorer, "Disc Explorer");
-#endif
-            window_menu_item("CRT Test Pass (GPU)", config_debug.show_crt_test_pass, "CRT Test Pass (GPU)");
-            window_menu_item("CRT Composite Decode Test (GPU)", config_debug.show_composite_decode_test, "CRT Composite Decode Test (GPU)");
-            window_menu_item("CRT Consumer Test (GPU)", config_debug.show_crt_consumer_test, "CRT Consumer Test (GPU)");
-            window_menu_item("CRT Lottes Test (GPU)", config_debug.show_crt_lottes_test, "CRT Lottes Test (GPU)");
-#if GEARSF7000_ENABLE_MCP
-            window_menu_item("MCP Server", config_debug.show_mcp_server, "MCP Server");
-            window_menu_item("Watch Monitor", config_debug.show_watch_monitor, "Watch Monitor");
-#endif
-            window_menu_item("ROM Info", config_emulator.show_info, "ROM Info");
 
             ImGui::EndMenu();
         }
@@ -2645,6 +3016,68 @@ static void main_menu(void)
 #else
         config_debug.debug = false;
 #endif
+
+        // Window navigation belongs to both emulator and debugger modes.
+        if (ImGui::BeginMenu("Windows"))
+        {
+            gui_in_use = true;
+            window_menu_item("ROM Info", config_emulator.show_info, "ROM Info");
+            window_menu_item("Interface Settings", show_interface_settings, "Interface Settings");
+            window_menu_item("Emulator Hotkeys", show_hotkey_config, "Emulator Hotkeys");
+            window_menu_item("SC-3000 Keyboard", show_sk1100_keyboard_config, "SC-3000 Keyboard");
+            window_menu_item("CRT (Lottes) Setup", show_crt_lottes_setup, "CRT (Lottes) Setup");
+            window_menu_item("Advanced Scaling Setup", show_advanced_scaling_setup, "Advanced Scaling Setup");
+#if GEARSF7000_ENABLE_SR1000
+            window_menu_item("Cassette", config_debug.show_cassette &&
+                emu_get_core()->HasCassetteInterface(), "Cassette");
+#endif
+#ifdef DEBUG_TOOLS
+            if (config_debug.debug)
+            {
+                window_menu_item("Output", config_debug.show_screen, "Output###debug_output");
+                window_menu_item("Disassembler", config_debug.show_disassembler, "Disassembler");
+                window_menu_item("Disassembler (new)", config_debug.show_disassembler_new, "Disassembler (new)###disassembler_new");
+                window_menu_item("Deep Search", config_debug.show_deep_search, "Deep Search###deep_search");
+                window_menu_item("To Check", config_debug.show_to_check, "To Check###to_check");
+                window_menu_item("Z80 Status", config_debug.show_processor, "Z80 Status");
+                window_menu_item("Memory Editor", config_debug.show_memory, "Memory Editor");
+                window_menu_item("Pattern Table", config_debug.show_pattern_table, "Pattern Table");
+                window_menu_item("Sprites", config_debug.show_sprites, "Sprites");
+                window_menu_item("Name Table", config_debug.show_nametable, "Name Table");
+                window_menu_item("Palettes", config_debug.show_palettes, "Palettes###palettes");
+                window_menu_item("VDP Register Explorer", config_debug.show_video_register_explorer, "VDP Register Explorer");
+                window_menu_item("PSG", config_debug.show_psg, "PSG");
+#if GEARSF7000_ENABLE_AY
+                window_menu_item("AY-3-8910 / YM2149", config_debug.show_ay, "AY-3-8910 / YM2149");
+#endif
+#if GEARSF7000_ENABLE_YM2413
+                window_menu_item("YM2413 FM Sound Unit", config_debug.show_ym2413,
+                                 "YM2413 FM Sound Unit");
+#endif
+#if GEARSF7000_ENABLE_SF7000
+                window_menu_item("SF-7000", config_debug.show_sf7000, "SF-7000");
+#endif
+                window_menu_item("Recorder", config_debug.show_rewind, "Recorder");
+                window_menu_item("Debug Events", config_debug.show_events, "Debug Events");
+                window_menu_item("Live Disassembler", config_debug.show_rom_map, "Live Disassembler");
+                window_menu_item("BASIC Typer", config_debug.show_basic_typer, "BASIC Typer");
+                window_menu_item("Mem Import", config_debug.show_memory_import, "Mem Import");
+                window_menu_item("ROM Inspector", config_debug.show_rom_inspector, "ROM Inspector");
+#if GEARSF7000_ENABLE_SF7000
+                window_menu_item("Disc Explorer", config_debug.show_disc_explorer, "Disc Explorer");
+#endif
+                window_menu_item("CRT Test Pass (GPU)", config_debug.show_crt_test_pass, "CRT Test Pass (GPU)");
+                window_menu_item("CRT Composite Decode Test (GPU)", config_debug.show_composite_decode_test, "CRT Composite Decode Test (GPU)");
+                window_menu_item("CRT Consumer Test (GPU)", config_debug.show_crt_consumer_test, "CRT Consumer Test (GPU)");
+                window_menu_item("CRT Lottes Test (GPU)", config_debug.show_crt_lottes_test, "CRT Lottes Test (GPU)");
+#if GEARSF7000_ENABLE_MCP
+                window_menu_item("MCP Server", config_debug.show_mcp_server, "MCP Server");
+                window_menu_item("Watch Monitor", config_debug.show_watch_monitor, "Watch Monitor");
+#endif
+            }
+#endif
+            ImGui::EndMenu();
+        }
 
         if (ImGui::BeginMenu("About"))
         {
@@ -2658,6 +3091,8 @@ static void main_menu(void)
             }
             ImGui::EndMenu();
         }
+
+        draw_menu_bar_status();
 
         main_menu_height = (int)ImGui::GetWindowSize().y;
 
@@ -2697,11 +3132,19 @@ static void main_menu(void)
     if (open_bios)
         file_dialog_load_bios();
 
+    if (open_m5_bios) file_dialog_load_m5_bios();
+    if (open_coleco_bios)
+        file_dialog_load_coleco_bios();
+    if (open_msx_bios)
+        file_dialog_load_msx_bios();
+
     if (open_disc)
         file_dialog_load_disc();
 
     if (open_cassette)
         file_dialog_load_cassette();
+    if (select_msx_cassette)
+        file_dialog_select_msx_cassette();
 
 
     if (open_symbols)
@@ -2716,14 +3159,12 @@ static void main_menu(void)
     if (open_bios_warning)
     {
         dialog_in_use = true;
-        ImGui::OpenPopup("BIOS");
+        ImGui::OpenPopup("IPL");
     }
 
     popup_modal_bios();
     popup_modal_about();
 
-    for (int i = 0; i < 16; i++)
-        config_video.color[i] = color_float_to_int(custom_palette[i]);
 }
 
 static bool main_window(void)
@@ -2731,10 +3172,12 @@ static bool main_window(void)
     bool hasFocus = true;
 
     const bool config_isdebug = config_debug.debug;
-    config_VideoOutput& video_output = config_video_output_for_mode(config_isdebug);
+    const auto video_output = emu_get_effective_video_output(config_isdebug);
 
     GC_RuntimeInfo runtime;
     emu_get_runtime(runtime);
+    const GC_VideoFrameDescriptor frameDescriptor =
+        emu_get_video_frame_descriptor();
 
     // 1920x994
     int w = (int)ImGui::GetIO().DisplaySize.x;
@@ -2752,7 +3195,10 @@ static bool main_window(void)
             ratio = 16.0f / 9.0f;
             break;
         default:
-            ratio = (float)runtime.screen_width / (float)runtime.screen_height;
+            ratio = frameDescriptor.IsValid()
+                ? static_cast<float>(frameDescriptor.presentation_width) /
+                  static_cast<float>(frameDescriptor.presentation_height)
+                : (float)runtime.screen_width / (float)runtime.screen_height;
     }
 
     if (!config_isdebug && video_output.scale == SCALE_WIN_WIDTH_HEIGHT)
@@ -2760,8 +3206,18 @@ static bool main_window(void)
         ratio = (float)w / (float)h;
     }
 
-    int w_corrected = (int)(runtime.screen_height * ratio);
-    int h_corrected = (int)(runtime.screen_height);
+    // Explicit scale choices describe desktop occupancy, not framebuffer
+    // pixels. Pico9918, for example, emits 640x480 but presents at a 320x240
+    // basis, so the user's existing 2x choice remains a 640x480 window. The
+    // aspect ratio is applied to the presentation basis as a whole and never
+    // changes the geometry of an individual video mode inside the frame.
+    const int presentationHeight = frameDescriptor.IsValid()
+        ? frameDescriptor.presentation_height
+        : runtime.screen_height;
+    int w_corrected = frameDescriptor.IsValid() && selected_ratio == 0
+        ? frameDescriptor.presentation_width
+        : (int)roundf(presentationHeight * ratio);
+    int h_corrected = presentationHeight;
     float scale_multiplier = 0.0f;
     const float selected_scale = explicit_scale_multiplier(video_output.scale);
 
@@ -2826,13 +3282,15 @@ static bool main_window(void)
     // drawing plain emu_texture below instead of a never-written, blank
     // renderer_crt_lottes_live_texture.
     bool crt_lottes_ready = false;
-    if (video_output.postprocessing == POSTPROCESSING_CRT_LOTTES)
+    if (video_output.postprocessing == POSTPROCESSING_CRT_LOTTES &&
+        renderer_postprocessing_supported(POSTPROCESSING_CRT_LOTTES))
     {
         renderer_set_crt_lottes_output_size(main_window_width, main_window_height);
         crt_lottes_ready = renderer_ensure_crt_lottes_pipeline();
     }
     bool advanced_scaling_ready = false;
-    if (video_output.postprocessing == POSTPROCESSING_ADVANCED_SCALING)
+    if (video_output.postprocessing == POSTPROCESSING_ADVANCED_SCALING &&
+        renderer_postprocessing_supported(POSTPROCESSING_ADVANCED_SCALING))
     {
         renderer_set_advanced_scaling_output_size(main_window_width, main_window_height);
         advanced_scaling_ready = renderer_ensure_advanced_scaling_pipeline();
@@ -2891,7 +3349,14 @@ static bool main_window(void)
         : useAdvancedScalingLive
             ? renderer_advanced_scaling_live_texture
             : (ImTextureID)(intptr_t)renderer_emu_texture;
-    ImGui::Image(mainImageTexture, ImVec2((float)main_window_width, (float)main_window_height));
+    const RendererTextureRegion sourceRegion = renderer_get_emulator_texture_region();
+    const ImVec2 imageUv0 = (useCrtLottesLive || useAdvancedScalingLive)
+        ? ImVec2(0.0f, 0.0f) : sourceRegion.uv0;
+    const ImVec2 imageUv1 = (useCrtLottesLive || useAdvancedScalingLive)
+        ? ImVec2(1.0f, 1.0f) : sourceRegion.uv1;
+    ImGui::Image(mainImageTexture,
+        ImVec2((float)main_window_width, (float)main_window_height),
+        imageUv0, imageUv1);
     renderer_end_emulator_image();
 
     if (config_video.fps || config_video.frame_pacing_info)
@@ -2928,11 +3393,12 @@ static void file_dialog_open_rom(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
 #if GEARSF7000_PRODUCT_SC3000
-    nfdfilteritem_t filterItem[1] = { { "ROM Files", "sg,sc,rom,asc,bin,zip" } };
+    nfdfilteritem_t filterItem[1] = { { "ROM Files", "sg,sc,sms,gg,rom,asc,asls,bin,zip" } };
 #else
-    nfdfilteritem_t filterItem[1] = { { "ROM Files", "sg,sc,col,cv,rom,asc,bin,zip" } };
+    nfdfilteritem_t filterItem[1] = { { "ROM Files", "sg,sc,sms,gg,col,cv,mx1,rom,asc,asls,bin,zip" } };
 #endif
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, config_emulator.last_open_path.c_str());
+    nfdresult_t result = NFD_OpenDialogParented(
+        &outPath, filterItem, 1, config_emulator.last_open_path.c_str());
     if (result == NFD_OKAY)
     {
         std::string path = outPath;
@@ -2952,7 +3418,7 @@ static void file_dialog_load_ram(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "RAM Files", "sav" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
     if (result == NFD_OKAY)
     {
         Cartridge::ForceConfiguration config = get_force_config();
@@ -2971,7 +3437,7 @@ static void file_dialog_save_basic_program(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "Tokenised BASIC", "bas" } };
-    nfdresult_t result = NFD_SaveDialog(&outPath, filterItem, 1, config_emulator.last_open_path.c_str(), "program.bas");
+    nfdresult_t result = NFD_SaveDialogParented(&outPath, filterItem, 1, config_emulator.last_open_path.c_str(), "program.bas");
     if (result == NFD_OKAY)
     {
         std::string status;
@@ -2991,7 +3457,7 @@ static void file_dialog_load_basic_program(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "Tokenised BASIC", "bas" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, config_emulator.last_open_path.c_str());
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, config_emulator.last_open_path.c_str());
     if (result == NFD_OKAY)
     {
         std::string status;
@@ -3014,7 +3480,7 @@ static void file_dialog_save_ram(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "RAM Files", "sav" } };
-    nfdresult_t result = NFD_SaveDialog(&outPath, filterItem, 1, NULL, NULL);
+    nfdresult_t result = NFD_SaveDialogParented(&outPath, filterItem, 1, NULL, NULL);
     if (result == NFD_OKAY)
     {
         emu_save_ram(outPath);
@@ -3031,7 +3497,7 @@ static void file_dialog_load_state(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "Save State Files", "state" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
     if (result == NFD_OKAY)
     {
         std::string message("Loading state from ");
@@ -3052,7 +3518,7 @@ static void file_dialog_save_vgm(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "VGM Files", "vgm" } };
-    nfdresult_t result = NFD_SaveDialog(&outPath, filterItem, 1, config_emulator.last_open_path.c_str(), "recording.vgm");
+    nfdresult_t result = NFD_SaveDialogParented(&outPath, filterItem, 1, config_emulator.last_open_path.c_str(), "recording.vgm");
     if (result == NFD_OKAY)
     {
         if (emu_start_vgm_recording(outPath))
@@ -3073,7 +3539,7 @@ static void file_dialog_save_state(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "Save State Files", "state" } };
-    nfdresult_t result = NFD_SaveDialog(&outPath, filterItem, 1, NULL, NULL);
+    nfdresult_t result = NFD_SaveDialogParented(&outPath, filterItem, 1, NULL, NULL);
     if (result == NFD_OKAY)
     {
         std::string message("Saving state to ");
@@ -3092,7 +3558,7 @@ static void file_dialog_choose_savestate_path(void)
 {
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
-    nfdresult_t result = NFD_PickFolder(&outPath, savestates_path);
+    nfdresult_t result = NFD_PickFolderParented(&outPath, savestates_path);
     if (result == NFD_OKAY)
     {
         strcpy(savestates_path, outPath);
@@ -3105,12 +3571,105 @@ static void file_dialog_choose_savestate_path(void)
     }
 }
 
+static void projects_folder_use(const std::string& path)
+{
+    if (rom_map_project_set_root(path))
+    {
+        std::string message("Projects folder: ");
+        message += rom_map_project_root();
+        gui_set_status_message(message.c_str(), 4000);
+    }
+    else
+    {
+        std::string message("Projects folder not changed: ");
+        message += rom_map_project_last_error();
+        Log("%s", message.c_str());
+        gui_set_status_message(message.c_str(), 6000);
+    }
+}
+
+static void file_dialog_choose_projects_folder(void)
+{
+    ScopedFileDialogAudioPause audioPause;
+    const std::string current = rom_map_project_root();
+    nfdchar_t *outPath;
+    nfdresult_t result = NFD_PickFolderParented(&outPath, current.c_str());
+    if (result == NFD_OKAY)
+    {
+        const std::string chosen(outPath);
+        NFD_FreePath(outPath);
+        projects_folder_use(chosen);
+    }
+    else if (result != NFD_CANCEL)
+    {
+        Log("Projects Folder Error: %s", NFD_GetError());
+    }
+}
+
+static void file_dialog_load_m5_bios(void)
+{
+    ScopedFileDialogAudioPause audioPause;
+    nfdchar_t *outPath;
+    nfdfilteritem_t filterItem[1] = { { "Sord M5 BIOS", "col,rom,bin,bios" } };
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
+    if (result == NFD_OKAY)
+    {
+        config_emulator.m5_bios_path.assign(outPath);
+        NFD_FreePath(outPath);
+        emu_reload_machine_firmware();
+        gui_debug_reset();
+    }
+    else if (result != NFD_CANCEL)
+    {
+        Log("Load Sord M5 BIOS Error: %s", NFD_GetError());
+    }
+}
+
+static void file_dialog_load_coleco_bios(void)
+{
+    ScopedFileDialogAudioPause audioPause;
+    nfdchar_t *outPath;
+    nfdfilteritem_t filterItem[1] = { { "ColecoVision BIOS", "col,rom,bin,bios" } };
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
+    if (result == NFD_OKAY)
+    {
+        config_emulator.coleco_bios_path.assign(outPath);
+        NFD_FreePath(outPath);
+        emu_reload_machine_firmware();
+        gui_debug_reset();
+    }
+    else if (result != NFD_CANCEL)
+    {
+        Log("Load ColecoVision BIOS Error: %s", NFD_GetError());
+    }
+}
+
+static void file_dialog_load_msx_bios(void)
+{
+    ScopedFileDialogAudioPause audioPause;
+    nfdchar_t *outPath;
+    nfdfilteritem_t filterItem[1] = { { "MSX firmware ROM", "rom,bin,bios" } };
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
+    if (result == NFD_OKAY)
+    {
+        config_emulator.msx_bios_path.assign(outPath);
+        config_emulator.msx_use_cbios = false;
+        NFD_FreePath(outPath);
+        emu_reload_machine_firmware();
+        gui_debug_reset();
+    }
+    else if (result != NFD_CANCEL)
+    {
+        Log("Load MSX1 BIOS (32 KB) Error: %s", NFD_GetError());
+    }
+}
+
 static void file_dialog_load_bios(void)
 {
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "BIOS Files", "sg,sc,bin,rom,bios,ipl" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
     if (result == NFD_OKAY)
     {
         strcpy(bios_path, outPath);
@@ -3130,7 +3689,7 @@ static void file_dialog_load_disc(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t* outPath;
     nfdfilteritem_t filterItem[1] = { { "Disk Files", "sf7,dsk,hfe,ds7" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
     if (result == NFD_OKAY)
     {
         strcpy(disc_path, outPath);
@@ -3148,12 +3707,30 @@ static void file_dialog_load_disc(void)
 
 
 
+static void file_dialog_select_msx_cassette(void)
+{
+    ScopedFileDialogAudioPause audioPause;
+    nfdchar_t* outPath = nullptr;
+    nfdfilteritem_t filter = { "MSX Audio Tapes", "wav,mp3" };
+    const auto parent = std::filesystem::path(config_emulator.msx_tape.path).parent_path().string();
+    const nfdresult_t result = NFD_OpenDialogParented(&outPath, &filter, 1,
+        parent.empty() ? nullptr : parent.c_str());
+    if (result == NFD_OKAY)
+    {
+        if (!application_load_tape(outPath))
+            gui_set_status_message("Unable to load MSX tape (WAV/MP3 supported)", 4000);
+        NFD_FreePath(outPath);
+    }
+    else if (result != NFD_CANCEL)
+        Log("Select MSX Tape Error: %s", NFD_GetError());
+}
+
 static void file_dialog_load_cassette(void)
 {
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t* outPath;
     nfdfilteritem_t filterItem[1] = { { "Tape Files", "bit,bas,basic,wav,mp3" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
     if (result == NFD_OKAY)
     {
         strcpy(cassette_path, outPath);
@@ -3174,7 +3751,7 @@ static void file_dialog_load_symbols(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "Symbol Files", "sym" } };
-    nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+    nfdresult_t result = NFD_OpenDialogParented(&outPath, filterItem, 1, NULL);
     if (result == NFD_OKAY)
     {
         gui_debug_reset_symbols();
@@ -3192,7 +3769,7 @@ static void file_dialog_save_screenshot(void)
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
     nfdfilteritem_t filterItem[1] = { { "PNG Files", "png" } };
-    nfdresult_t result = NFD_SaveDialog(&outPath, filterItem, 1, NULL, NULL);
+    nfdresult_t result = NFD_SaveDialogParented(&outPath, filterItem, 1, NULL, NULL);
     if (result == NFD_OKAY)
     {
         call_save_screenshot(outPath);
@@ -3321,6 +3898,14 @@ static int find_plain_hotkey(SDL_Scancode scancode)
     return -1;
 }
 
+// "Keypad 5", stable storage for the conflict message.
+static const char* keypad_action_name(int key)
+{
+    static char names[COLECO_KEYPAD_KEY_COUNT][16];
+    snprintf(names[key], sizeof(names[key]), "Keypad %s", coleco_keypad_layout[key].label);
+    return names[key];
+}
+
 static SDL_Scancode* find_keyboard_conflict(SDL_Scancode scancode,
                                              const char** action, int* player)
 {
@@ -3364,6 +3949,16 @@ static SDL_Scancode* find_keyboard_conflict(SDL_Scancode scancode,
                 return bindings[i];
             }
         }
+        for (int k = 0; k < COLECO_KEYPAD_KEY_COUNT; ++k)
+        {
+            SDL_Scancode* binding = &config_input[p].keypad_key[k];
+            if (binding != configured_key && *binding == scancode)
+            {
+                *action = keypad_action_name(k);
+                *player = p;
+                return binding;
+            }
+        }
     }
     return NULL;
 }
@@ -3395,6 +3990,15 @@ static SDL_Scancode* find_machine_binding(SDL_Scancode scancode,
                 *action = names[i];
                 *player = p;
                 return bindings[i];
+            }
+        }
+        for (int k = 0; k < COLECO_KEYPAD_KEY_COUNT; ++k)
+        {
+            if (config_input[p].keypad_key[k] == scancode)
+            {
+                *action = keypad_action_name(k);
+                *player = p;
+                return &config_input[p].keypad_key[k];
             }
         }
     }
@@ -3527,8 +4131,14 @@ static void popup_modal_input_binding(void)
         return;
     }
 
-    const char* category = input_capture_kind == InputCapture_Hotkey ? "Emulator" :
-                           input_capture_kind == InputCapture_Gamepad ? "Gamepad" : "SC-3000";
+    char category[32];
+    if (input_capture_kind == InputCapture_Hotkey)
+        SDL_snprintf(category, sizeof(category), "Emulator");
+    else if (input_capture_kind == InputCapture_Keyboard && configured_sk1100_key >= 0)
+        SDL_snprintf(category, sizeof(category), "SC-3000");
+    else
+        SDL_snprintf(category, sizeof(category), "Player %d%s", configured_player + 1,
+                     input_capture_kind == InputCapture_Gamepad ? " gamepad" : "");
     ImGui::Text("%s: %s", category, configured_action ? configured_action : "Input");
     if (input_capture_phase == InputCapture_Waiting)
     {
@@ -3573,19 +4183,118 @@ static void popup_modal_input_binding(void)
         if (input_capture_kind == InputCapture_Keyboard &&
             input_capture_conflicting_hotkey >= 0)
             ImGui::TextWrapped("This is an emulator service key. Change it from Configure Emulator Hotkeys; the SC-3000 keyboard cannot replace it.");
-        ImGui::TextDisabled("Press another key, or Cancel.");
+        if (input_capture_conflicting_hotkey >= 0 || input_capture_kind == InputCapture_Hotkey)
+            if (input_capture_conflicting_hotkey >= 0 || input_capture_kind == InputCapture_Hotkey)
+            ImGui::TextDisabled("Press another key, or Cancel.");
+        else
+            ImGui::TextDisabled("Swap the two, Replace (the other becomes unassigned),\npress another key, or Cancel.");
+        else
+            ImGui::TextDisabled("Swap the two, Replace (the other becomes unassigned),\npress another key, or Cancel.");
     }
 
     ImGui::Separator();
-    if (input_capture_phase != InputCapture_Confirm)
-        ImGui::BeginDisabled();
-    if (ImGui::Button("OK", ImVec2(100, 0)))
-        apply_pending_input_capture();
-    if (input_capture_phase != InputCapture_Confirm)
-        ImGui::EndDisabled();
-    ImGui::SameLine();
+    // A conflict with another machine binding (a joypad key, a gamepad button,
+    // an SK-1100 key) can be settled here: Swap gives the other action the key
+    // this one had, Replace leaves the other action unassigned. A service key
+    // stays blocked: the machine bindings cannot take one away.
+    const bool machine_conflict = input_capture_phase == InputCapture_Conflict &&
+        input_capture_kind != InputCapture_Hotkey && input_capture_conflicting_hotkey < 0 &&
+        (input_capture_conflicting_key != NULL || input_capture_conflicting_button != NULL);
+    if (machine_conflict)
+    {
+        if (ImGui::Button("Swap", ImVec2(100, 0)))
+        {
+            if (input_capture_kind == InputCapture_Keyboard)
+            {
+                *input_capture_conflicting_key = *configured_key;
+                *configured_key = input_capture_key;
+            }
+            else
+            {
+                *input_capture_conflicting_button = *configured_button;
+                *configured_button = input_capture_button;
+            }
+            finish_input_capture(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Replace", ImVec2(100, 0)))
+        {
+            if (input_capture_kind == InputCapture_Keyboard)
+            {
+                *input_capture_conflicting_key = SDL_SCANCODE_UNKNOWN;
+                *configured_key = input_capture_key;
+            }
+            else
+            {
+                *input_capture_conflicting_button = SDL_GAMEPAD_BUTTON_INVALID;
+                *configured_button = input_capture_button;
+            }
+            finish_input_capture(true);
+        }
+        ImGui::SameLine();
+    }
+    else
+    {
+        if (input_capture_phase != InputCapture_Confirm)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("OK", ImVec2(100, 0)))
+            apply_pending_input_capture();
+        if (input_capture_phase != InputCapture_Confirm)
+            ImGui::EndDisabled();
+        ImGui::SameLine();
+    }
     if (ImGui::Button("Cancel", ImVec2(100, 0)))
         finish_input_capture(false);
+
+    // Clear and Default, as the emulator hotkeys already had. Escape is an
+    // assignable key here, so emptying a binding needs its own button.
+    if (input_capture_kind != InputCapture_Hotkey)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        if (ImGui::Button("Clear", ImVec2(70, 0)))
+        {
+            if (input_capture_kind == InputCapture_Keyboard)
+                *configured_key = SDL_SCANCODE_UNKNOWN;
+            else
+                *configured_button = SDL_GAMEPAD_BUTTON_INVALID;
+            finish_input_capture(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Default", ImVec2(70, 0)))
+        {
+            // Offered as a candidate, like a pressed key: if the default is
+            // taken by another action the conflict choices appear.
+            if (input_capture_kind == InputCapture_Keyboard)
+            {
+                SDL_Scancode value = SDL_SCANCODE_UNKNOWN;
+                if (config_default_key_binding(configured_key, &value))
+                {
+                    input_capture_key = value;
+                    input_capture_conflicting_hotkey = -1;
+                    input_capture_conflicting_key = value == SDL_SCANCODE_UNKNOWN ? NULL :
+                        find_keyboard_conflict(value, &input_capture_conflicting_action,
+                                               &input_capture_conflicting_player);
+                    input_capture_phase = input_capture_conflicting_key
+                        ? InputCapture_Conflict : InputCapture_Confirm;
+                }
+            }
+            else
+            {
+                int value = SDL_GAMEPAD_BUTTON_INVALID;
+                if (config_default_button_binding(configured_button, &value))
+                {
+                    input_capture_button = value;
+                    input_capture_conflicting_button = find_gamepad_conflict(
+                        value, &input_capture_conflicting_action);
+                    input_capture_conflicting_player = configured_player;
+                    input_capture_phase = input_capture_conflicting_button
+                        ? InputCapture_Conflict : InputCapture_Confirm;
+                }
+            }
+        }
+    }
     ImGui::EndPopup();
 }
 
@@ -3697,7 +4406,7 @@ static void hotkey_row(int index)
 
 static void window_hotkey_config(void)
 {
-    ImGui::SetNextWindowSize(ImVec2(535.0f, 650.0f), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(29.7f, 36.1f);
     if (!ImGui::Begin("Emulator Hotkeys", &show_hotkey_config))
     {
         ImGui::End();
@@ -3806,7 +4515,12 @@ void gui_sk1100_release_virtual_keys(void)
 
 static void window_sk1100_keyboard_config(void)
 {
-    ImGui::SetNextWindowSize(ImVec2(800.0f, 320.0f), ImGuiCond_Appearing);
+    if (emu_get_core()->GetMachineType() == MachineType::MSX || emu_get_core()->GetMachineType() == MachineType::SordM5) {
+        show_sk1100_keyboard_config = false;
+        return;
+    }
+    const float chrome_em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(44.4f * chrome_em, 17.8f * chrome_em), ImGuiCond_Appearing);
     const bool window_visible = ImGui::Begin("SC-3000 Keyboard", &show_sk1100_keyboard_config);
     if (!show_sk1100_keyboard_config)
         gui_sk1100_release_virtual_keys();
@@ -3877,7 +4591,10 @@ static void window_sk1100_keyboard_config(void)
     // 768x240: halfway between the initial large view and the 50% test, using
     // classic resolution-friendly dimensions. X/Y hitboxes scale separately,
     // so the sub-1% aspect adjustment does not disturb key alignment.
-    const float image_width = std::min(768.0f, available_width);
+    // That 768 is expressed in em (42.7 x the 18px chrome font): as a raw
+    // pixel cap the artwork stayed put while the surrounding text grew with
+    // the monitor DPI, which made the keyboard look shrunken on a 4K panel.
+    const float image_width = std::min(42.7f * ImGui::GetFontSize(), available_width);
     const float image_height = image_width * (240.0f / 768.0f);
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImGui::Image(sk1100_keyboard_texture, ImVec2(image_width, image_height));
@@ -3981,7 +4698,7 @@ static void popup_modal_about(void)
     if (ImGui::BeginPopupModal("About " GEARSF7000_TITLE, NULL, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::Text("%s %s", GEARSF7000_TITLE, build_info_version());
-        ImGui::Text("Build: %s", build_info_version());
+        ImGui::Text("Build: %s", build_info_revision());
         // The line that says whether this is the binary you just made, or one
         // from yesterday still sitting in the .app bundle.
         ImGui::Text("Compiled: %s", build_info_timestamp());
@@ -3999,6 +4716,13 @@ static void popup_modal_about(void)
             {
                 ImGui::BeginChild("backers", ImVec2(0, 100), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
                 ImGui::Text("%s", BACKERS_STR);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("C-BIOS"))
+            {
+                ImGui::BeginChild("cbios_license", ImVec2(0, 250), true);
+                ImGui::TextWrapped("%s", emu_get_cbios_license());
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
@@ -4140,33 +4864,164 @@ static void popup_modal_bios(void)
     }
 }
 
-static GC_Color color_float_to_int(ImVec4 color)
-{
-    GC_Color ret;
-    ret.red = (u8)floor(color.x >= 1.0 ? 255.0 : color.x * 256.0);
-    ret.green = (u8)floor(color.y >= 1.0 ? 255.0 : color.y * 256.0);
-    ret.blue = (u8)floor(color.z >= 1.0 ? 255.0 : color.z * 256.0);
-    return ret;
-}
-
-static ImVec4 color_int_to_float(GC_Color color)
-{
-    ImVec4 ret;
-    ret.w = 0;
-    ret.x = (1.0f / 255.0f) * color.red;
-    ret.y = (1.0f / 255.0f) * color.green;
-    ret.z = (1.0f / 255.0f) * color.blue;
-    return ret;
-}
-
 static void update_palette(void)
 {
-    if (config_video.palette == 3)
+    emu_predefined_palette(*emu_palette_setting());
+}
+
+// Short board names for the measured status area. The full name is in the
+// tooltip and the window title; no fixed glyph-count width is assumed.
+static const char* board_short_name(SystemModel model)
+{
+    switch (model)
     {
-        emu_palette(config_video.color);
+        case SystemModel::SG1000:             return "SG1K";
+        case SystemModel::SG1000SK1100:       return "SG1K+KB";
+        case SystemModel::SC3000Japan:        return "SC3K-J";
+        case SystemModel::SC3000Export:       return "SC3K-E";
+        case SystemModel::SC3000JapanSF7000:  return "SF7K-J";
+        case SystemModel::SC3000ExportSF7000: return "SF7K-E";
+        case SystemModel::SMSNTSC:            return "SMS-NTSC";
+        case SystemModel::SMSPAL:             return "SMS-PAL";
+        case SystemModel::SegaMarkIII:        return "MARK-III";
+        case SystemModel::MSX1NTSC: return "MSX1-NTSC";
+        case SystemModel::MSX1PAL: return "MSX1-PAL";
+        case SystemModel::SordM5NTSC: return "M5-NTSC";
+        case SystemModel::SordM5PAL: return "M5-PAL";
+        case SystemModel::GameGearJapan: return "GG-J";
+        case SystemModel::GameGearExport: return "GG-E";
+        case SystemModel::ColecoVision:       return "COLECO";
+        case SystemModel::ColecoVisionSGM:    return "COLECO+SGM";
+        default:                              return "?";
     }
-    else
-        emu_predefined_palette(config_video.palette);
+}
+
+// The cartridge mapper actually in use - with Auto that is what detection
+// chose, which the Mapper menu does not say.
+static const char* mapper_short_name(Cartridge::CartridgeTypes type)
+{
+    switch (type)
+    {
+        case Cartridge::SG1000_1K:                  return "SG1K-1K";
+        case Cartridge::SG1000_16K:                 return "SG1K-16K";
+        case Cartridge::SC3000_2K:                  return "SC3K-2K";
+        case Cartridge::SC3000_32K:                 return "SC3K-32K";
+        case Cartridge::SC3000_16K_AT_8000:         return "SC3K-16K";
+        case Cartridge::SF7000IPL:                  return "SF7K-IPL";
+        case Cartridge::SC3000_ASC16L:              return "ASC16L";
+        case Cartridge::SC3000_ASC16LS:             return "INTERNAL";
+        case Cartridge::SC3000_FLAT64K:             return "FLAT64K";
+        case Cartridge::SG1000_DAHJEE_TYPE_A:       return "DAHJEE-A";
+        case Cartridge::SG1000_DAHJEE_TYPE_B:       return "DAHJEE-B";
+        case Cartridge::SC3000_SURVIVORS_MULTICART: return "SURV-MUL";
+        case Cartridge::SC3000_SURVIVORS_MEGACART:  return "SURV-MEG";
+        case Cartridge::SG1000_OTHELLO_2K:          return "OTHELLO";
+        case Cartridge::SG1000_CASTLE_8K:           return "CASTLE";
+        case Cartridge::SG1000_SEGA_315_5208:       return "315-5208";
+        case Cartridge::SG1000_SEGA_315_5208_DAHJEE_B: return "5208+DJB";
+        case Cartridge::SMS_SEGA_MAPPER:            return "SMS-SEGA";
+        case Cartridge::MSX_LINEAR: return "MSX-LINEAR";
+        case Cartridge::SORD_M5_LINEAR: return "M5-LINEAR";
+        case Cartridge::COLECOVISION:               return "CV-STD";
+        case Cartridge::COLECO_MEGACART:            return "CV-MEGA";
+        default:                                    return "--------";
+    }
+}
+
+// One measured group: proportional fonts and long board names cannot overlap.
+// Drop optional details before sacrificing access to the actual menus.
+static void draw_menu_bar_status(void)
+{
+    const auto model = emu_get_core()->GetSystemModel();
+    const Cartridge* cart = emu_get_core()->GetCartridge();
+    const bool ready = cart && cart->IsReady();
+    const std::string board = board_short_name(model);
+    const std::string mapper = ready ? mapper_short_name(cart->GetType()) : "";
+    std::string mcp;
+    bool mcpRunning = false;
+#if GEARSF7000_ENABLE_MCP
+    mcpRunning = emu_mcp_is_running();
+    if (mcpRunning)
+        mcp = emu_mcp_get_transport_mode() == MCP_TRANSPORT_STDIO
+            ? "MCP stdio" : "MCP :" + std::to_string(emu_mcp_get_port());
+    else if (config_debug.debug)
+        mcp = "MCP off";
+#endif
+    const float gap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    // Menu bars may have zero WindowPadding. Keep a font-scaled inset even then.
+    const float right = ImGui::GetWindowWidth() - ImGui::GetFontSize();
+    const float available = right - ImGui::GetCursorPosX() - gap;
+    const auto* memory = emu_get_core()->GetMemory();
+    const bool hasFirmware = memory->GetBiosSize() != 0;
+    const bool biosOK = memory->IsBiosLoaded();
+    const std::string bios = !hasFirmware ? "" : !biosOK ? "BIOS: ERROR"
+        : emu_is_cbios_active() ? "BIOS: C-BIOS" : "BIOS: OK";
+    struct Part { std::string text; ImVec4 color; };
+    const ImVec4 muted = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    const ImVec4 green(0.25f, 0.85f, 0.35f, 1.0f);
+    std::vector<Part> parts;
+    const bool configError = !config_get_storage_error().empty();
+    if (configError) parts.push_back({"CONFIG: ERROR", ImVec4(1.0f, 0.25f, 0.25f, 1.0f)});
+    parts.push_back({board, muted});
+    if (config_debug.debug && !mapper.empty()) parts.push_back({mapper, muted});
+    if (!bios.empty()) parts.push_back({bios, biosOK ? muted : ImVec4(1.0f, 0.25f, 0.25f, 1.0f)});
+    if (!mcp.empty()) parts.push_back({mcp, mcpRunning ? green : muted});
+    auto widthOfParts = [&]() {
+        float width = 0;
+        for (const auto& part : parts) width += ImGui::CalcTextSize(part.text.c_str()).x;
+        return width + (parts.size() - 1) * ImGui::CalcTextSize("  |  ").x;
+    };
+    // Preserve the firmware status when the menu bar gets narrow.
+    while (parts.size() > 1 && widthOfParts() > available) {
+        auto it = std::find_if(parts.begin(), parts.end(), [&](const Part& part) { return part.text == mapper; });
+        if (it == parts.end()) it = std::find_if(parts.begin(), parts.end(), [&](const Part& part) { return part.text != (configError ? "CONFIG: ERROR" : bios); });
+        parts.erase(it);
+    }
+    const float width = widthOfParts();
+    if (width > available) return;
+    ImGui::SameLine(right - width);
+    ImGui::BeginGroup();
+    ImGui::AlignTextToFramePadding();
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i) {
+            ImGui::SameLine(0, 0); ImGui::TextDisabled("  |  "); ImGui::SameLine(0, 0);
+        }
+        ImGui::TextColored(parts[i].color, "%s", parts[i].text.c_str());
+    }
+    ImGui::EndGroup();
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(GetSystemModelName(model));
+        ImGui::TextUnformatted(ready ? emu_get_mapper_name(cart->GetType()) : "No cartridge loaded");
+        if (hasFirmware) {
+            ImGui::TextUnformatted(bios.c_str());
+            if (biosOK) ImGui::TextUnformatted(memory->GetBiosFilePath().c_str());
+            if (!emu_get_machine_start_error().empty()) ImGui::TextUnformatted(emu_get_machine_start_error().c_str());
+        }
+        if (!mcp.empty()) ImGui::TextUnformatted(mcp.c_str());
+        if (configError) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Settings could not be loaded or saved:");
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
+            ImGui::TextUnformatted(config_get_storage_error().c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndTooltip();
+    }
+}
+
+static void menu_continue(void)
+{
+    if (emu_get_core()->GetMachineType() == MachineType::MSX &&
+        (emu_is_empty() || emu_has_pending_msx_firmware()))
+        menu_reset();
+    if (emu_is_empty()) {
+        gui_set_status_message(emu_get_machine_start_error().empty()
+            ? "Cannot start: no bootable cartridge or firmware is loaded."
+            : emu_get_machine_start_error().c_str(), 8000);
+        return;
+    }
+    emu_debug_continue();
 }
 
 static void menu_reset(void)
@@ -4177,10 +5032,15 @@ static void menu_reset(void)
 
     Cartridge::ForceConfiguration config = get_force_config();
 
-    emu_reset(config, config_emulator.start_paused);
+    const bool startPaused = config_emulator.start_paused && emu_debug_runtime_requested();
+    emu_reset(config, startPaused);
 
-    if (config_emulator.start_paused)
+    if (startPaused)
         emu_clear_video_buffer();
+    char status[96];
+    snprintf(status, sizeof(status), "Reset: %s active",
+             GetSystemModelName(emu_get_core()->GetSystemModel()));
+    gui_set_status_message(emu_get_machine_start_error().empty() ? status : emu_get_machine_start_error().c_str(), 8000);
 }
 
 static void menu_reset_paused(void)
@@ -4195,7 +5055,10 @@ static void menu_reset_paused(void)
     emu_reset(config, true);
     emu_clear_video_buffer();
     gui_debug_reset();
-    gui_set_status_message("Reset, paused at 0000", 3000);
+    char status[112];
+    snprintf(status, sizeof(status), "Reset: %s active, paused at 0000",
+             GetSystemModelName(emu_get_core()->GetSystemModel()));
+    gui_set_status_message(status, 3000);
 }
 
 static void menu_eject(void)
@@ -4210,10 +5073,10 @@ static void menu_pause(void)
 {
     if (emu_is_execution_stopped())
     {
-        gui_set_status_message("Resumed", 3000);
         // Also clears a debugger stop. emu_resume() alone only releases the
         // core pause bit and used to leave a stepped machine apparently stuck.
-        emu_debug_continue();
+        menu_continue();
+        if (!emu_is_execution_stopped()) gui_set_status_message("Resumed", 3000);
     }
     else
     {
@@ -4232,6 +5095,76 @@ static void menu_ffwd(void)
                                                 : "Fast Forward OFF", 3000);
 }
 
+static void window_interface_settings(void)
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float em = ImGui::GetFontSize();
+    const ImVec2 available(std::max(1.0f, viewport->WorkSize.x),
+                           std::max(1.0f, viewport->WorkSize.y));
+    ImGui::SetNextWindowSize(ImVec2(std::min(28.0f * em, available.x),
+                                  std::min(19.0f * em, available.y)), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(std::min(22.0f * em, available.x), std::min(12.0f * em, available.y)),
+        available);
+    if (restore_interface_settings_position)
+    {
+        ImGui::SetNextWindowPos(interface_settings_position);
+        restore_interface_settings_position = false;
+    }
+    else
+        ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::Begin("Interface Settings", &show_interface_settings,
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking))
+    {
+        gui_in_use = true;
+        ImGui::TextWrapped("Changes take effect when you press Apply.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Global scale");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("##interface_scale", &pending_interface_scale, 0.025f, 0.10f, "%.3f"))
+            pending_interface_scale = std::clamp(pending_interface_scale, 0.75f, 2.0f);
+        ImGui::TextUnformatted("Font size");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::Combo("##interface_font", &pending_interface_font,
+                     "Very Small\0Small\0Medium\0Large\0\0");
+        ImGui::TextUnformatted("Density");
+        ImGui::SetNextItemWidth(-1.0f);
+        // Configuration IDs are historical: 1 = Minimal, 2 = Compact.
+        ImGui::Combo("##interface_density", &pending_interface_density,
+                     "Normal\0Minimal\0Compact\0\0");
+        ImGui::Separator();
+        if (ImGui::Button("Restore Defaults"))
+        {
+            pending_interface_scale = 1.0f;
+            pending_interface_font = 0;
+            pending_interface_density = 0;
+        }
+        const bool changed = pending_interface_scale != config_debug.ui_scale
+            || pending_interface_font != config_debug.font_size
+            || pending_interface_density != config_debug.ui_density;
+        ImGui::BeginDisabled(!changed);
+        if (ImGui::Button("Apply"))
+        {
+            interface_settings_position = ImGui::GetWindowPos();
+            apply_interface_settings = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Close"))
+            show_interface_settings = false;
+        if (changed)
+            ImGui::TextWrapped("Unapplied changes are discarded when you close this panel.");
+    }
+    ImGui::End();
+}
+
+static bool shader_slider(const char* id, float* value, const char* key, const char* format)
+{
+    const auto* parameter = GetVideoCatalog().ShaderParameter(key);
+    return parameter && ImGui::SliderFloat(id, value, parameter->minimum, parameter->maximum, format);
+}
+
 static void window_crt_lottes_setup(void)
 {
     if (!show_crt_lottes_setup)
@@ -4245,7 +5178,7 @@ static void window_crt_lottes_setup(void)
     // frame (fill-available-width depends on last frame's auto-fit result)
     // and the window visibly shrinks toward nothing - a fixed initial size
     // like the other CRT windows in this session avoids the loop entirely.
-    ImGui::SetNextWindowSize(ImVec2(340, 340), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(18.9f, 18.9f);
     ImGui::Begin("CRT (Lottes) Setup", &show_crt_lottes_setup);
 
     if (output.postprocessing != POSTPROCESSING_CRT_LOTTES)
@@ -4286,27 +5219,33 @@ static void window_crt_lottes_setup(void)
                 "Scanline Intensity below ~0.30 at this size.");
     }
 
-    static const char* kMaskNames[] = {
-        "No Mask", "Aperture Grille", "Aperture Grille (bright)", "Shadow Mask"
+    const auto* mask = GetVideoCatalog().ShaderParameter("crt_lottes_mask_type");
+    const int maskIndex = static_cast<int>(output.crt_lottes_mask_type + 0.5f);
+    const auto maskName = [](int value) {
+        static const char* names[] = {"No Mask", "Aperture Grille", "Aperture Grille (bright)", "Shadow Mask"};
+        return value >= 0 && value < 4 ? names[value] : "Unknown";
     };
-    int maskIndex = static_cast<int>(output.crt_lottes_mask_type + 0.5f);
+    const char* maskLabel = maskName(maskIndex);
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##crt_lottes_mask", &maskIndex, kMaskNames, IM_ARRAYSIZE(kMaskNames)))
-        output.crt_lottes_mask_type = static_cast<float>(maskIndex);
+    if (ImGui::BeginCombo("##crt_lottes_mask", maskLabel)) {
+        for (const auto& choice : mask->choices)
+            if (ImGui::Selectable(maskName(choice.second), maskIndex == choice.second)) output.crt_lottes_mask_type = static_cast<float>(choice.second);
+        ImGui::EndCombo();
+    }
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_mask_intensity", &output.crt_lottes_mask_intensity, 0.0f, 1.0f, "Mask Intensity = %.2f");
+    shader_slider("##crt_lottes_mask_intensity", &output.crt_lottes_mask_intensity, "crt_lottes_mask_intensity", "Mask Intensity = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_scanline", &output.crt_lottes_scanline_thinness, 0.0f, 1.0f, "Scanline Intensity = %.2f");
+    shader_slider("##crt_lottes_scanline", &output.crt_lottes_scanline_thinness, "crt_lottes_scanline_thinness", "Scanline Intensity = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_sharpness", &output.crt_lottes_scan_blur, 1.0f, 6.0f, "Sharpness = %.2f");
+    shader_slider("##crt_lottes_sharpness", &output.crt_lottes_scan_blur, "crt_lottes_scan_blur", "Sharpness = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_gamma", &output.crt_lottes_gamma, 1.0f, 3.0f, "CRT Gamma = %.2f");
+    shader_slider("##crt_lottes_gamma", &output.crt_lottes_gamma, "crt_lottes_gamma", "CRT Gamma = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_black_threshold", &output.crt_lottes_black_threshold, 0.0f, 0.5f, "Black Threshold = %.2f");
+    shader_slider("##crt_lottes_black_threshold", &output.crt_lottes_black_threshold, "crt_lottes_black_threshold", "Black Threshold = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_boldness", &output.crt_lottes_boldness, 0.0f, 1.0f, "Boldness = %.2f");
+    shader_slider("##crt_lottes_boldness", &output.crt_lottes_boldness, "crt_lottes_boldness", "Boldness = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##crt_lottes_edge_radius", &output.crt_lottes_edge_radius, 0.25f, 4.0f, "Edge Radius = %.2f");
+    shader_slider("##crt_lottes_edge_radius", &output.crt_lottes_edge_radius, "crt_lottes_edge_radius", "Edge Radius = %.2f");
 
     ImGui::End();
 }
@@ -4321,7 +5260,7 @@ static void window_advanced_scaling_setup(void)
 
     // Same AlwaysAutoResize/SetNextItemWidth feedback loop as
     // window_crt_lottes_setup - fixed initial size avoids it.
-    ImGui::SetNextWindowSize(ImVec2(340, 170), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(18.9f, 9.4f);
     ImGui::Begin("Advanced Scaling Setup", &show_advanced_scaling_setup);
 
     if (output.postprocessing != POSTPROCESSING_ADVANCED_SCALING)
@@ -4329,13 +5268,13 @@ static void window_advanced_scaling_setup(void)
             "but won't be visible until you select it in this profile's Postprocessing menu.");
 
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##advanced_scaling_sharpness", &output.advanced_scaling_sharpness, 1.0f, 8.0f, "Sharpness = %.2f");
+    shader_slider("##advanced_scaling_sharpness", &output.advanced_scaling_sharpness, "advanced_scaling_sharpness", "Sharpness = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##advanced_scaling_black_threshold", &output.advanced_scaling_black_threshold, 0.0f, 0.5f, "Black Threshold = %.2f");
+    shader_slider("##advanced_scaling_black_threshold", &output.advanced_scaling_black_threshold, "advanced_scaling_black_threshold", "Black Threshold = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##advanced_scaling_boldness", &output.advanced_scaling_boldness, 0.0f, 1.0f, "Boldness = %.2f");
+    shader_slider("##advanced_scaling_boldness", &output.advanced_scaling_boldness, "advanced_scaling_boldness", "Boldness = %.2f");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::SliderFloat("##advanced_scaling_edge_radius", &output.advanced_scaling_edge_radius, 0.25f, 4.0f, "Edge Radius = %.2f");
+    shader_slider("##advanced_scaling_edge_radius", &output.advanced_scaling_edge_radius, "advanced_scaling_edge_radius", "Edge Radius = %.2f");
 
     ImGui::End();
 }
@@ -4485,25 +5424,9 @@ static void show_status_message(void)
 static Cartridge::ForceConfiguration get_force_config(void)
 {
     Cartridge::ForceConfiguration config;
-    config.region = get_vdp_selection(config_emulator.vdp);
     config.type = config_forced_cartridge_type();
     config.fallbackType = config_fallback_cartridge_type();
     return config;
-}
-
-static Cartridge::CartridgeRegions get_vdp_selection(int index)
-{
-    switch (index)
-    {
-        case 0:
-            return Cartridge::CartridgeUnknownRegion;
-        case 1:
-            return Cartridge::CartridgeNTSC;
-        case 2:
-            return Cartridge::CartridgePAL;
-        default:
-            return Cartridge::CartridgeUnknownRegion;
-    }
 }
 
 static void call_save_screenshot(const char* path)

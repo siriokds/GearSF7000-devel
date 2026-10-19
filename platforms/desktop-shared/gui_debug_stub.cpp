@@ -24,7 +24,6 @@ int gui_debug_load_symbols_file_counted(const char*) { return -1; }
 void gui_debug_toggle_breakpoint() {}
 void gui_debug_reset_breakpoints_cpu() {}
 void gui_debug_reset_breakpoints_mem() {}
-void gui_debug_reset_breakpoints_vram() {}
 void gui_debug_runtocursor() {}
 void gui_debug_go_back() {}
 void gui_debug_copy_memory() {}

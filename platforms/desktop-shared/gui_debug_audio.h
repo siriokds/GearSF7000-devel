@@ -14,5 +14,6 @@
 
 void gui_debug_psg_window(void);
 void gui_debug_ay_window(void);
+void gui_debug_ym2413_window(void);
 
 #endif /* GUI_DEBUG_AUDIO_H */

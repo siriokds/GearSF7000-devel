@@ -20,8 +20,11 @@
 #ifndef BUILD_INFO_H
 #define BUILD_INFO_H
 
-// Which build is this, answered at run time rather than by a macro pasted
-// into whichever files happened to be recompiled.
+// Release version shown to users. The source of truth is version.h.
+const char* build_info_version(void);
+
+// Which source revision is this, answered at run time rather than by a macro
+// pasted into whichever files happened to be recompiled.
 //
 // EMULATOR_BUILD is fixed into a translation unit when that unit is compiled.
 // Change one source, rebuild, and every file that was already up to date keeps
@@ -40,7 +43,7 @@
 // where they started from.
 
 // Commit as `git describe` saw it when this build was made, e.g. "d199dad-dirty".
-const char* build_info_version(void);
+const char* build_info_revision(void);
 
 // When this binary was compiled: "31/08/2026 12:34:56". This is the value that
 // tells two builds of the same dirty commit apart, and tells a stale .app from
@@ -48,7 +51,7 @@ const char* build_info_version(void);
 const char* build_info_timestamp(void);
 
 // Both together, for a title bar or a one-line banner:
-// "d199dad-dirty (31/08/2026 12:34:56)".
+// "1.0.0 build d199dad-dirty (31/08/2026 12:34:56)".
 const char* build_info_full(void);
 
 #endif /* BUILD_INFO_H */

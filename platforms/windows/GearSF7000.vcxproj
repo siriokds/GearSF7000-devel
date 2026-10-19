@@ -1,14 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|ARM64">
-      <Configuration>Debug</Configuration>
-      <Platform>ARM64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|ARM64">
-      <Configuration>Release</Configuration>
-      <Platform>ARM64</Platform>
-    </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
@@ -20,7 +12,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\src\Audio.cpp" />
+    <ClCompile Include="..\..\src\audio\OneBitAudioDevice.cpp" />
     <ClCompile Include="..\..\src\audio\Ay_Apu.cpp" />
+    <ClCompile Include="..\..\src\audio\Ym2413.cpp" />
+    <ClCompile Include="..\..\src\audio\emu2413.c" />
     <ClCompile Include="..\..\src\audio\Blip_Buffer.cpp" />
     <ClCompile Include="..\..\src\audio\Effects_Buffer.cpp" />
     <ClCompile Include="..\..\src\audio\Multi_Buffer.cpp" />
@@ -30,7 +25,26 @@
       <ForcedIncludeFiles>$(IntDir)build_version.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
     <ClCompile Include="..\..\src\Cartridge.cpp" />
+    <ClCompile Include="..\..\src\ControllerDevice.cpp" />
+    <ClCompile Include="..\..\src\MSXSlotMapper.cpp" />
+    <ClCompile Include="..\..\src\M5MemoryMapper.cpp" />
+    <ClCompile Include="..\..\src\M5Input.cpp" />
+    <ClCompile Include="..\..\src\SystemBusM5.cpp" />
+    <ClCompile Include="..\..\src\SystemBusMSX.cpp" />
     <ClCompile Include="..\..\src\MachineIOPorts.cpp" />
+    <ClCompile Include="..\..\src\Intel8255.cpp" />
+    <ClCompile Include="..\..\src\Z80CTC.cpp" />
+    <ClCompile Include="..\..\src\SC3000SerialPrinterPort.cpp" />
+    <ClCompile Include="..\..\src\SegaCassettePort.cpp" />
+    <ClCompile Include="..\..\src\SystemBusColeco.cpp" />
+    <ClCompile Include="..\audio-shared\sound_queue.cpp" />
+    <ClCompile Include="..\..\src\SystemBusSC3000.cpp" />
+    <ClCompile Include="..\..\src\SystemBusSG1000.cpp" />
+    <ClCompile Include="..\..\src\SystemBusSMS.cpp" />
+    <ClCompile Include="..\..\src\SystemBusGG.cpp" />
+    <ClCompile Include="..\..\src\GameGearInternalBusHandler.cpp" />
+    <ClCompile Include="..\..\src\TMS99xxDebugEvents.cpp" />
+    <ClCompile Include="..\..\src\SN76489DebugEvents.cpp" />
     <ClCompile Include="..\..\src\cpu\clk\CLKZ80Processor.cpp" />
     <ClCompile Include="..\..\src\cpu\clk\CLKZ80StateAccess.cpp" />
     <ClCompile Include="..\..\src\cpu\clk\GearSF7000ClockDomains.cpp" />
@@ -40,9 +54,17 @@
     <ClCompile Include="..\..\src\DiskLayout.cpp" />
     <ClCompile Include="..\..\src\DS7Format.cpp" />
     <ClCompile Include="..\..\src\DebugEvents.cpp" />
+    <ClCompile Include="..\..\src\DebugEventCatalog.cpp" />
     <ClCompile Include="..\..\src\DiagnosticLog.cpp" />
     <ClCompile Include="..\..\src\EDSKLoader.cpp" />
     <ClCompile Include="..\..\src\GearSF7000Core.cpp" />
+    <ClCompile Include="..\..\src\VideoCatalog.cpp" />
+    <ClCompile Include="..\..\src\VideoDeviceFactory.cpp" />
+    <ClCompile Include="..\..\src\Pico9918LegacyCore.cpp" />
+    <ClCompile Include="..\..\src\Pico9918LegacyCoreBridge.c">
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
+    <ClCompile Include="..\..\src\Pico9918.cpp" />
     <ClCompile Include="..\..\src\HFELoader.cpp" />
     <ClCompile Include="..\..\src\Input.cpp" />
     <ClCompile Include="..\..\src\Led.cpp" />
@@ -52,21 +74,27 @@
     <ClCompile Include="..\..\src\SegaBasicBitTape.cpp" />
     <ClCompile Include="..\..\src\SegaBasicWavTape.cpp" />
     <ClCompile Include="..\..\src\SF7000.cpp" />
+    <ClCompile Include="..\..\src\SF7000Memory.cpp" />
+    <ClCompile Include="..\..\src\SF7000ParallelPrinterPort.cpp" />
     <ClCompile Include="..\..\src\sf7fs\SF7Disc.cpp" />
-    <ClCompile Include="..\..\src\sk1100.cpp" />
-    <ClCompile Include="..\..\src\SP400.cpp" />
+    <ClCompile Include="..\..\src\SegaKeyboard.cpp" />
+    <ClCompile Include="..\..\src\MSXKeyboard.cpp" />
     <ClCompile Include="..\..\src\SPITapePlayer.cpp" />
     <ClCompile Include="..\..\src\SR1000.cpp" />
+    <ClCompile Include="..\..\src\TapeRecorder.cpp" />
+    <ClCompile Include="..\..\src\MSXTape.cpp" />
     <ClCompile Include="..\..\src\SR1000_Speaker.cpp" />
     <ClCompile Include="..\..\src\SystemClock.cpp" />
     <ClCompile Include="..\..\src\Tape.cpp" />
     <ClCompile Include="..\..\src\TapeMotor.cpp" />
-    <ClCompile Include="..\..\src\TMS9918CpuAccessTiming.cpp" />
-    <ClCompile Include="..\..\src\TMS9918VramSlotSchedule.cpp" />
-    <ClCompile Include="..\..\src\TMS9918VramSequencer.cpp" />
-    <ClCompile Include="..\..\src\TZXPlay.cpp" />
+    <ClCompile Include="..\..\src\TMS99xxCpuAccessTiming.cpp" />
+    <ClCompile Include="..\..\src\TMS99xxVramSlotSchedule.cpp" />
+    <ClCompile Include="..\..\src\TMS99xxVramSequencer.cpp" />
+    <ClCompile Include="..\..\src\TMS9918B.cpp" />
+    <ClCompile Include="..\..\src\tms9918b\TMS9918BAnalysis.cpp" />
+    <ClCompile Include="..\..\src\tms9918b\TMS9918BCalendar.cpp" />
     <ClCompile Include="..\..\src\VgmRecorder.cpp" />
-    <ClCompile Include="..\..\src\Video.cpp" />
+    <ClCompile Include="..\..\src\TMS99xx.cpp" />
     <ClCompile Include="..\..\src\WavChannel.cpp" />
     <ClCompile Include="..\..\src\WavPlayer.cpp" />
     <ClCompile Include="..\..\src\WavRecorder.cpp" />
@@ -74,7 +102,15 @@
     <ClCompile Include="..\..\src\WavSampleManager.cpp" />
     <ClCompile Include="..\..\src\WAVUtils.cpp" />
     <ClCompile Include="..\..\src\Z80Disassembler.cpp" />
-    <ClCompile Include="..\audio-shared\Sound_Queue.cpp" />
+    <ClCompile Include="..\..\src\RomMap.cpp" />
+    <ClCompile Include="..\..\src\SourceListing.cpp" />
+    <ClCompile Include="..\..\src\JumpTables.cpp" />
+    <ClCompile Include="..\..\src\DeepSearch.cpp" />
+    <ClCompile Include="..\desktop-shared\rom_map_project.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_rom_map.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_disassembler_view.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_deep_search.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_palettes.cpp" />
     <ClCompile Include="..\desktop-shared\application.cpp" />
     <ClCompile Include="..\desktop-shared\application_headless.cpp" />
     <ClCompile Include="..\desktop-shared\config.cpp" />
@@ -83,6 +119,11 @@
     <ClCompile Include="..\desktop-shared\emu.cpp" />
     <ClCompile Include="..\desktop-shared\gui.cpp" />
     <ClCompile Include="..\desktop-shared\gui_debug.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_events.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_nametable.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_pattern_table.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_sprites.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_video_registers.cpp" />
     <ClCompile Include="..\desktop-shared\gui_debug_audio.cpp" />
     <ClCompile Include="..\desktop-shared\gui_debug_basic_typer.cpp" />
     <ClCompile Include="..\desktop-shared\gui_debug_disc_explorer.cpp" />
@@ -123,9 +164,15 @@
     <None Include="..\desktop-shared\assets\sc3000-keyboard-compact.png" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\src\Z80CTC.h" />
     <ClInclude Include="..\..\src\AdvancedLowPassFilter.h" />
     <ClInclude Include="..\..\src\ASC16LMapper.h" />
+    <ClInclude Include="..\..\src\SC3000SurvivorsMapper.h" />
+    <ClInclude Include="..\..\src\Sega3155208SG1000Mapper.h" />
+    <ClInclude Include="..\..\src\SegaSMSMapper.h" />
+    <ClInclude Include="..\..\src\version.h" />
     <ClInclude Include="..\..\src\Audio.h" />
+    <ClInclude Include="..\..\src\audio\OneBitAudioDevice.h" />
     <ClInclude Include="..\..\src\audio\Ay_Apu.h" />
     <ClInclude Include="..\..\src\audio\blargg_common.h" />
     <ClInclude Include="..\..\src\audio\blargg_config.h" />
@@ -139,7 +186,23 @@
     <ClInclude Include="..\..\src\Butterworth2ndOrderBandPassFilter.h" />
     <ClInclude Include="..\..\src\BasicProgramLoader.h" />
     <ClInclude Include="..\..\src\Cartridge.h" />
+    <ClInclude Include="..\..\src\ControllerDevice.h" />
+    <ClInclude Include="..\..\src\MSXSlotMapper.h" />
+    <ClInclude Include="..\..\src\M5MemoryMapper.h" />
+    <ClInclude Include="..\..\src\M5Input.h" />
+    <ClInclude Include="..\..\src\SystemBusM5.h" />
+    <ClInclude Include="..\..\src\SystemBusMSX.h" />
     <ClInclude Include="..\..\src\MachineIOPorts.h" />
+    <ClInclude Include="..\..\src\ISystemBus.h" />
+    <ClInclude Include="..\..\src\RamRegion.h" />
+    <ClInclude Include="..\..\src\SystemRamRegions.h" />
+    <ClInclude Include="..\..\src\SystemBusColeco.h" />
+    <ClInclude Include="..\audio-shared\sound_queue.h" />
+    <ClInclude Include="..\..\src\SystemBusSC3000.h" />
+    <ClInclude Include="..\..\src\SystemBusSMS.h" />
+    <ClInclude Include="..\..\src\IFmPortDevice.h" />
+    <ClInclude Include="..\..\src\TMS99xxDebugEvents.h" />
+    <ClInclude Include="..\..\src\SN76489DebugEvents.h" />
     <ClInclude Include="..\..\src\cpu\CpuDebugContext.h" />
     <ClInclude Include="..\..\src\cpu\CpuExecution.h" />
     <ClInclude Include="..\..\src\cpu\CpuInstructionObserver.h" />
@@ -161,11 +224,25 @@
     <ClInclude Include="..\..\src\DataFile.h" />
     <ClInclude Include="..\..\src\Debiasing.h" />
     <ClInclude Include="..\..\src\DebugEvents.h" />
+    <ClInclude Include="..\..\src\IDebugEventProvider.h" />
+    <ClInclude Include="..\..\src\IVideoDevice.h" />
+    <ClInclude Include="..\..\src\IVideoCrtSignalProvider.h" />
+    <ClInclude Include="..\..\src\DebugEventCatalog.h" />
+    <ClInclude Include="..\..\src\DebugEventChannel.h" />
     <ClInclude Include="..\..\src\DiagnosticLog.h" />
     <ClInclude Include="..\..\src\definitions.h" />
     <ClInclude Include="..\..\src\cpu\CpuInterruptRouter.h" />
     <ClInclude Include="..\..\src\cpu\CpuStatePersistence.h" />
     <ClInclude Include="..\..\src\Z80Disassembler.h" />
+    <ClInclude Include="..\..\src\RomMap.h" />
+    <ClInclude Include="..\..\src\SourceListing.h" />
+    <ClInclude Include="..\..\src\JumpTables.h" />
+    <ClInclude Include="..\..\src\DeepSearch.h" />
+    <ClInclude Include="..\desktop-shared\rom_map_project.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_rom_map.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_disassembler_view.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_deep_search.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_palettes.h" />
     <ClInclude Include="..\..\src\Disk.h" />
     <ClInclude Include="..\..\src\DiskLayout.h" />
     <ClInclude Include="..\..\src\DiskModel.h" />
@@ -203,26 +280,52 @@
     <ClInclude Include="..\..\src\SF-7000_DiscMotor.h" />
     <ClInclude Include="..\..\src\SF-7000_DiscTrack2.h" />
     <ClInclude Include="..\..\src\SF7000.h" />
+    <ClInclude Include="..\..\src\SF7000Memory.h" />
+    <ClInclude Include="..\..\src\MachineDebugEventProvider.h" />
+    <ClInclude Include="..\..\src\SF7000ParallelPrinterPort.h" />
     <ClInclude Include="..\..\src\SimpleBandPassFilter.h" />
     <ClInclude Include="..\..\src\SimpleHighPassFilter.h" />
     <ClInclude Include="..\..\src\SimpleLowPassFilter.h" />
     <ClInclude Include="..\..\src\SixteenBitRegister.h" />
-    <ClInclude Include="..\..\src\sk1100.h" />
-    <ClInclude Include="..\..\src\SP400.h" />
+    <ClInclude Include="..\..\src\SegaKeyboard.h" />
+    <ClInclude Include="..\..\src\MSXKeyboard.h" />
+    <ClInclude Include="..\..\src\SC3000SerialPrinterPort.h" />
+    <ClInclude Include="..\..\src\SegaCassettePort.h" />
+    <ClInclude Include="..\..\src\SystemBusSG1000.h" />
     <ClInclude Include="..\..\src\SPITapePlayer.h" />
     <ClInclude Include="..\..\src\SR1000.h" />
+    <ClInclude Include="..\..\src\TapeRecorder.h" />
+    <ClInclude Include="..\..\src\ITapeRecorder.h" />
+    <ClInclude Include="..\..\src\MSXTape.h" />
+    <ClInclude Include="..\..\src\audio\IAYPorts.h" />
     <ClInclude Include="..\..\src\SR1000_Speaker.h" />
     <ClInclude Include="..\..\src\Storage.h" />
     <ClInclude Include="..\..\src\SystemClock.h" />
     <ClInclude Include="..\..\src\Tape.h" />
     <ClInclude Include="..\..\src\TapeMotor.h" />
-    <ClInclude Include="..\..\src\TMS9918CpuAccessTiming.h" />
-    <ClInclude Include="..\..\src\TMS9918RasterTiming.h" />
-    <ClInclude Include="..\..\src\TMS9918SlotGrid.h" />
-    <ClInclude Include="..\..\src\TMS9918VramSlotSchedule.h" />
-    <ClInclude Include="..\..\src\TMS9918VramSequencer.h" />
+    <ClInclude Include="..\..\src\TMS99xxCpuAccessTiming.h" />
+    <ClInclude Include="..\..\src\TMS99xxRasterTiming.h" />
+    <ClInclude Include="..\..\src\TMS99xxPalette.h" />
+    <ClInclude Include="..\..\src\TMS99xxSlotGrid.h" />
+    <ClInclude Include="..\..\src\TMS99xxTableAddress.h" />
+    <ClInclude Include="..\..\src\TMS99xxVramSlotSchedule.h" />
+    <ClInclude Include="..\..\src\TMS99xxVramSequencer.h" />
+    <ClInclude Include="..\..\src\TMS9918B.h" />
+    <ClInclude Include="..\..\src\Pico9918LegacyCore.h" />
+    <ClInclude Include="..\..\src\Pico9918LegacyCoreBridge.h" />
+    <ClInclude Include="..\..\src\Pico9918.h" />
+    <ClInclude Include="..\..\src\VideoDebugProviderBase.h" />
+    <ClInclude Include="..\..\src\tms9918b\TMS9918BAddress.h" />
+    <ClInclude Include="..\..\src\tms9918b\TMS9918BAnalysis.h" />
+    <ClInclude Include="..\..\src\tms9918b\TMS9918BCalendar.h" />
+    <ClInclude Include="..\..\src\tms9918b\TMS9918BModes.h" />
+    <ClInclude Include="..\..\src\tms9918b\TMS9918BTiming.h" />
+    <ClInclude Include="..\..\src\VideoDeviceOptions.h" />
+    <ClInclude Include="..\..\src\VideoDeviceFactory.h" />
+    <ClInclude Include="..\..\third_party\vrEmuTms9918\src\vrEmuTms9918.h" />
     <ClInclude Include="..\..\src\TZXDuino.h" />
-    <ClInclude Include="..\..\src\Video.h" />
+    <ClInclude Include="..\..\src\ITMS99xxDebugProvider.h" />
+    <ClInclude Include="..\..\src\TMS99xx.h" />
     <ClInclude Include="..\..\src\WavChannel.h" />
     <ClInclude Include="..\..\src\WaveTableManager.h" />
     <ClInclude Include="..\..\src\WavPlayer.h" />
@@ -230,20 +333,27 @@
     <ClInclude Include="..\..\src\WavSample.h" />
     <ClInclude Include="..\..\src\WavSampleManager.h" />
     <ClInclude Include="..\..\src\WAVUtils.h" />
-    <ClInclude Include="..\audio-shared\Sound_Queue.h" />
     <ClInclude Include="..\desktop-shared\application.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_basic_typer.h" />
     <ClInclude Include="..\desktop-shared\config.h" />
+    <ClInclude Include="..\desktop-shared\ConfigRepository.h" />
+    <ClInclude Include="..\desktop-shared\ConfigProfiles.h" />
     <ClInclude Include="..\desktop-shared\crt_signal_capture_loader.h" />
     <ClInclude Include="..\desktop-shared\crt_signal_dump.h" />
     <ClInclude Include="..\desktop-shared\emu.h" />
     <ClInclude Include="..\desktop-shared\gui.h" />
+    <ClInclude Include="..\desktop-shared\nfd_parented.h" />
     <ClInclude Include="..\desktop-shared\gui_debug.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_events.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_constants.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_disassembler_export.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_mem_import.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_memory.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_nametable.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_pattern_table.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_rom_inspector.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_sprites.h" />
+    <ClInclude Include="..\desktop-shared\gui_debug_video_registers.h" />
     <ClInclude Include="..\desktop-shared\imgui\fonts\ModernDOS9x16.h" />
     <ClInclude Include="..\desktop-shared\imgui\fonts\Roboto-Light.h" />
     <ClInclude Include="..\desktop-shared\imgui\fonts\RobotoMedium.h" />
@@ -284,25 +394,7 @@
     <IntermediateDirectory>release\</IntermediateDirectory>
     <PrimaryOutput>GearSF7000</PrimaryOutput>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
-    <PlatformToolSet>v143</PlatformToolSet>
-    <OutputDirectory>release\</OutputDirectory>
-    <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
-    <CharacterSet>NotSet</CharacterSet>
-    <ConfigurationType>Application</ConfigurationType>
-    <IntermediateDirectory>release\</IntermediateDirectory>
-    <PrimaryOutput>GearSF7000</PrimaryOutput>
-  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <PlatformToolSet>v143</PlatformToolSet>
-    <OutputDirectory>debug\</OutputDirectory>
-    <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
-    <CharacterSet>NotSet</CharacterSet>
-    <ConfigurationType>Application</ConfigurationType>
-    <IntermediateDirectory>debug\</IntermediateDirectory>
-    <PrimaryOutput>GearSF7000</PrimaryOutput>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'" Label="Configuration">
     <PlatformToolSet>v143</PlatformToolSet>
     <OutputDirectory>debug\</OutputDirectory>
     <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
@@ -316,35 +408,20 @@
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
   </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
-  </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">release\</OutDir>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">release\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)\</IntDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">$(Platform)\$(Configuration)\</IntDir>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">GearSF7000</TargetName>
-    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">GearSF7000</TargetName>
     <IgnoreImportLibrary Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</IgnoreImportLibrary>
-    <IgnoreImportLibrary Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</IgnoreImportLibrary>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
-    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">false</LinkIncremental>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">debug\</OutDir>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">debug\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(Platform)\$(Configuration)\</IntDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">$(Platform)\$(Configuration)\</IntDir>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">GearSF7000</TargetName>
-    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">GearSF7000</TargetName>
     <IgnoreImportLibrary Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</IgnoreImportLibrary>
-    <IgnoreImportLibrary Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</IgnoreImportLibrary>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -357,7 +434,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <Optimization>MaxSpeed</Optimization>
-      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;NDEBUG;NOMINMAX;GEARSF7000_ENABLE_MCP=1;SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;NDEBUG;NOMINMAX;GEARSF7000_ENABLE_MCP=1;SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;GEARSF7000_ENABLE_PICO9918=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessToFile>false</PreprocessToFile>
       <ProgramDataBaseFileName>$(IntDir)vc$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
@@ -368,11 +445,11 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
-      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>SDL3.lib;Ws2_32.lib;Shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL3.lib;Ws2_32.lib;Shell32.lib;Ole32.lib;Uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>dependencies\SDL3\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DataExecutionPrevention>true</DataExecutionPrevention>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
@@ -394,51 +471,6 @@
     <ResourceCompile>
       <PreprocessorDefinitions>UNICODE;WIN32;WIN64;QT_NO_DEBUG;QT_OPENGL_LIB;QT_WIDGETS_LIB;QT_GUI_LIB;QT_CORE_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
-    <PostBuildEvent>
-      <Command>xcopy /y /d "$(ProjectDir)dependencies\SDL3\lib\x64\SDL3.dll" "$(OutDir)"</Command>
-    </PostBuildEvent>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>.;..\desktop-shared\imgui;..\..\src;..\..\third_party\clk;dependencies/SDL2-2.30.6/include;dependencies/SDL2-2.30.6/include/sdl2;dependencies/glew-2.2.0/include;release;.;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>-Zc:strictStrings -Zc:throwingNew -Zm500 -w34100 -w34189 -w44996 -w44456 -w44457 -w44458 %(AdditionalOptions)</AdditionalOptions>
-      <AssemblerListingLocation>release\</AssemblerListingLocation>
-      <BrowseInformation>false</BrowseInformation>
-      <DebugInformationFormat>None</DebugInformationFormat>
-      <DisableSpecificWarnings>4577;4244;4267;4291;4146;4309;4838;4805;4005;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <ExceptionHandling>Sync</ExceptionHandling>
-      <ObjectFileName>$(IntDir)</ObjectFileName>
-      <Optimization>MaxSpeed</Optimization>
-      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;NDEBUG;GEARSF7000_ENABLE_AY=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessToFile>false</PreprocessToFile>
-      <ProgramDataBaseFileName>$(IntDir)vc$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <RuntimeTypeInfo>true</RuntimeTypeInfo>
-      <SuppressStartupBanner>true</SuppressStartupBanner>
-      <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
-      <WarningLevel>Level3</WarningLevel>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-    </ClCompile>
-    <Link>
-      <AdditionalDependencies>glew32.lib;SDL2.lib;SDL2main.lib;opengl32.lib;glu32.lib;Shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>dependencies\SDL2-2.30.6\lib\arm64;dependencies\glew-2.2.0\lib\Release\arm64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <DataExecutionPrevention>true</DataExecutionPrevention>
-      <GenerateDebugInformation>false</GenerateDebugInformation>
-      <IgnoreImportLibrary>true</IgnoreImportLibrary>
-      <LinkIncremental>false</LinkIncremental>
-      <OutputFile>$(OutDir)\GearSF7000.exe</OutputFile>
-      <RandomizedBaseAddress>true</RandomizedBaseAddress>
-      <SubSystem>Windows</SubSystem>
-      <SuppressStartupBanner>true</SuppressStartupBanner>
-    </Link>
-    <Midl>
-      <DefaultCharType>Unsigned</DefaultCharType>
-      <EnableErrorChecks>None</EnableErrorChecks>
-      <WarningLevel>0</WarningLevel>
-    </Midl>
-    <ResourceCompile>
-      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;QT_NO_DEBUG;QT_OPENGL_LIB;QT_WIDGETS_LIB;QT_GUI_LIB;QT_CORE_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -451,7 +483,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>DEBUG;UNICODE;WIN32;WIN64;NOMINMAX;GEARSF7000_ENABLE_MCP=1;SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DEBUG;UNICODE;WIN32;WIN64;NOMINMAX;GEARSF7000_ENABLE_MCP=1;SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;GEARSF7000_ENABLE_PICO9918=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessToFile>false</PreprocessToFile>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
@@ -464,7 +496,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>SDL3.lib;Ws2_32.lib;Shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL3.lib;Ws2_32.lib;Shell32.lib;Ole32.lib;Uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>dependencies\SDL3\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DataExecutionPrevention>true</DataExecutionPrevention>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -483,51 +515,18 @@
     <ResourceCompile>
       <PreprocessorDefinitions>UNICODE;WIN32;WIN64;QT_OPENGL_LIB;QT_WIDGETS_LIB;QT_GUI_LIB;QT_CORE_LIB;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
-    <PostBuildEvent>
-      <Command>xcopy /y /d "$(ProjectDir)dependencies\SDL3\lib\x64\SDL3.dll" "$(OutDir)"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>.;..\desktop-shared\imgui;..\..\src;..\..\third_party\clk;dependencies/SDL2-2.30.6/include;dependencies/SDL2-2.30.6/include/sdl2;dependencies/glew-2.2.0/include;debug;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>-Zc:strictStrings -Zc:throwingNew -Zm500 -w34100 -w34189 -w44996 -w44456 -w44457 -w44458 %(AdditionalOptions)</AdditionalOptions>
-      <AssemblerListingLocation>debug\</AssemblerListingLocation>
-      <BrowseInformation>false</BrowseInformation>
-      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <DisableSpecificWarnings>4577;4244;4267;4291;4146;4309;4838;4805;4005;%(DisableSpecificWarnings)</DisableSpecificWarnings>
-      <ExceptionHandling>Sync</ExceptionHandling>
-      <ObjectFileName>$(IntDir)</ObjectFileName>
-      <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>DEBUG;UNICODE;WIN32;WIN64;GEARSF7000_ENABLE_AY=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessToFile>false</PreprocessToFile>
-      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
-      <RuntimeTypeInfo>true</RuntimeTypeInfo>
-      <SuppressStartupBanner>true</SuppressStartupBanner>
-      <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
-      <WarningLevel>Level3</WarningLevel>
-      <ProgramDataBaseFileName>$(IntDir)vc$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
-      <LanguageStandard>stdcpp20</LanguageStandard>
-    </ClCompile>
-    <Link>
-      <AdditionalDependencies>glew32.lib;SDL2main.lib;SDL2.lib;opengl32.lib;glu32.lib;Shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>dependencies\SDL2-2.30.6\lib\arm64;dependencies\glew-2.2.0\lib\Release\arm64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <DataExecutionPrevention>true</DataExecutionPrevention>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <IgnoreImportLibrary>true</IgnoreImportLibrary>
-      <OutputFile>$(OutDir)\GearSF7000.exe</OutputFile>
-      <RandomizedBaseAddress>true</RandomizedBaseAddress>
-      <SubSystem>Console</SubSystem>
-      <SuppressStartupBanner>true</SuppressStartupBanner>
-    </Link>
-    <Midl>
-      <DefaultCharType>Unsigned</DefaultCharType>
-      <EnableErrorChecks>None</EnableErrorChecks>
-      <WarningLevel>0</WarningLevel>
-    </Midl>
-    <ResourceCompile>
-      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;QT_OPENGL_LIB;QT_WIDGETS_LIB;QT_GUI_LIB;QT_CORE_LIB;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ResourceCompile>
-  </ItemDefinitionGroup>
+  <ItemGroup>
+    <RuntimeResource Include="$(ProjectDir)..\gamecontrollerdb.txt" />
+    <RuntimeResource Include="$(ProjectDir)..\desktop-shared\assets\coleco_os7.sym" />
+    <PortResource Include="$(ProjectDir)..\desktop-shared\assets\ports\*.ports" />
+  </ItemGroup>
+  <Target Name="CopyRuntimeResources" AfterTargets="Build">
+    <Copy SourceFiles="$(ProjectDir)dependencies\SDL3\lib\$(Platform)\SDL3.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(RuntimeResource)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PortResource)" DestinationFolder="$(OutDir)ports" SkipUnchangedFiles="true" />
+  </Target>
+  <Import Project="PicoSMSVdp.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <!-- Mirrors GIT_VERSION in platforms/desktop-shared/Makefile.common: build_info.cpp
        reads EMULATOR_BUILD from a generated header (force-included on that file only),

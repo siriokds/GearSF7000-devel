@@ -10,6 +10,8 @@
 
 #include "definitions.h"
 #include <array>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -130,6 +132,12 @@ enum DebugDescriptorCapability : u8
     DebugDescriptorCapability_Mutable           = 1 << 2
 };
 
+enum DebugDeviceTrait : u8
+{
+    DebugDeviceTrait_None     = 0,
+    DebugDeviceTrait_External = 1 << 0
+};
+
 struct DebugTargetDescriptor
 {
     u32 id;
@@ -153,6 +161,56 @@ struct DebugSpaceDescriptor
     size_t targetCount;
 };
 
+struct DebugRulePresetDescriptor
+{
+    const char* key;
+    const char* name;
+    const char* spaceKey;
+    u32 targetStart;
+    u32 targetEnd;
+    u8 accessMask;
+    bool useValueCondition;
+    DebugValueCondition valueCondition;
+    u64 valueMask;
+    u64 beforeValueExpected;
+    u64 valueExpected;
+    u8 actions;
+};
+
+struct DebugEvent;
+
+enum class DebugPresentationValueKind : u8
+{
+    Unsigned,
+    Boolean,
+    Text
+};
+
+struct DebugEventPresentationAttribute
+{
+    const char* group = nullptr;
+    const char* key = nullptr;
+    DebugPresentationValueKind kind = DebugPresentationValueKind::Unsigned;
+    u64 unsignedValue = 0;
+    const char* textValue = nullptr;
+};
+
+// Fixed-capacity presentation produced outside the emulation hot path. A
+// provider may override the generic category label, add human-readable detail
+// and expose structured attributes without coupling GUI or MCP to its payload.
+struct DebugEventPresentation
+{
+    static constexpr size_t MaxAttributes = 8;
+    char typeLabel[48] = {};
+    char details[512] = {};
+    const char* semanticKey = nullptr;
+    std::array<DebugEventPresentationAttribute, MaxAttributes> attributes = {};
+    size_t attributeCount = 0;
+};
+
+using DebugEventFormatter = bool (*)(const DebugEvent&,
+                                     DebugEventPresentation&);
+
 struct DebugDeviceDescriptor
 {
     DebugDeviceId id;
@@ -164,6 +222,10 @@ struct DebugDeviceDescriptor
     const char* displayName;
     const DebugSpaceDescriptor* spaces;
     size_t spaceCount;
+    u8 traits = DebugDeviceTrait_None;
+    const DebugRulePresetDescriptor* presets = nullptr;
+    size_t presetCount = 0;
+    DebugEventFormatter formatter = nullptr;
 };
 
 struct DebugProbe
@@ -184,6 +246,7 @@ public:
     const DebugDeviceDescriptor* GetDevices(size_t* count = NULL) const;
     const DebugDeviceDescriptor* FindDevice(DebugDeviceId device) const;
     const DebugDeviceDescriptor* FindDevice(const char* stableKey) const;
+    const DebugDeviceDescriptor* FindDeviceByType(const char* typeKey) const;
     const DebugDeviceDescriptor* GetParent(DebugDeviceId device) const;
     size_t GetChildCount(DebugDeviceId parent) const;
     const DebugDeviceDescriptor* GetChild(DebugDeviceId parent, size_t index) const;
@@ -329,8 +392,17 @@ const DebugDeviceDescriptor* FindDebugDeviceDescriptor(DebugDeviceId device);
 const DebugSpaceDescriptor* FindDebugSpaceDescriptor(DebugDeviceId device, DebugSpaceId space);
 const char* GetDebugDeviceName(DebugDeviceId device);
 const char* GetDebugSpaceName(DebugSpaceId space);
+const char* GetDebugDeviceName(const DebugDeviceRegistry& registry,
+                               DebugDeviceId device);
+const char* GetDebugSpaceName(const DebugDeviceRegistry& registry,
+                              DebugDeviceId device, DebugSpaceId space);
 const char* GetDebugEventSourceName(DebugEventSource source);
 const char* GetDebugEventPhaseName(DebugEventPhase phase);
+bool FormatDebugRasterContext(const DebugEventRasterContext& raster,
+                              char* output, size_t outputSize);
+bool FormatDebugEventPresentation(const DebugDeviceRegistry& registry,
+                                  const DebugEvent& event,
+                                  DebugEventPresentation& presentation);
 bool DebugValueConditionNeedsBefore(DebugValueCondition condition);
 bool DebugValueConditionNeedsAfter(DebugValueCondition condition);
 // Returns NULL when valid, otherwise a stable human-readable reason.
@@ -349,12 +421,41 @@ public:
     static const size_t DefaultEventCapacity = 4096;
 
     explicit DebugEventManager(const DebugDeviceRegistry* registry = NULL);
+    // Runtime suspension preserves rules and history; it is not a reset.
+    void SetRuntimeActive(bool active) { m_runtimeActive = active; }
+    bool IsRuntimeActive() const { return m_runtimeActive; }
+
+    // Bind during machine composition, before rules or history exist.
+    bool SetRegistry(const DebugDeviceRegistry& registry);
+    // Recompose at a stopped hardware boundary. Native rules are resolved
+    // again by stable keys; unavailable-device rules remain stored/inactive.
+    // Recorded events are cleared because their runtime handles belong to the
+    // outgoing catalog generation.
+    void RebindRegistry(const DebugDeviceRegistry& registry);
+    const DebugDeviceRegistry& GetRegistry() const { return *m_registry; }
+    // Compatibility bridge for publishers that still expose the old closed
+    // category enum. Resolution is against the active machine catalog, so
+    // runtime handles never depend on the historical GearSF7000 registry.
+    DebugProbe ResolveLegacyProbe(DebugEventCategory category, u8 access,
+                                  u16 target) const;
 
     u32 AddRule(const DebugRule& rule);
     bool RemoveRule(u32 id);
     void ClearRules();
-    std::vector<DebugRule>& GetRules();
+    bool SetRuleEnabled(u32 id, bool enabled);
+    bool ResetRuleHits(u32 id);
     const std::vector<DebugRule>& GetRules() const;
+
+    // Client-facing mutations. GUI and remote-control front ends enqueue
+    // these while the machine may be running; the core applies the batch at
+    // a boundary where EvaluateProbe cannot be iterating m_rules. Enqueueing
+    // may allocate, but publishing and matching never touch this queue.
+    u32 QueueAddRule(const DebugRule& rule);
+    void QueueRemoveRule(u32 id);
+    void QueueClearRules();
+    void QueueSetRuleEnabled(u32 id, bool enabled);
+    void QueueResetRuleHits(u32 id);
+    size_t ApplyPendingRuleCommands();
 
     // Returns true only when a matching rule requests an emulation pause.
     bool Evaluate(DebugEventCategory category, u8 access, u16 target,
@@ -372,7 +473,25 @@ public:
     // without requiring a second hook inside the device implementation.
     bool EvaluateIoPort(const DebugProbe& decodedProbe, u16 rawPort, u8 access,
                         u8 value, bool valueKnown, u16 pc, u64 clock);
+    // Publishes one CPU memory transaction. The primary probe identifies the
+    // memory controller; the compatibility probe keeps old Z80/memory rules
+    // alive without evaluating category rules twice.
+    bool EvaluateMemoryAccess(const DebugProbe& primaryProbe,
+                              const DebugProbe& compatibilityProbe,
+                              u8 access, u64 beforeValue, bool beforeKnown,
+                              u64 afterValue, bool afterKnown,
+                              u16 pc, u64 clock);
     bool EvaluateProbe(const DebugProbe& probe, u8 access,
+                       u64 beforeValue, bool beforeKnown,
+                       u64 afterValue, bool afterKnown,
+                       DebugEventSource source, DebugEventPhase phase,
+                       u16 pc, u64 clock,
+                       const DebugEventRasterContext* raster = NULL);
+    // Device-qualified form for a publisher that is still reachable through
+    // a legacy category. It matches old category rules and new provider rules
+    // in one pass while recording the concrete active device.
+    bool EvaluateDeviceProbe(DebugEventCategory compatibilityCategory,
+                       const DebugProbe& probe, u8 access,
                        u64 beforeValue, bool beforeKnown,
                        u64 afterValue, bool afterKnown,
                        DebugEventSource source, DebugEventPhase phase,
@@ -398,15 +517,45 @@ public:
     void ClearEvents();
     size_t GetEventCount() const;
     u64 GetDroppedEventCount() const;
+    u64 GetEventGeneration() const;
     void CopyEvents(std::vector<DebugEvent>& out) const;
+    // Keeps caller-owned storage alive and only rebuilds the chronological
+    // snapshot when the ring changed. The first call also reserves the full
+    // configured depth, so a visible trace does not grow its vector over time.
+    bool CopyEventsIfChanged(u64& generation,
+                             std::vector<DebugEvent>& out) const;
 
 private:
+    enum class RuleCommandType : u8
+    {
+        Add,
+        Remove,
+        Clear,
+        SetEnabled,
+        ResetHits
+    };
+
+    struct RuleCommand
+    {
+        RuleCommandType type = RuleCommandType::Clear;
+        DebugRule rule;
+        u32 id = 0;
+        bool enabled = false;
+    };
+
+    u32 ReserveRuleId();
+    bool m_runtimeActive = true;
+    bool PrepareRule(DebugRule& rule) const;
+    u32 InsertPreparedRule(DebugRule&& rule, u32 id);
+    u32 AddRuleWithId(const DebugRule& source, u32 id);
+    void QueueRuleCommand(RuleCommand&& command);
     bool RuleMatchesValue(const DebugRule& rule, u64 beforeValue, bool beforeKnown,
                           u64 afterValue, bool afterKnown) const;
     bool EvaluateWithProbe(DebugEventCategory category, u8 access, u16 target,
                            u64 beforeValue, bool beforeKnown,
                            u64 afterValue, bool afterKnown, u16 pc, u64 clock,
                            const DebugProbe* probeOverride,
+                           const DebugProbe* compatibilityProbe = NULL,
                            DebugEventSource source = DebugEventSource::Unknown,
                            DebugEventPhase phase = DebugEventPhase::Unknown,
                            const DebugEventRasterContext* raster = NULL);
@@ -434,12 +583,16 @@ private:
     std::vector<DebugEvent> m_events;
     size_t m_eventHead;
     size_t m_eventCount;
-    u64 m_nextRuleId;
+    std::atomic<u64> m_nextRuleId;
     u64 m_nextSequence;
     u64 m_droppedEvents;
+    u64 m_eventGeneration;
     const DebugDeviceRegistry* m_registry;
     BankProvider m_bankProvider;
     void* m_bankContext;
+    std::mutex m_ruleCommandMutex;
+    std::vector<RuleCommand> m_pendingRuleCommands;
+    std::vector<RuleCommand> m_applyingRuleCommands;
 };
 
 #endif /* DEBUG_EVENTS_H */

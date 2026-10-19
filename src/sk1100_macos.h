@@ -1,5 +1,5 @@
 // SC-3000 host keyboard mapping for the integrated MacBook keyboard.
-// Included by sk1100.cpp after t_sk1100_key has been declared.
+// Included by SegaKeyboard.cpp after t_sk1100_key has been declared.
 
 #ifndef SK1100_MACOS_MAPPING_H
 #define SK1100_MACOS_MAPPING_H

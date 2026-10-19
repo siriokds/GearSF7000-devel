@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "description": "Explicit selectable combinations. Missing compiled default makes a model unavailable; do not silently choose another device. Legacy bindings preserve existing factory and INI contracts during conversion.",
+  "options": [
+    {
+      "code": "TMS9918-NTSC:TMS99xx",
+      "device": "TMS9918",
+      "variant": "TMS9918-NTSC",
+      "core": "TMS99xx",
+      "output_profile": "TMS_RASTER",
+      "legacy_device": "TMS9918",
+      "legacy_config_value": 1
+    },
+    {
+      "code": "TMS9918B-NTSC:TMS99xx",
+      "device": "TMS9918B",
+      "variant": "TMS9918B-NTSC",
+      "core": "TMS99xx",
+      "output_profile": "TMS_RASTER",
+      "legacy_device": "TMS9918B",
+      "legacy_config_value": 5
+    },
+    {
+      "code": "TMS9928-NTSC:TMS99xx",
+      "device": "TMS9928",
+      "variant": "TMS9928-NTSC",
+      "core": "TMS99xx",
+      "output_profile": "TMS_RASTER",
+      "legacy_device": "TMS9928",
+      "legacy_config_value": 3
+    },
+    {
+      "code": "TMS9929-PAL:TMS99xx",
+      "device": "TMS9929",
+      "variant": "TMS9929-PAL",
+      "core": "TMS99xx",
+      "output_profile": "TMS_RASTER",
+      "legacy_device": "TMS9929",
+      "legacy_config_value": 2
+    },
+    {
+      "code": "PICO9918-VGA:Pico9918",
+      "device": "PICO9918",
+      "variant": "PICO9918-VGA",
+      "core": "Pico9918",
+      "output_profile": "VGA_FRAME",
+      "legacy_device": "Pico9918",
+      "legacy_config_value": 4
+    },
+    {
+      "code": "SEGA3155124-NTSC:PicoSMSvdp",
+      "device": "SEGA3155124",
+      "variant": "SEGA3155124-NTSC",
+      "core": "PicoSMSvdp",
+      "output_profile": "SMS_RASTER",
+      "legacy_device": "SegaSMSVdpNTSC",
+      "legacy_config_value": 7
+    },
+    {
+      "code": "PICOSMSVDP-VGA:PicoSMSvdp",
+      "device": "PICOSMSVDP",
+      "variant": "PICOSMSVDP-VGA",
+      "core": "PicoSMSvdp",
+      "output_profile": "VGA_FRAME",
+      "legacy_device": "PicoSMSVdp",
+      "legacy_config_value": 6
+    },
+    {
+      "code": "SEGA3155378:PicoSMSvdp",
+      "device": "SEGA3155378",
+      "variant": "SEGA3155378",
+      "core": "PicoSMSvdp",
+      "output_profile": "GAME_GEAR_LCD",
+      "legacy_device": "SegaGameGearVdp",
+      "legacy_config_value": 8
+    }
+  ],
+  "machines": [
+    {
+      "code": "SG1000",
+      "model_id": 0,
+      "default_option": "TMS9918-NTSC:TMS99xx",
+      "options": [
+        "TMS9918-NTSC:TMS99xx",
+        "TMS9918B-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SC3000Export",
+      "model_id": 1,
+      "default_option": "TMS9929-PAL:TMS99xx",
+      "options": [
+        "TMS9929-PAL:TMS99xx",
+        "TMS9928-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SC3000ExportSF7000",
+      "model_id": 2,
+      "default_option": "TMS9929-PAL:TMS99xx",
+      "options": [
+        "TMS9929-PAL:TMS99xx",
+        "TMS9928-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SC3000Japan",
+      "model_id": 3,
+      "default_option": "TMS9918-NTSC:TMS99xx",
+      "options": [
+        "TMS9918-NTSC:TMS99xx",
+        "TMS9918B-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SC3000JapanSF7000",
+      "model_id": 4,
+      "default_option": "TMS9918-NTSC:TMS99xx",
+      "options": [
+        "TMS9918-NTSC:TMS99xx",
+        "TMS9918B-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SG1000SK1100",
+      "model_id": 5,
+      "default_option": "TMS9918-NTSC:TMS99xx",
+      "options": [
+        "TMS9918-NTSC:TMS99xx",
+        "TMS9918B-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SMSNTSC",
+      "model_id": 6,
+      "default_option": "SEGA3155124-NTSC:PicoSMSvdp",
+      "options": [
+        "SEGA3155124-NTSC:PicoSMSvdp",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SMSPAL",
+      "model_id": 7,
+      "default_option": "PICOSMSVDP-VGA:PicoSMSvdp",
+      "options": [
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "SegaMarkIII",
+      "model_id": 8,
+      "default_option": "SEGA3155124-NTSC:PicoSMSvdp",
+      "options": [
+        "SEGA3155124-NTSC:PicoSMSvdp",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "ColecoVision",
+      "model_id": 9,
+      "default_option": "TMS9928-NTSC:TMS99xx",
+      "options": [
+        "TMS9928-NTSC:TMS99xx",
+        "TMS9918-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "ColecoVisionSGM",
+      "model_id": 10,
+      "default_option": "TMS9928-NTSC:TMS99xx",
+      "options": [
+        "TMS9928-NTSC:TMS99xx",
+        "TMS9918-NTSC:TMS99xx",
+        "PICO9918-VGA:Pico9918",
+        "PICOSMSVDP-VGA:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "MSX1NTSC",
+      "model_id": 11,
+      "default_option": "TMS9918-NTSC:TMS99xx",
+      "options": [
+        "TMS9918-NTSC:TMS99xx"
+      ]
+    },
+    {
+      "code": "MSX1PAL",
+      "model_id": 12,
+      "default_option": "TMS9929-PAL:TMS99xx",
+      "options": [
+        "TMS9929-PAL:TMS99xx"
+      ]
+    },
+    {
+      "code": "SordM5NTSC",
+      "model_id": 13,
+      "default_option": "TMS9928-NTSC:TMS99xx",
+      "options": [
+        "TMS9928-NTSC:TMS99xx"
+      ]
+    },
+    {
+      "code": "SordM5PAL",
+      "model_id": 14,
+      "default_option": "TMS9929-PAL:TMS99xx",
+      "options": [
+        "TMS9929-PAL:TMS99xx"
+      ]
+    },
+    {
+      "code": "GameGearJapan",
+      "model_id": 15,
+      "default_option": "SEGA3155378:PicoSMSvdp",
+      "options": [
+        "SEGA3155378:PicoSMSvdp"
+      ]
+    },
+    {
+      "code": "GameGearExport",
+      "model_id": 16,
+      "default_option": "SEGA3155378:PicoSMSvdp",
+      "options": [
+        "SEGA3155378:PicoSMSvdp"
+      ]
+    }
+  ]
+}

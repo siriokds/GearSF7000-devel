@@ -10,6 +10,22 @@
 
 static void AddMcpToolDefinitionsCore_ExecutionControl(json& tools)
 {
+    tools.push_back({
+        {"name", "help_ai"},
+        {"title", "Help for AI: start here"},
+        // The category list is appended by McpServer::BuildToolList from the
+        // registry, so an agent that skipped the instructions still sees it.
+        {"description", "START HERE: the manual of this emulator's tools, grouped by category. No topic: every category with its tool names. A category name: its tools with descriptions. Any other word (e.g. sprite, lufs, vram): every tool that mentions it, grouped by category."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"topic", {{"type", "string"}, {"description", "Category name or keyword. Omit for the full index."}}}
+            }},
+            {"additionalProperties", false}
+        }}
+    });
+
     // Execution control tools
     tools.push_back({
         {"name", "debug_pause"},
@@ -115,7 +131,7 @@ static void AddMcpToolDefinitionsCore_ExecutionControl(json& tools)
     tools.push_back({
         {"name", "get_build_info"},
         {"title", "Get Build Info"},
-        {"description", "Which build of the emulator this is: commit, compile timestamp, and the options compiled in. The timestamp is the reliable part - a commit ending in '-dirty' names every build made from it, and the .app bundle can be older than the binary in the source tree. Check this before reporting that a fix did not work."},
+        {"description", "Which build of the emulator this is: release version, source revision, compile timestamp, and compiled options. The timestamp distinguishes multiple dirty builds from the same revision and helps detect a stale application bundle."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -182,7 +198,7 @@ static void AddMcpToolDefinitionsCore_Breakpoints(json& tools)
             {"properties", {
                 {"address", {
                     {"type", "string"},
-                    {"description", "Logical hex address; ranges: rom_ram 0000-FFFF, vram 0000-3FFF."}
+                    {"description", "Logical hex address. rom_ram is 0000-FFFF; vram uses the active video device's published event-memory range."}
                 }},
                 {"memory_area", {
                     {"type", "string"},
@@ -216,7 +232,7 @@ static void AddMcpToolDefinitionsCore_Breakpoints(json& tools)
             {"properties", {
                 {"start_address", {
                     {"type", "string"},
-                    {"description", "Start logical hex address; ranges: rom_ram 0000-FFFF, vram 0000-3FFF."}
+                    {"description", "Start logical hex address. rom_ram is 0000-FFFF; vram uses the active video device's published event-memory range."}
                 }},
                 {"end_address", {
                     {"type", "string"},
@@ -298,7 +314,7 @@ static void AddMcpToolDefinitionsCore_Breakpoints(json& tools)
                     , "ay_expansion"
 #endif
                 })}}},
-                {"start_address", {{"type", "string"}, {"description", "Start address, hexadecimal (CPU 0000-FFFF; I/O 00-FF; VRAM 0000-3FFF; VDP register 00-FF; video-timing scanline 0000-FFFF)."}}},
+                {"start_address", {{"type", "string"}, {"description", "Start address, hexadecimal. Legacy category ranges depend on the active devices; prefer add_device_debug_rule with keys from list_debug_devices."}}},
                 {"end_address", {{"type", "string"}, {"description", "End address, hexadecimal; defaults to start_address."}}},
                 {"read", {{"type", "boolean"}}}, {"write", {{"type", "boolean"}}}, {"execute", {{"type", "boolean"}}},
                 {"event", {{"type", "boolean"}, {"description", "Device state transition; used by video_timing, FDC, tape, audio and PPI latch-state events."}}},
@@ -353,7 +369,7 @@ static void AddMcpToolDefinitionsCore_Breakpoints(json& tools)
 
     tools.push_back({
         {"name", "list_debug_devices"}, {"title", "List Debug Devices"},
-        {"description", "Discover the hierarchical device instances, reusable hardware types, debug spaces and currently published targets."},
+        {"description", "Discover hierarchical device instances, reusable hardware types, debug spaces, published targets and provider-defined rule presets."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
     });
@@ -425,7 +441,7 @@ static void AddMcpToolDefinitionsCore_Memory(json& tools)
     tools.push_back({
         {"name", "list_memory_areas"},
         {"title", "List Memory Areas"},
-        {"description", "List memory spaces/tabs: WRAM, VRAM, ROM banks; returns area IDs, sizes, offsets."},
+        {"description", "List runtime memory areas with installed sizes and display addresses. 0 is CPU address space; 1/5 are legacy RAM windows; 8/9/10 are complete internal/external/cartridge-owned RAM regions when present. Buffer capacity is not installed RAM."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -462,7 +478,7 @@ static void AddMcpToolDefinitionsCore_Memory(json& tools)
     // Nested via local json variables, not a single literal, to keep MSVC's
     // compiler heap (C1060) from choking on too-deep initializer-list nesting.
     json atomic_snapshot_range_item_properties = json::object();
-    atomic_snapshot_range_item_properties["area"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}};
+    atomic_snapshot_range_item_properties["area"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 7}};
     atomic_snapshot_range_item_properties["offset"] = {{"type", "integer"}, {"minimum", 0}};
     atomic_snapshot_range_item_properties["size"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}};
 
@@ -488,6 +504,8 @@ static void AddMcpToolDefinitionsCore_Memory(json& tools)
             {"properties", {
                 {"cpu", {{"type", "boolean"}, {"description", "Include CPU registers and clock; default true."}}},
                 {"vdp", {{"type", "boolean"}, {"description", "Include VDP registers and internal status; default true."}}},
+                {"msx", {{"type", "boolean"}, {"description", "Include slots, PPI, keyboard, AY and click; default true on MSX."}}},
+                {"m5", {{"type", "boolean"}, {"description", "Include M5 CTC, memory and input; default true on M5."}}},
                 {"sf7000", {{"type", "boolean"}, {"description", "Include SF-7000 state; default false."}}},
                 {"memory_ranges", atomic_snapshot_memory_ranges}
             }},
@@ -531,7 +549,7 @@ static void AddMcpToolDefinitionsCore_Memory(json& tools)
             {"properties", {
                 {"name", {
                     {"type", "string"},
-                    {"description", "Register: AF, BC, DE, HL, AF', BC', DE', HL', IX, IY, SP, PC, WZ, A, F, B, C, D, E, H, L, I, R."}
+                    {"description", "Register: AF, BC, DE, HL, AF', BC', DE', HL', IX, IY, SP, PC, WZ, A, F, B, C, D, E, H, L, A'..L', IXH, IXL, IYH, IYL, I, R, IFF1, IFF2, IM. 8-bit names change only their half."}
                 }},
                 {"value", {
                     {"type", "string"},
@@ -601,6 +619,99 @@ static void AddMcpToolDefinitionsCore_DisassemblyAndMedia(json& tools)
         {"description", "Reset execution hit counters without deleting disassembly or changing the emulated machine."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "get_rom_map"},
+        {"title", "Get ROM Map"},
+        {"description", "What each byte of the cartridge ROM turned out to be while the game ran, as the Live Disassembler window shows it. A ROM never seen is 100% UNKNOWN; bytes leave UNKNOWN only when something is observed: executed -> CODE; read as data -> DATA; copied by the CPU into VRAM -> the type of the table it lands in, from the video device's current layout (GFX BG for PATGEN/COLTAB, GFX SPR for SPRPAT, GFX BG+SPR when shared, SCREEN for NAMETAB, SAT; VRAM when the device does not describe its tables); read by a routine that writes the PSG -> SOUND (inferred from a shadow call stack: the routine writing the PSG and its caller); the run of identical $00 or $FF bytes ending the ROM -> FILL, as are $00/$FF bytes aligning an RST or NMI vector in $0000-$00FF, and a run of $00/$FF ending at a 256-byte page that starts with something known (padding); the never-taken side of an executed conditional branch, decoded up to an unconditional end, and never-called routines filling an UNKNOWN gap right after an executed JP/JR/RET -> CODE? (a static candidate, recomputed at every save; executing it makes it CODE); static tables -> TABLE (pointer tables to routine entries or data blocks; for the Sega standard sound driver the song table and the volume-curve table), with the tone table, song headers and volume curves as SOUND - evidence says static. Each range carries its evidence, e.g. -> PATGEN $0000. Returns the ROM, project_active and its project folder (a ROM with no project has nothing collected: see create_rom_map_project), sessions accumulated, coverage_percent (100 minus UNKNOWN and CODE?: a CODE? guess is a hint, never covered), bytes and percent per kind, and the ROM as ranges in address order, paged with offset/limit. The map lives in the ROM's project and accumulates across runs while enabled; see set_rom_map_enabled. On a board with its own firmware (ColecoVision) a `firmware` object lists what the cartridge takes from it - every entry point reached from the cartridge, with its symbol when one is loaded, and the firmware bytes read as data - which is what an export links in; coverage itself stays on the cartridge."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", {
+            {"offset", {{"type", "integer"}, {"minimum", 0}, {"description", "First range to return. Default 0."}}},
+            {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}, {"description", "Ranges to return. Default 256."}}}
+        }}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "set_rom_map_enabled"},
+        {"title", "Enable or Disable the ROM Map"},
+        {"description", "The ROM Map's single switch: enabled means accumulating. Enabling needs the loaded ROM to belong to a project (project_active in get_rom_map; create_rom_map_project makes one): it resumes that project's map and counts a new session; disabling saves the project and frees the memory, so it costs nothing while off. Same switch as the Live Disassembler window's Enabled, saved in the configuration."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", {
+            {"enabled", {{"type", "boolean"}}}
+        }}, {"required", json::array({"enabled"})}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "create_rom_map_project"},
+        {"title", "Create a Project for the Loaded ROM"},
+        {"description", "Makes a project for the loaded cartridge ROM, on purpose: the Live Disassembler works inside a project and adds what it observes to it, so a ROM with none collects nothing. Creates <projects folder>/<name>/ with reference/ (a copy of the ROM), rommap/ (the map and its card) and cache/ (what is generated from the map), and a .gitignore for cache/. The name defaults to the ROM's own. Fails if the ROM already belongs to a project, if there is no cartridge ROM, or if the name is taken. If the map is enabled it starts accumulating in the new project. The projects folder is set in Debug > Analysis and reported by get_rom_map as projects_folder."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", {
+            {"name", {{"type", "string"}, {"description", "Project folder name. Default: the ROM's file name without its extension."}}}
+        }}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "save_rom_map"},
+        {"title", "Save ROM Map Now"},
+        {"description", "Write the ROM map to its project now instead of waiting for the 30-second autosave - the Live Disassembler's Save now. Returns the status with last_saved. Needs the map enabled and a cartridge ROM loaded."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "reset_rom_map"},
+        {"title", "Reset ROM Map"},
+        {"description", "Return the loaded ROM's map to 100% UNKNOWN, as a ROM never seen, and write that to its project. Everything collected for this ROM is discarded; the window asks for confirmation, this call does not. Needs the map enabled and a cartridge ROM loaded."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "get_system_options"},
+        {"description", "Discover available machine model IDs and manual mapper IDs, plus active and requested configuration. Manual mapper overrides are development choices, not a hardware compatibility matrix."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
+    });
+    tools.push_back({
+        {"name", "set_system_options"},
+        {"description", "Stage machine/mapper preferences and optional Sord M5 EM-5 RAM using the same per-family settings as the UI. Does not reset or change the running machine. Apply with debug_reset or load_rom; SF-7000 boot uses start_sf7000. ROM extension auto-selection still applies on load. Manual mode requires mapper_type_id. Use get_system_options for IDs; response requested differs from active fields until applied. Settings persist with the application configuration."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", {
+            {"model_id", {{"type", "integer"}, {"minimum", 0}, {"maximum", 255}}},
+            {"video_option", {{"type", "string"}, {"description", "Complete code from get_system_options, or default. Staged until reset/load."}}},
+            {"mapper_mode", {{"type", "string"}, {"enum", json::array({"auto", "manual"})}}},
+            {"mapper_type_id", {{"type", "integer"}, {"minimum", 0}, {"maximum", 255}}},
+            {"m5_em5", {{"type", "boolean"}}}
+        }}, {"additionalProperties", false}}}
+    });
+    tools.push_back({
+        {"name", "set_rom_map_projects_folder"},
+        {"description", "Set the projects root used by create_rom_map_project, like Debug > Analysis. Absolute local directory, created if missing; empty restores the default. Saves the outgoing map and reattaches the current ROM under the new root. Does not move existing projects. Preference persists with application settings."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", {
+            {"directory", {{"type", "string"}}}
+        }}, {"required", json::array({"directory"})}, {"additionalProperties", false}}}
+    });
+    tools.push_back({
+        {"name", "open_rom_map_project"},
+        {"description", "Open a project directory by loading the ROM named in rommap/project.txt from reference/. Validates its CRC before changing the session; saves the outgoing map first. Uses load_rom semantics (reset, rewind/breakpoint reset, start-paused preference, ROM-extension machine selection). Does not infer machine/mapper from the project card: stage them with set_system_options when needed. Restores this project's map when collection is enabled, including for another project of the same ROM. Does not change the projects root."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", {
+            {"directory", {{"type", "string"}, {"description", "Absolute local project directory containing rommap/project.txt and reference/."}}}
+        }}, {"required", json::array({"directory"})}, {"additionalProperties", false}}}
+    });
+    tools.push_back({
+        {"name", "get_system_info"},
+        {"title", "Get System Info"},
+        {"description", "Report the active machine, board wiring, CPU/VDP clocks, video device and cartridge mapper, including SGM presence and lower/upper RAM enables. The requested object reports staged preferences; reset/load applies them. get_system_options lists valid choices. SGM physical RAM is memory area 5; its devices/events are exposed by list_debug_devices."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", json::object()},
+            {"additionalProperties", false}
+        }}
     });
 
     // Media info tool

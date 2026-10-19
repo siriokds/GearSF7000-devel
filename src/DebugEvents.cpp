@@ -1,5 +1,10 @@
 #include "DebugEvents.h"
+#include "TMS99xxDebugEvents.h"
+#include "SN76489DebugEvents.h"
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace
 {
@@ -26,32 +31,9 @@ namespace GearDevice
     const DebugDeviceId AY_Expansion = 14;
 }
 
-const DebugTargetDescriptor kVdpPortTargets[] = {
-    { 0xBE, "Data", 8 },
-    { 0xBF, "Control / Status", 8 }
-};
 
-const DebugTargetDescriptor kVdpRegisterTargets[] = {
-    { 0, "R0 Mode Control 1", 8 },
-    { 1, "R1 Mode Control 2", 8 },
-    { 2, "R2 Name Table", 8 },
-    { 3, "R3 Color Table", 8 },
-    { 4, "R4 Pattern Table", 8 },
-    { 5, "R5 Sprite Attribute Table", 8 },
-    { 6, "R6 Sprite Pattern Table", 8 },
-    { 7, "R7 Text / Backdrop Color", 8 }
-};
 
-const DebugTargetDescriptor kVdpStateTargets[] = {
-    { 0, "VRAM Address Counter", 14 },
-    { 1, "Control Sequence (Awaiting First Byte)", 1 },
-    { 2, "Read Buffer", 8 },
-    { 3, "Status", 8 },
-    { 4, "IRQ", 1 },
-    { 5, "Video Mode", 3 },
-    { 6, "CPU Port Latch Replacement", 23 },
-    { 7, "Control Latch Byte", 8 }
-};
+
 
 const DebugTargetDescriptor kPpiRegisterTargets[] = {
     { 0, "Port A", 8 },
@@ -72,13 +54,6 @@ const DebugTargetDescriptor kPpiSfPortTargets[] = {
     { 0xE5, "Port B", 8 },
     { 0xE6, "Port C", 8 },
     { 0xE7, "Control", 8 }
-};
-
-const DebugTargetDescriptor kPsgRegisterTargets[] = {
-    { 0, "Tone 0", 10 }, { 1, "Volume 0", 4 },
-    { 2, "Tone 1", 10 }, { 3, "Volume 1", 4 },
-    { 4, "Tone 2", 10 }, { 5, "Volume 2", 4 },
-    { 6, "Noise", 3 },   { 7, "Volume 3", 4 }
 };
 
 // AY-3-8910 / YM2149 on the SGM-style expansion. Register names follow the
@@ -123,34 +98,6 @@ const DebugSpaceDescriptor kSystemBusSpaces[] = {
       kReadWrite, DebugEventAccess_None, kReadWrite, 8, kPublished, NULL, 0 }
 };
 
-const DebugSpaceDescriptor kVdpSpaces[] = {
-    // Device-qualified port events will be enabled when the System Bus owns
-    // canonical port decoding (implementation plan step 2).
-    { DebugCommonSpace::IoPorts, "io_ports", "I/O Ports", 0x00BE, 0x00BF,
-      kReadWrite, DebugEventAccess_None, kReadWrite, 8,
-      DebugDescriptorCapability_None, kVdpPortTargets, sizeof(kVdpPortTargets) / sizeof(kVdpPortTargets[0]) },
-    { DebugCommonSpace::Registers, "registers", "Registers", 0x0000, 0x00FF,
-      DebugEventAccess_Write, DebugEventAccess_Write, DebugEventAccess_Write,
-      8, kPublished, kVdpRegisterTargets, sizeof(kVdpRegisterTargets) / sizeof(kVdpRegisterTargets[0]) },
-    { DebugCommonSpace::Memory, "memory", "VRAM", 0x0000, 0x3FFF,
-      kReadWrite, kReadWrite, kReadWrite, 8, kPublished, NULL, 0 },
-    { DebugCommonSpace::State, "state", "Internal State", 0x0000, 0x0007,
-      DebugEventAccess_Event, DebugEventAccess_Event, DebugEventAccess_Event,
-      8, static_cast<u8>(kPublished | DebugDescriptorCapability_SnapshotReadable),
-      kVdpStateTargets, sizeof(kVdpStateTargets) / sizeof(kVdpStateTargets[0]) },
-    { DebugCommonSpace::Raster, "raster", "Raster", 0x0000, 0xFFFF,
-      DebugEventAccess_Event, DebugEventAccess_None, DebugEventAccess_Event,
-      16, kPublished, NULL, 0 }
-};
-
-const DebugSpaceDescriptor kPsgSpaces[] = {
-    { DebugCommonSpace::IoPorts, "io_ports", "I/O Ports", 0x007F, 0x007F,
-      DebugEventAccess_Write, DebugEventAccess_None, DebugEventAccess_Write,
-      8, DebugDescriptorCapability_None, NULL, 0 },
-    { DebugCommonSpace::Registers, "registers", "Logical Registers", 0x0000, 0x0007,
-      DebugEventAccess_Event, DebugEventAccess_None, DebugEventAccess_Event,
-      8, kPublished, kPsgRegisterTargets, sizeof(kPsgRegisterTargets) / sizeof(kPsgRegisterTargets[0]) }
-};
 
 // The I/O window is not fixed the way the PSG's $7F is: the expansion's base
 // is configurable because the board it models is still being designed. The
@@ -180,7 +127,7 @@ const DebugSpaceDescriptor kPpiScSpaces[] = {
 };
 
 const DebugSpaceDescriptor kTapeSpaces[] = {
-    { DebugCommonSpace::State, "state", "Transport State", 0x0000, 0x0004,
+    { DebugCommonSpace::State, "state", "Tape State", 0x0000, 0x0004,
       DebugEventAccess_Event, DebugEventAccess_None, DebugEventAccess_Event,
       8, kPublished, kTapeStateTargets, sizeof(kTapeStateTargets) / sizeof(kTapeStateTargets[0]) }
 };
@@ -223,22 +170,22 @@ const DebugSpaceDescriptor kUsartSpaces[] = {
 };
 
 const DebugDeviceDescriptor kDebugDevices[] = {
-    { GearDevice::Machine, 0, "gearsf7000", "emulator.machine", "GearSF7000", NULL, 0 },
-    { GearDevice::SC3000, GearDevice::Machine, "gearsf7000.sc3000", "sega.sc3000", "SC-3000", NULL, 0 },
-    { GearDevice::Z80, GearDevice::SC3000, "gearsf7000.sc3000.cpu", "zilog.z80", "Z80", kZ80Spaces, sizeof(kZ80Spaces) / sizeof(kZ80Spaces[0]) },
-    { GearDevice::SystemBus, GearDevice::SC3000, "gearsf7000.sc3000.bus", "debug.system_bus", "System Bus", kSystemBusSpaces, sizeof(kSystemBusSpaces) / sizeof(kSystemBusSpaces[0]) },
-    { GearDevice::TMS9918, GearDevice::SC3000, "gearsf7000.sc3000.vdp", "ti.tms9918", "TMS9918 VDP", kVdpSpaces, sizeof(kVdpSpaces) / sizeof(kVdpSpaces[0]) },
-    { GearDevice::SN76489, GearDevice::SC3000, "gearsf7000.sc3000.psg", "ti.sn76489", "SN76489 PSG", kPsgSpaces, sizeof(kPsgSpaces) / sizeof(kPsgSpaces[0]) },
-    { GearDevice::PPI_SC3000, GearDevice::SC3000, "gearsf7000.sc3000.ppi", "intel.8255", "SC-3000 PPI", kPpiScSpaces, sizeof(kPpiScSpaces) / sizeof(kPpiScSpaces[0]) },
-    { GearDevice::Tape_SR1000, GearDevice::SC3000, "gearsf7000.sc3000.tape", "sega.sr1000", "SR-1000 Tape", kTapeSpaces, sizeof(kTapeSpaces) / sizeof(kTapeSpaces[0]) },
-    { GearDevice::SF7000, GearDevice::SC3000, "gearsf7000.sc3000.sf7000", "sega.sf7000", "SF-7000 Control Station", NULL, 0 },
-    { GearDevice::PPI2_SF7000, GearDevice::SF7000, "gearsf7000.sc3000.sf7000.ppi2", "intel.8255", "SF-7000 PPI2", kPpiSfSpaces, sizeof(kPpiSfSpaces) / sizeof(kPpiSfSpaces[0]) },
-    { GearDevice::FDC_uPD765, GearDevice::SF7000, "gearsf7000.sc3000.sf7000.fdc", "nec.upd765", "uPD765 FDC", kFdcSpaces, sizeof(kFdcSpaces) / sizeof(kFdcSpaces[0]) },
-    { GearDevice::Drive_SF7000, GearDevice::SF7000, "gearsf7000.sc3000.sf7000.drive0", "floppy.drive", "SF-7000 Drive", kDriveSpaces, sizeof(kDriveSpaces) / sizeof(kDriveSpaces[0]) },
-    { GearDevice::USART_8251, GearDevice::SF7000, "gearsf7000.sc3000.sf7000.usart", "intel.8251", "8251 USART", kUsartSpaces, sizeof(kUsartSpaces) / sizeof(kUsartSpaces[0]) },
+    { GearDevice::Machine, 0, "event", "emulator.machine", "GearSF7000", NULL, 0 },
+    { GearDevice::SC3000, GearDevice::Machine, "event.sc3000", "sega.sc3000", "SC-3000", NULL, 0 },
+    { GearDevice::Z80, GearDevice::SC3000, "event.sc3000.cpu", "zilog.z80", "Z80", kZ80Spaces, sizeof(kZ80Spaces) / sizeof(kZ80Spaces[0]) },
+    { GearDevice::SystemBus, GearDevice::SC3000, "event.sc3000.bus", "debug.system_bus", "System Bus", kSystemBusSpaces, sizeof(kSystemBusSpaces) / sizeof(kSystemBusSpaces[0]) },
+    { GearDevice::TMS9918, GearDevice::SC3000, "event.sc3000.vdp", "ti.tms99xx", "TMS9918 VDP", kTms99xxDebugSpaces, kTms99xxDebugSpaceCount },
+    { GearDevice::SN76489, GearDevice::SC3000, "event.sc3000.psg", "ti.sn76489", "SN76489 PSG", kSn76489DebugSpaces, kSn76489DebugSpaceCount },
+    { GearDevice::PPI_SC3000, GearDevice::SC3000, "event.sc3000.ppi", "intel.8255", "SC-3000 PPI", kPpiScSpaces, sizeof(kPpiScSpaces) / sizeof(kPpiScSpaces[0]) },
+    { GearDevice::Tape_SR1000, GearDevice::SC3000, "event.sc3000.tape", "sega.sr1000", "SR-1000 Tape", kTapeSpaces, sizeof(kTapeSpaces) / sizeof(kTapeSpaces[0]), DebugDeviceTrait_External },
+    { GearDevice::SF7000, GearDevice::SC3000, "event.sc3000.sf7000", "sega.sf7000", "SF-7000 Control Station", NULL, 0, DebugDeviceTrait_External },
+    { GearDevice::PPI2_SF7000, GearDevice::SF7000, "event.sc3000.sf7000.ppi2", "intel.8255", "SF-7000 PPI2", kPpiSfSpaces, sizeof(kPpiSfSpaces) / sizeof(kPpiSfSpaces[0]) },
+    { GearDevice::FDC_uPD765, GearDevice::SF7000, "event.sc3000.sf7000.fdc", "nec.upd765", "uPD765 FDC", kFdcSpaces, sizeof(kFdcSpaces) / sizeof(kFdcSpaces[0]) },
+    { GearDevice::Drive_SF7000, GearDevice::SF7000, "event.sc3000.sf7000.drive0", "floppy.drive", "SF-7000 Drive", kDriveSpaces, sizeof(kDriveSpaces) / sizeof(kDriveSpaces[0]) },
+    { GearDevice::USART_8251, GearDevice::SF7000, "event.sc3000.sf7000.usart", "intel.8251", "8251 USART", kUsartSpaces, sizeof(kUsartSpaces) / sizeof(kUsartSpaces[0]) },
     // Hangs off the SC-3000 rather than the SF-7000: it is a cartridge-port
     // expansion, present or not independently of the disk station.
-    { GearDevice::AY_Expansion, GearDevice::SC3000, "gearsf7000.sc3000.ay", "gi.ay_3_8910", "AY Expansion", kAySpaces, sizeof(kAySpaces) / sizeof(kAySpaces[0]) }
+    { GearDevice::AY_Expansion, GearDevice::SC3000, "event.sc3000.ay", "gi.ay_3_8910", "AY Expansion", kAySpaces, sizeof(kAySpaces) / sizeof(kAySpaces[0]), DebugDeviceTrait_External }
 };
 
 u8 GetProbeValueWidth(const DebugDeviceRegistry& registry, const DebugProbe& probe)
@@ -252,10 +199,6 @@ u8 GetProbeValueWidth(const DebugDeviceRegistry& registry, const DebugProbe& pro
     return space->defaultBitWidth;
 }
 
-bool IsPpiDevice(DebugDeviceId device)
-{
-    return device == GearDevice::PPI_SC3000 || device == GearDevice::PPI2_SF7000;
-}
 }
 
 DebugDeviceRegistry::DebugDeviceRegistry(const DebugDeviceDescriptor* devices, size_t count)
@@ -291,6 +234,34 @@ const DebugDeviceDescriptor* DebugDeviceRegistry::FindDevice(const char* stableK
         return NULL;
     for (size_t i = 0; i < m_count; ++i)
         if (m_devices[i].key != NULL && std::strcmp(m_devices[i].key, stableKey) == 0)
+            return &m_devices[i];
+
+    // Rules created before the component-provider detach used the emulator
+    // product name as their namespace. Resolve those persisted keys against
+    // the hardware-oriented event.* tree without retaining duplicate devices.
+    constexpr const char* oldRoot = "gearsf7000";
+    constexpr size_t oldRootLength = 10;
+    if (std::strncmp(stableKey, oldRoot, oldRootLength) == 0 &&
+        (stableKey[oldRootLength] == '\0' || stableKey[oldRootLength] == '.'))
+    {
+        const std::string canonical = std::string("event") +
+            (stableKey + oldRootLength);
+        for (size_t i = 0; i < m_count; ++i)
+            if (m_devices[i].key != NULL &&
+                canonical == m_devices[i].key)
+                return &m_devices[i];
+    }
+    return NULL;
+}
+
+const DebugDeviceDescriptor* DebugDeviceRegistry::FindDeviceByType(
+    const char* typeKey) const
+{
+    if (typeKey == NULL)
+        return NULL;
+    for (size_t i = 0; i < m_count; ++i)
+        if (m_devices[i].typeKey != NULL &&
+            std::strcmp(m_devices[i].typeKey, typeKey) == 0)
             return &m_devices[i];
     return NULL;
 }
@@ -369,6 +340,20 @@ const char* GetDebugDeviceName(DebugDeviceId device)
     return descriptor != NULL ? descriptor->key : "unknown";
 }
 
+const char* GetDebugDeviceName(const DebugDeviceRegistry& registry,
+                               DebugDeviceId device)
+{
+    const auto* descriptor = registry.FindDevice(device);
+    return descriptor ? descriptor->key : "unknown";
+}
+
+const char* GetDebugSpaceName(const DebugDeviceRegistry& registry,
+                              DebugDeviceId device, DebugSpaceId space)
+{
+    const auto* descriptor = registry.FindSpace(device, space);
+    return descriptor ? descriptor->key : GetDebugSpaceName(space);
+}
+
 const char* GetDebugSpaceName(DebugSpaceId space)
 {
     switch (space)
@@ -382,6 +367,51 @@ const char* GetDebugSpaceName(DebugSpaceId space)
     case DebugCommonSpace::Raster: return "raster";
     default: return "unknown";
     }
+}
+
+bool FormatDebugRasterContext(const DebugEventRasterContext& raster,
+                              char* output, size_t outputSize)
+{
+    if (output == nullptr || outputSize == 0)
+        return false;
+    output[0] = 0;
+    if (!raster.rasterKnown && !raster.gapKnown)
+        return false;
+
+    if (raster.rasterKnown && raster.gapKnown)
+        std::snprintf(output, outputSize,
+            "Y=%u (%s)  X=%u dots (%s)  %s calendar\n"
+            "%uT since previous port access",
+            raster.line, GetDebugRasterRegionName(raster.verticalRegion),
+            raster.dot, GetDebugRasterRegionName(raster.horizontalRegion),
+            GetDebugVdpSlotCalendarName(raster.calendar),
+            raster.tStatesSincePreviousAccess);
+    else if (raster.rasterKnown)
+        std::snprintf(output, outputSize,
+            "Y=%u (%s)  X=%u dots (%s)  %s calendar",
+            raster.line, GetDebugRasterRegionName(raster.verticalRegion),
+            raster.dot, GetDebugRasterRegionName(raster.horizontalRegion),
+            GetDebugVdpSlotCalendarName(raster.calendar));
+    else
+        std::snprintf(output, outputSize,
+            "%uT since previous port access",
+            raster.tStatesSincePreviousAccess);
+    return true;
+}
+
+bool FormatDebugEventPresentation(const DebugDeviceRegistry& registry,
+                                  const DebugEvent& event,
+                                  DebugEventPresentation& presentation)
+{
+    presentation = {};
+    const DebugDeviceDescriptor* device = registry.FindDevice(event.device);
+    if (device == nullptr || device->formatter == nullptr)
+        return false;
+    const bool formatted = device->formatter(event, presentation);
+    presentation.attributeCount = std::min(
+        presentation.attributeCount,
+        DebugEventPresentation::MaxAttributes);
+    return formatted;
 }
 
 const char* GetDebugEventSourceName(DebugEventSource source)
@@ -663,27 +693,81 @@ DebugEventManager::DebugEventManager(const DebugDeviceRegistry* registry)
     , m_nextRuleId(1)
     , m_nextSequence(1)
     , m_droppedEvents(0)
+    , m_eventGeneration(1)
     , m_registry(registry != NULL ? registry : &GetGearDebugDeviceRegistry())
     , m_bankProvider(NULL)
     , m_bankContext(NULL)
 {
+    m_pendingRuleCommands.reserve(64);
+    m_applyingRuleCommands.reserve(64);
+}
+
+bool DebugEventManager::SetRegistry(const DebugDeviceRegistry& registry)
+{
+    if (!m_rules.empty() || m_nextSequence != 1 || m_nextRuleId.load() != 1)
+        return false;
+    m_registry = &registry;
+    return true;
+}
+
+void DebugEventManager::RebindRegistry(const DebugDeviceRegistry& registry)
+{
+    ClearEvents();
+    m_registry = &registry;
+    for (DebugRule& rule : m_rules)
+    {
+        if (!rule.useProbe)
+            continue;
+        rule.device = 0;
+        rule.space = DebugCommonSpace::Unknown;
+        const auto* device = registry.FindDevice(rule.deviceKey.c_str());
+        if (!device)
+            continue;
+        const auto* space = registry.FindSpace(device->id, rule.spaceKey.c_str());
+        if (!space)
+            continue;
+        rule.device = device->id;
+        rule.space = space->id;
+        if (ValidateDebugRule(rule, registry) != NULL)
+        {
+            rule.device = 0;
+            rule.space = DebugCommonSpace::Unknown;
+        }
+        else
+        {
+            rule.deviceKey = device->key;
+            rule.spaceKey = space->key;
+        }
+    }
 }
 
 u32 DebugEventManager::AddRule(const DebugRule& source)
 {
     DebugRule rule = source;
+    if (!PrepareRule(rule))
+        return 0;
+    return InsertPreparedRule(std::move(rule), ReserveRuleId());
+}
+
+u32 DebugEventManager::ReserveRuleId()
+{
+    return static_cast<u32>(m_nextRuleId.fetch_add(1));
+}
+
+bool DebugEventManager::PrepareRule(DebugRule& rule) const
+{
     if (rule.useProbe)
     {
         const DebugDeviceRegistry& registry = *m_registry;
         const DebugDeviceDescriptor* device = rule.device != 0
             ? registry.FindDevice(rule.device) : registry.FindDevice(rule.deviceKey.c_str());
         if (device == NULL)
-            return 0;
+            return false;
         const DebugSpaceDescriptor* space = rule.space != DebugCommonSpace::Unknown
             ? registry.FindSpace(device->id, rule.space)
             : registry.FindSpace(device->id, rule.spaceKey.c_str());
         if (space == NULL)
-            return 0;
+            return false;
         rule.device = device->id;
         rule.space = space->id;
         rule.deviceKey = device->key;
@@ -695,11 +779,31 @@ u32 DebugEventManager::AddRule(const DebugRule& source)
         rule.valueCondition = DebugValueCondition::AfterMaskedEqual;
     rule.useValueCondition = rule.valueCondition != DebugValueCondition::Any;
     if (ValidateDebugRule(rule, *m_registry) != NULL)
-        return 0;
-    rule.id = static_cast<u32>(m_nextRuleId++);
+        return false;
+    return true;
+}
+
+u32 DebugEventManager::InsertPreparedRule(DebugRule&& rule, u32 id)
+{
+    rule.id = id;
     rule.hitCount = 0;
-    m_rules.push_back(rule);
-    return rule.id;
+    m_rules.push_back(std::move(rule));
+    return id;
+}
+
+u32 DebugEventManager::AddRuleWithId(const DebugRule& source, u32 id)
+{
+    DebugRule rule = source;
+    // Runtime handles belong to the catalog current at application time. A
+    // queued command may have crossed a stopped-machine recomposition.
+    if (rule.useProbe)
+    {
+        rule.device = 0;
+        rule.space = DebugCommonSpace::Unknown;
+    }
+    if (!PrepareRule(rule))
+        return 0;
+    return InsertPreparedRule(std::move(rule), id);
 }
 
 bool DebugEventManager::RemoveRule(u32 id)
@@ -720,14 +824,119 @@ void DebugEventManager::ClearRules()
     m_rules.clear();
 }
 
-std::vector<DebugRule>& DebugEventManager::GetRules()
+bool DebugEventManager::SetRuleEnabled(u32 id, bool enabled)
 {
-    return m_rules;
+    for (DebugRule& rule : m_rules)
+    {
+        if (rule.id == id)
+        {
+            rule.enabled = enabled;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DebugEventManager::ResetRuleHits(u32 id)
+{
+    for (DebugRule& rule : m_rules)
+    {
+        if (rule.id == id)
+        {
+            rule.hitCount = 0;
+            return true;
+        }
+    }
+    return false;
 }
 
 const std::vector<DebugRule>& DebugEventManager::GetRules() const
 {
     return m_rules;
+}
+
+void DebugEventManager::QueueRuleCommand(RuleCommand&& command)
+{
+    std::lock_guard<std::mutex> lock(m_ruleCommandMutex);
+    m_pendingRuleCommands.push_back(std::move(command));
+}
+
+u32 DebugEventManager::QueueAddRule(const DebugRule& rule)
+{
+    RuleCommand command;
+    command.type = RuleCommandType::Add;
+    command.rule = rule;
+    if (!PrepareRule(command.rule))
+        return 0;
+    command.id = ReserveRuleId();
+    const u32 id = command.id;
+    QueueRuleCommand(std::move(command));
+    return id;
+}
+
+void DebugEventManager::QueueRemoveRule(u32 id)
+{
+    RuleCommand command;
+    command.type = RuleCommandType::Remove;
+    command.id = id;
+    QueueRuleCommand(std::move(command));
+}
+
+void DebugEventManager::QueueClearRules()
+{
+    RuleCommand command;
+    command.type = RuleCommandType::Clear;
+    QueueRuleCommand(std::move(command));
+}
+
+void DebugEventManager::QueueSetRuleEnabled(u32 id, bool enabled)
+{
+    RuleCommand command;
+    command.type = RuleCommandType::SetEnabled;
+    command.id = id;
+    command.enabled = enabled;
+    QueueRuleCommand(std::move(command));
+}
+
+void DebugEventManager::QueueResetRuleHits(u32 id)
+{
+    RuleCommand command;
+    command.type = RuleCommandType::ResetHits;
+    command.id = id;
+    QueueRuleCommand(std::move(command));
+}
+
+size_t DebugEventManager::ApplyPendingRuleCommands()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_ruleCommandMutex);
+        m_pendingRuleCommands.swap(m_applyingRuleCommands);
+    }
+
+    const size_t count = m_applyingRuleCommands.size();
+    for (const RuleCommand& command : m_applyingRuleCommands)
+    {
+        switch (command.type)
+        {
+        case RuleCommandType::Add:
+            AddRuleWithId(command.rule, command.id);
+            break;
+        case RuleCommandType::Remove:
+            RemoveRule(command.id);
+            break;
+        case RuleCommandType::Clear:
+            ClearRules();
+            break;
+        case RuleCommandType::SetEnabled:
+            SetRuleEnabled(command.id, command.enabled);
+            break;
+        case RuleCommandType::ResetHits:
+            ResetRuleHits(command.id);
+            break;
+        }
+    }
+    m_applyingRuleCommands.clear();
+    return count;
 }
 
 bool DebugEventManager::Evaluate(DebugEventCategory category, u8 access, u16 target,
@@ -779,9 +988,9 @@ bool DebugEventManager::Evaluate(DebugEventCategory category, u8 access, u16 tar
                                  u8 afterValue, bool afterKnown, u16 pc, u64 clock,
                                  const DebugEventRasterContext* raster)
 {
-    const DebugProbe probe = AdaptLegacyDebugProbe(category, access, target);
+    const DebugProbe probe = ResolveLegacyProbe(category, access, target);
     return EvaluateWithProbe(category, access, target, beforeValue, beforeKnown,
-        afterValue, afterKnown, pc, clock, &probe,
+        afterValue, afterKnown, pc, clock, &probe, NULL,
         DebugEventSource::Unknown, DebugEventPhase::Unknown, raster);
 }
 
@@ -791,7 +1000,7 @@ bool DebugEventManager::EvaluateIoPort(const DebugProbe& decodedProbe, u16 rawPo
 {
     DebugProbe probe = decodedProbe;
     if (probe.device == 0)
-        probe = AdaptLegacyDebugProbe(DebugEventCategory::Io, access, rawPort);
+        probe = ResolveLegacyProbe(DebugEventCategory::Io, access, rawPort);
     probe.space = DebugCommonSpace::IoPorts;
 
     // Legacy generic I/O rules keep matching the raw Z80 port. The v2 event
@@ -802,11 +1011,25 @@ bool DebugEventManager::EvaluateIoPort(const DebugProbe& decodedProbe, u16 rawPo
     // PPI Ports is a qualified view of that same CPU transaction. There is no
     // second publisher in the 8255 implementation; only matching legacy PPI
     // rules are evaluated here for compatibility with existing presets.
-    if (IsPpiDevice(probe.device))
+    const DebugDeviceDescriptor* decodedDevice = m_registry->FindDevice(probe.device);
+    if (decodedDevice != NULL && decodedDevice->typeKey != NULL &&
+        std::strcmp(decodedDevice->typeKey, "intel.8255") == 0)
         pause = EvaluateWithProbe(DebugEventCategory::Ppi, access,
             static_cast<u16>(probe.target), 0, false, value, valueKnown,
             pc, clock, &probe) || pause;
     return pause;
+}
+
+bool DebugEventManager::EvaluateMemoryAccess(
+    const DebugProbe& primaryProbe, const DebugProbe& compatibilityProbe,
+    u8 access, u64 beforeValue, bool beforeKnown,
+    u64 afterValue, bool afterKnown, u16 pc, u64 clock)
+{
+    return EvaluateWithProbe(DebugEventCategory::CpuMemory, access,
+        static_cast<u16>(primaryProbe.target), beforeValue, beforeKnown,
+        afterValue, afterKnown, pc, clock, &primaryProbe, &compatibilityProbe,
+        DebugEventSource::CpuInstruction,
+        DebugEventPhase::AfterCommitDeviceBoundary);
 }
 
 bool DebugEventManager::EvaluateProbe(const DebugProbe& probe, u8 access,
@@ -818,7 +1041,19 @@ bool DebugEventManager::EvaluateProbe(const DebugProbe& probe, u8 access,
 {
     return EvaluateWithProbe(DebugEventCategory::DeviceState, access,
         static_cast<u16>(probe.target), beforeValue, beforeKnown,
-        afterValue, afterKnown, pc, clock, &probe, source, phase, raster);
+        afterValue, afterKnown, pc, clock, &probe, NULL, source, phase, raster);
+}
+
+bool DebugEventManager::EvaluateDeviceProbe(
+    DebugEventCategory compatibilityCategory, const DebugProbe& probe,
+    u8 access, u64 beforeValue, bool beforeKnown,
+    u64 afterValue, bool afterKnown,
+    DebugEventSource source, DebugEventPhase phase,
+    u16 pc, u64 clock, const DebugEventRasterContext* raster)
+{
+    return EvaluateWithProbe(compatibilityCategory, access,
+        static_cast<u16>(probe.target), beforeValue, beforeKnown,
+        afterValue, afterKnown, pc, clock, &probe, NULL, source, phase, raster);
 }
 
 bool DebugEventManager::EvaluateWithProbe(DebugEventCategory category, u8 access, u16 target,
@@ -826,10 +1061,13 @@ bool DebugEventManager::EvaluateWithProbe(DebugEventCategory category, u8 access
                                           u64 afterValue, bool afterKnown,
                                           u16 pc, u64 clock,
                                           const DebugProbe* probeOverride,
+                                          const DebugProbe* compatibilityProbe,
                                           DebugEventSource source,
                                           DebugEventPhase phase,
                                           const DebugEventRasterContext* raster)
 {
+    if (!m_runtimeActive)
+        return false;
     bool pause = false;
 
     for (std::vector<DebugRule>::iterator it = m_rules.begin(); it != m_rules.end(); ++it)
@@ -840,10 +1078,16 @@ bool DebugEventManager::EvaluateWithProbe(DebugEventCategory category, u8 access
         u32 matchedTarget = target;
         if (rule.useProbe)
         {
-            if (probeOverride == NULL || rule.device != probeOverride->device
-                || rule.space != probeOverride->space)
+            const bool primaryMatch = probeOverride != NULL
+                && rule.device == probeOverride->device
+                && rule.space == probeOverride->space;
+            const bool compatibilityMatch = compatibilityProbe != NULL
+                && rule.device == compatibilityProbe->device
+                && rule.space == compatibilityProbe->space;
+            if (!primaryMatch && !compatibilityMatch)
                 continue;
-            matchedTarget = probeOverride->target;
+            matchedTarget = primaryMatch ? probeOverride->target
+                                         : compatibilityProbe->target;
         }
         else if (rule.category != category)
             continue;
@@ -869,9 +1113,16 @@ bool DebugEventManager::EvaluateWithProbe(DebugEventCategory category, u8 access
         if ((rule.actions & DebugEventAction_Log) != 0 || pauseThisHit)
         {
             if (probeOverride != NULL)
+            {
+                const DebugProbe& eventProbe = rule.useProbe
+                    && compatibilityProbe != NULL
+                    && rule.device == compatibilityProbe->device
+                    && rule.space == compatibilityProbe->space
+                    ? *compatibilityProbe : *probeOverride;
                 PushEventWithProbe(rule.id, category, access, target,
                     beforeValue, beforeKnown, afterValue, afterKnown,
-                    pc, clock, actions, *probeOverride, source, phase, raster);
+                    pc, clock, actions, eventProbe, source, phase, raster);
+            }
             else
                 PushEvent(rule.id, category, access, target,
                           static_cast<u8>(beforeValue), beforeKnown,
@@ -890,6 +1141,8 @@ bool DebugEventManager::EvaluateWithProbe(DebugEventCategory category, u8 access
 void DebugEventManager::RecordLegacyHit(DebugEventCategory category, u8 access, u16 target,
                                         u8 value, bool valueKnown, u16 pc, u64 clock)
 {
+    if (!m_runtimeActive)
+        return;
     PushEvent(0, category, access, target, value, valueKnown, pc, clock,
               DebugEventAction_Log | DebugEventAction_Pause);
 }
@@ -920,6 +1173,7 @@ size_t DebugEventManager::SetEventCapacity(size_t capacity)
         m_eventHead = 0;
         m_eventCount = 0;
         m_droppedEvents = 0;
+        ++m_eventGeneration;
     }
 
     return m_events.size();
@@ -935,6 +1189,7 @@ void DebugEventManager::ClearEvents()
     m_eventHead = 0;
     m_eventCount = 0;
     m_droppedEvents = 0;
+    ++m_eventGeneration;
 }
 
 size_t DebugEventManager::GetEventCount() const
@@ -947,16 +1202,31 @@ u64 DebugEventManager::GetDroppedEventCount() const
     return m_droppedEvents;
 }
 
+u64 DebugEventManager::GetEventGeneration() const
+{
+    return m_eventGeneration;
+}
+
 void DebugEventManager::CopyEvents(std::vector<DebugEvent>& out) const
 {
     out.clear();
-    out.reserve(m_eventCount);
     const size_t capacity = m_events.size();
+    out.reserve(capacity);
     if (capacity == 0)
         return;
     const size_t first = (m_eventHead + capacity - m_eventCount) % capacity;
     for (size_t i = 0; i < m_eventCount; ++i)
         out.push_back(m_events[(first + i) % capacity]);
+}
+
+bool DebugEventManager::CopyEventsIfChanged(
+    u64& generation, std::vector<DebugEvent>& out) const
+{
+    if (generation == m_eventGeneration)
+        return false;
+    CopyEvents(out);
+    generation = m_eventGeneration;
+    return true;
 }
 
 void DebugEventManager::PushEvent(u32 ruleId, DebugEventCategory category, u8 access,
@@ -972,9 +1242,63 @@ void DebugEventManager::PushEvent(u32 ruleId, DebugEventCategory category, u8 ac
                                   u8 afterValue, bool afterKnown, u16 pc, u64 clock,
                                   u8 actions)
 {
-    const DebugProbe probe = AdaptLegacyDebugProbe(category, access, target);
+    const DebugProbe probe = ResolveLegacyProbe(category, access, target);
     PushEventWithProbe(ruleId, category, access, target, beforeValue, beforeKnown,
         afterValue, afterKnown, pc, clock, actions, probe);
+}
+
+DebugProbe DebugEventManager::ResolveLegacyProbe(
+    DebugEventCategory category, u8 access, u16 target) const
+{
+    DebugProbe probe;
+    probe.target = target;
+    const char* typeKey = NULL;
+    DebugSpaceId space = DebugCommonSpace::Unknown;
+    switch (category)
+    {
+    case DebugEventCategory::CpuExecute:
+        typeKey = "zilog.z80"; space = DebugCommonSpace::Execute; break;
+    case DebugEventCategory::CpuMemory:
+        typeKey = "zilog.z80"; space = DebugCommonSpace::Memory; break;
+    case DebugEventCategory::Vram:
+        typeKey = "ti.tms99xx"; space = DebugCommonSpace::Memory; break;
+    case DebugEventCategory::Io:
+        typeKey = "debug.system_bus"; space = DebugCommonSpace::IoPorts; break;
+    case DebugEventCategory::VdpRegister:
+        typeKey = "ti.tms99xx"; space = DebugCommonSpace::Registers; break;
+    case DebugEventCategory::Fdc:
+        typeKey = "nec.upd765"; space = DebugCommonSpace::State; break;
+    case DebugEventCategory::Ppi:
+        space = (access & DebugEventAccess_Event) != 0
+            ? DebugCommonSpace::State : DebugCommonSpace::IoPorts;
+        if (target >= 0xE4 && target <= 0xE7)
+        {
+            const auto* sfPpi = m_registry->FindDevice(
+                "event.sc3000.sf7000.ppi2");
+            if (sfPpi != NULL)
+                probe.device = sfPpi->id;
+        }
+        typeKey = "intel.8255";
+        break;
+    case DebugEventCategory::VideoTiming:
+        typeKey = "ti.tms99xx"; space = DebugCommonSpace::Raster; break;
+    case DebugEventCategory::Tape:
+        typeKey = "sega.sr1000"; space = DebugCommonSpace::State; break;
+    case DebugEventCategory::Audio:
+        typeKey = "ti.sn76489"; space = DebugCommonSpace::Registers; break;
+    case DebugEventCategory::AyExpansion:
+        typeKey = "gi.ay_3_8910"; space = DebugCommonSpace::Registers; break;
+    case DebugEventCategory::DeviceState:
+        break;
+    }
+    if (probe.device == 0 && typeKey != NULL)
+    {
+        const auto* device = m_registry->FindDeviceByType(typeKey);
+        if (device != NULL)
+            probe.device = device->id;
+    }
+    probe.space = space;
+    return probe;
 }
 
 void DebugEventManager::PushEventWithProbe(u32 ruleId, DebugEventCategory category, u8 access,
@@ -1041,4 +1365,5 @@ void DebugEventManager::PushEventWithProbe(u32 ruleId, DebugEventCategory catego
         ++m_eventCount;
     else
         ++m_droppedEvents;
+    ++m_eventGeneration;
 }

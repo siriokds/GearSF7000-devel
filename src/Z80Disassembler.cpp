@@ -46,7 +46,7 @@ void Z80Disassembler::Disassemble(u16 address)
     const int maxSize = std::min(record->size, 7);
     for (int i = 0; i < maxSize; ++i)
     {
-        const u8 opcode = m_memory->Read(address + i);
+        const u8 opcode = m_memory->Peek(address + i);
         if (opcode != record->opcodes[i])
             changed = true;
     }
@@ -56,21 +56,67 @@ void Z80Disassembler::Disassemble(u16 address)
 
     std::vector<u8> bytes;
     u16 opcodeAddress = address;
-    u8 opcodeValue = m_memory->Read(opcodeAddress);
-    u8 indexPrefix = 0;
-    int first = 0;
+    u8 opcodeValue = m_memory->Peek(opcodeAddress);
 
     while (opcodeValue == 0xDD || opcodeValue == 0xFD)
     {
-        indexPrefix = opcodeValue;
         bytes.push_back(opcodeValue);
         ++opcodeAddress;
-        ++first;
-        opcodeValue = m_memory->Read(opcodeAddress);
+        opcodeValue = m_memory->Peek(opcodeAddress);
     }
 
     for (int i = 0; i < 5; ++i)
-        bytes.push_back(m_memory->Read(opcodeAddress + i));
+        bytes.push_back(m_memory->Peek(opcodeAddress + i));
+
+    Decoded decoded;
+    Decode(bytes.data(), static_cast<int>(bytes.size()), address, decoded);
+    record->size = decoded.size;
+    record->address = address;
+    std::snprintf(record->name, sizeof(record->name), "%s", decoded.name);
+    record->jump = decoded.jump;
+    record->jump_address = decoded.jumpAddress;
+    record->subroutine = decoded.subroutine;
+    int byteTextPosition = 0;
+    for (int i = 0; i < static_cast<int>(bytes.size()); ++i)
+    {
+        if (i < record->size)
+        {
+            static const char hex[] = "0123456789ABCDEF";
+            const u8 byte = bytes[i];
+            record->bytes[byteTextPosition++] = hex[byte >> 4];
+            record->bytes[byteTextPosition++] = hex[byte & 0x0F];
+            record->bytes[byteTextPosition++] = ' ';
+        }
+
+        if (i < 7)
+            record->opcodes[i] = bytes[i];
+    }
+    record->bytes[byteTextPosition] = 0;
+
+    // Assign stable, automatic labels to branch destinations.  User-supplied
+    // symbols remain higher priority in the GUI, but these labels make a raw
+    // ROM readable even when no .sym file is available.
+    if (record->jump)
+    {
+        Memory::stDisassembleRecord* target =
+            m_memory->GetDisassembleRecord(record->jump_address, true);
+        if (IsValidPointer(target))
+        {
+            const char* prefix = record->subroutine ? "SUB" : "TAG";
+            std::snprintf(target->auto_symbol, sizeof(target->auto_symbol),
+                          "%s_%02X_%04X", prefix,
+                          target->bank < 0 ? 0 : target->bank,
+                          record->jump_address);
+        }
+    }
+}
+
+void Z80Disassembler::Decode(const u8* bytes, int count, u16 address, Decoded& out)
+{
+    int first = 0;
+    u8 indexPrefix = 0;
+    while (first < count - 5 && (bytes[first] == 0xDD || bytes[first] == 0xFD))
+        indexPrefix = bytes[first++];
 
     u8 opcode = bytes[first];
     stOPCodeInfo info;
@@ -109,46 +155,34 @@ void Z80Disassembler::Disassemble(u16 address)
         info = kOPCodeNames[opcode];
 
     if (first > 0 && bytes[first] == 0xED)
-        record->size = info.size + first;
+        out.size = info.size + first;
     else
-        record->size = info.size + (first > 1 ? first - 1 : 0);
+        out.size = info.size + (first > 1 ? first - 1 : 0);
 
-    record->address = address;
-    record->name[0] = 0;
-    record->bytes[0] = 0;
-    record->jump = false;
-    record->jump_address = 0;
-    record->subroutine = false;
-    int byteTextPosition = 0;
-    for (int i = 0; i < static_cast<int>(bytes.size()); ++i)
-    {
-        if (i < record->size)
-        {
-            static const char hex[] = "0123456789ABCDEF";
-            const u8 byte = bytes[i];
-            record->bytes[byteTextPosition++] = hex[byte >> 4];
-            record->bytes[byteTextPosition++] = hex[byte & 0x0F];
-            record->bytes[byteTextPosition++] = ' ';
-        }
-
-        if (i < 7)
-            record->opcodes[i] = bytes[i];
-    }
-    record->bytes[byteTextPosition] = 0;
-
+    out.name[0] = 0;
+    out.jump = false;
+    out.jumpAddress = 0;
+    out.subroutine = false;
+    out.operandKind = Decoded::Operand_None;
+    out.operand = 0;
+    out.relative = false;
+    out.rst = false;
     const int nameFirst = first + (prefixed ? 1 : 0);
     switch (info.type)
     {
         case GS_OPCode_Type_Implied:
-            std::snprintf(record->name, sizeof(record->name), "%s", info.name);
+            std::snprintf(out.name, sizeof(out.name), "%s", info.name);
             break;
         case GS_OPCode_Type_Index:
-            std::snprintf(record->name, sizeof(record->name), info.name,
+            std::snprintf(out.name, sizeof(out.name), info.name,
                           static_cast<s8>(bytes[nameFirst]));
             break;
         case GS_OPCode_Type_1b:
-            std::snprintf(record->name, sizeof(record->name), info.name,
+            std::snprintf(out.name, sizeof(out.name), info.name,
                           bytes[nameFirst + 1]);
+            out.operand = bytes[nameFirst + 1];
+            out.operandKind = (!prefixed && (opcode == 0xDB || opcode == 0xD3))
+                ? Decoded::Operand_Port : Decoded::Operand_Imm8;
             break;
         case GS_OPCode_Type_2b:
         {
@@ -157,65 +191,62 @@ void Z80Disassembler::Disassemble(u16 address)
                               (opcode & 0xC7) == 0xC2 ||
                               (opcode & 0xC7) == 0xC4))
             {
-                record->jump = true;
-                record->jump_address = operand;
+                out.jump = true;
+                out.jumpAddress = operand;
             }
-            std::snprintf(record->name, sizeof(record->name), info.name, operand);
+            std::snprintf(out.name, sizeof(out.name), info.name, operand);
+            out.operand = operand;
+            if (out.jump)
+                out.operandKind = Decoded::Operand_Jump;
+            else if (std::strstr(info.name, "(") != NULL)
+                out.operandKind = Decoded::Operand_Memory;
+            else
+                out.operandKind = Decoded::Operand_Imm16;
             break;
         }
         case GS_OPCode_Type_Indexed:
-            std::snprintf(record->name, sizeof(record->name), info.name,
+            std::snprintf(out.name, sizeof(out.name), info.name,
                           static_cast<s8>(bytes[nameFirst + 1]));
             break;
         case GS_OPCode_Type_Relative:
         {
-            record->jump = true;
-            record->jump_address = address + record->size +
-                                   static_cast<s8>(bytes[nameFirst + 1]);
-            std::snprintf(record->name, sizeof(record->name), info.name,
-                          record->jump_address,
+            out.jump = true;
+            out.jumpAddress = address + out.size +
+                              static_cast<s8>(bytes[nameFirst + 1]);
+            out.operandKind = Decoded::Operand_Jump;
+            out.operand = out.jumpAddress;
+            out.relative = true;
+            std::snprintf(out.name, sizeof(out.name), info.name,
+                          out.jumpAddress,
                           static_cast<s8>(bytes[nameFirst + 1]));
             break;
         }
         case GS_OPCode_Type_Indexed_1b:
-            std::snprintf(record->name, sizeof(record->name), info.name,
+            std::snprintf(out.name, sizeof(out.name), info.name,
                           static_cast<s8>(bytes[nameFirst + 1]),
                           bytes[nameFirst + 2]);
             break;
         case GS_OPCode_Type_Data:
-            std::snprintf(record->name, sizeof(record->name), "%s", info.name);
+            std::snprintf(out.name, sizeof(out.name), "%s", info.name);
             break;
         default:
-            std::snprintf(record->name, sizeof(record->name), "PARSE ERROR");
+            std::snprintf(out.name, sizeof(out.name), "PARSE ERROR");
             break;
     }
 
-    // Assign stable, automatic labels to branch destinations.  User-supplied
-    // symbols remain higher priority in the GUI, but these labels make a raw
-    // ROM readable even when no .sym file is available.
+    // Calls are subroutines; an RST is also a jump, to its vector.
     if (!prefixed)
     {
         if (opcode == 0xCD || (opcode & 0xC7) == 0xC4)
-            record->subroutine = true;
+            out.subroutine = true;
         else if ((opcode & 0xC7) == 0xC7)
         {
-            record->subroutine = true;
-            record->jump = true;
-            record->jump_address = opcode & 0x38;
-        }
-    }
-
-    if (record->jump)
-    {
-        Memory::stDisassembleRecord* target =
-            m_memory->GetDisassembleRecord(record->jump_address, true);
-        if (IsValidPointer(target))
-        {
-            const char* prefix = record->subroutine ? "SUB" : "TAG";
-            std::snprintf(target->auto_symbol, sizeof(target->auto_symbol),
-                          "%s_%02X_%04X", prefix,
-                          target->bank < 0 ? 0 : target->bank,
-                          record->jump_address);
+            out.subroutine = true;
+            out.jump = true;
+            out.jumpAddress = opcode & 0x38;
+            out.operandKind = Decoded::Operand_Jump;
+            out.operand = out.jumpAddress;
+            out.rst = true;
         }
     }
 }

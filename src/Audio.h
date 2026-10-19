@@ -21,8 +21,15 @@
 #define	AUDIO_H
 
 #include "definitions.h"
+#include <vector>
 #include "audio/Multi_Buffer.h"
 #include "audio/Sms_Apu.h"
+#include "audio/OneBitAudioDevice.h"
+#if GEARSF7000_ENABLE_YM2413
+#include "IFmPortDevice.h"
+#include "audio/Ym2413.h"
+#include "audio/LoudnessMeter.h"
+#endif
 #if GEARSF7000_ENABLE_SR1000
 #include "SR1000_Speaker.h"
 #endif
@@ -46,13 +53,18 @@
 
 
 class Audio
+#if GEARSF7000_ENABLE_YM2413
+    : public IFmPortDevice
+#endif
 {
 public:
     struct PeakInfo
     {
         float psg = 0.0f;
+        float fm = 0.0f;
         float drive = 0.0f;
         float cassette = 0.0f;
+        float oneBit = 0.0f;
         float preLimiter = 0.0f;
         float output = 0.0f;
         unsigned int softLimitSamples = 0;
@@ -72,14 +84,92 @@ public:
     Audio();
     ~Audio();
     void Init();
-    // clockRate is the CPU clock the machine is actually running at, which is
-    // not the regional constant when the machine has been aligned to the host
-    // display. Zero keeps the constant.
-    void Reset(bool bPAL, u32 clockRate = 0);
+    // clockRate is the CPU/PSG clock the motherboard is actually running at.
+    // Region is retained only for formats such as VGM that record the video
+    // standard; it never selects the clock when clockRate is supplied.
+    void Reset(GC_Region region, u32 clockRate = 0);
+    // Selected by the motherboard at reset. The renderer stays common; only
+    // hardware identity and the noise LFSR personality change.
+    void SetPsgVariant(Sms_Apu::Variant variant)
+    {
+        m_PsgVariantPending = variant;
+        if (m_pApu)
+            m_pApu->SetVariant(variant);
+    }
+    Sms_Apu::Variant GetPsgVariant() const { return m_pApu->GetVariant(); }
+    // Game Gear stereo panning: set by the machine, like the variant. Off, a
+    // WriteStereoPanning() does nothing.
+    void SetPsgStereo(bool enabled)
+    {
+        m_PsgStereoPending = enabled;
+        if (m_pApu)
+            m_pApu->SetGgStereoEnabled(enabled);
+    }
+    bool GetPsgStereo() const { return m_pApu->IsGgStereoEnabled(); }
+    // Hardware presence is latched at reset. MSX uses it for PPI PC7 click.
+    void SetOneBitEnabled(bool enabled) { m_oneBitEnabledPending = enabled; }
+    bool IsOneBitEnabled() const { return m_oneBit.IsEnabled(); }
+    OneBitAudioDevice& GetOneBitDevice() { return m_oneBit; }
+    bool WriteOneBitLevel(bool high) { return m_oneBit.WriteLevel(m_ElapsedCycles, high); }
     void Mute(bool mute);
     void WriteAudioRegister(u8 value);
+    // The panning byte (port $06 on a Game Gear - the system bus decodes it).
+    void WriteStereoPanning(u8 value);
 #if GEARSF7000_ENABLE_SR1000
     void SR1000SpeakerWrite(float sample, bool synthesized, float frequencyHz = 0.0f);
+#endif
+
+#if GEARSF7000_ENABLE_YM2413
+    enum class FmInterface { ExternalFmUnit, JapaneseSMS };
+    void SetYm2413Enabled(bool enabled) { m_bYm2413EnabledPending = enabled; }
+    void SetYm2413MachineAvailable(bool available)
+    {
+        m_bYm2413MachineAvailable = available;
+    }
+    void SetYm2413Interface(FmInterface interfaceType)
+    {
+        m_Ym2413InterfacePending = interfaceType;
+    }
+    bool IsYm2413Enabled() const { return m_bYm2413Enabled; }
+    FmInterface GetYm2413Interface() const { return m_Ym2413Interface; }
+    u8 GetYm2413ControlLatch() const { return m_Ym2413Control; }
+    Ym2413* GetYm2413() { return m_pYm2413; }
+    const Ym2413* GetYm2413() const { return m_pYm2413; }
+    bool IsPsgOutputEnabled() const;
+    bool IsFmOutputEnabled() const;
+    void SelectRegister(u8 value) override;
+    void WriteData(u8 value) override;
+    void WriteControl(u8 value) override;
+    u8 ReadControl() const override;
+    u8 GetSelectedRegister() const override
+    {
+        return m_pYm2413 ? m_pYm2413->GetSelectedRegister() : 0;
+    }
+    FmAccessTiming ObserveAccess(u64 chipClock, bool data) override
+    {
+        return m_bYm2413Enabled ? m_pYm2413->ObserveAccess(chipClock, data)
+                               : FmAccessTiming{};
+    }
+    void SetYm2413ChannelMuted(int channel, bool muted);
+    bool IsYm2413ChannelMuted(int channel) const;
+
+    // BS.1770 loudness of the FM bus and of the final mix, for comparing
+    // how loud FM games actually sound. Off by default: two K-weighting
+    // filters per stereo frame are cheap but not free, and the figure is
+    // only wanted during a measurement. Enabling starts a fresh measurement.
+    // Runtime-only like the channel filters - never saved or serialized.
+    // Keeps measuring while the FM window is closed, so a long play session
+    // can be integrated without the panel open.
+    void EnableLoudnessMeter(bool enable);
+    bool IsLoudnessMeterEnabled() const { return m_bLoudnessEnabled; }
+    void ResetLoudnessMeter();
+    const LoudnessMeter& GetFmLoudness() const { return m_FmLoudness; }
+    const LoudnessMeter& GetOutputLoudness() const { return m_OutputLoudness; }
+    // Mix before the soft limiter, over the same span as the meters: the
+    // peak shows how far past the knee a passage went, the count how many
+    // samples the limiter actually reshaped.
+    float GetLoudnessPreLimiterPeak() const { return m_LoudnessPreLimiterPeak; }
+    unsigned int GetLoudnessLimitedSamples() const { return m_LoudnessLimitedSamples; }
 #endif
 
 #if GEARSF7000_ENABLE_AY
@@ -92,13 +182,14 @@ public:
     // latched at Reset(), not applied live. Audio owns no policy about when
     // that happens - the caller decides.
     void SetAyEnabled(bool enabled) { m_bAyEnabledPending = enabled; }
+    void SetAyMachine(bool sc3000, bool sgm, bool onboard = false) { m_aySC3000 = sc3000; m_aySGM = sgm; m_ayOnboard = onboard; }
     void SetAyChip(AyChip chip) { m_AyChipPending = chip; }
     bool IsAyEnabled() const { return m_bAyEnabled; }
     AyChip GetAyChip() const { return m_AyChip; }
 
     // Bus side. Address latch, data write, data read - the AY-3-8910 register
-    // interface as the MSX exposes it, minus the chip's own I/O ports which no
-    // expansion of this kind uses.
+    // interface. Parallel-port peripherals use IAYPorts (MSXTape on MSX).
+    // Disconnected machines retain their existing latch readback.
     void AySelectRegister(u8 reg);
     void AyWriteData(u8 value);
     u8 AyReadData() const;
@@ -106,6 +197,7 @@ public:
     // For the debugger and the MCP adapter. Unlike AyReadData() these do not
     // disturb or depend on the latched register index.
     Ay_Apu* GetAyApu() { return m_pAyApu; }
+    void SetAyDebugPortBase(u16 base) { m_pAyApu->SetDebugIoPortBase(base); }
     u8 GetAySelectedRegister() const { return m_AySelectedRegister; }
     // Effective chip clock, i.e. the machine clock after the expansion's
     // divider. Defined in Audio.cpp, where that divider lives.
@@ -120,7 +212,7 @@ public:
     //
     // clock_rate passed to Ay_Apu::init_debug_buffers is m_iPsgClockRate, the
     // CPU clock - NOT GetAyClockHz(). The AY has no Blip time domain of its
-    // own (see Ay_Apu.h's own comment on set_clock_divider): every write()
+    // own (see Ay_Apu.h's comment on set_timebase_divider): every write()
     // call and every synth_.offset() inside it counts time in the same CPU-
     // clock blip_time_t the PSG uses, because both chips share m_pBuffer.
     // A debug Blip_Buffer has to agree with that or the waveform comes out
@@ -229,8 +321,8 @@ public:
     bool IsRecording() const { return m_bIsRecording; }
 
     // VGM export - the register-write log a real chip's I/O port sees, not a
-    // sample recording. clockRate is the machine's nominal clock for the
-    // region (GC_MASTER_CLOCK_NTSC/PAL), never the live one after clock trim
+    // sample recording. clockRate is the motherboard's nominal CPU/PSG
+    // oscillator, never the live one after clock trim
     // or alignment: a VGM player replays writes on its own clock, so the file
     // has to state the crystal a real machine would use, not whatever this
     // session happened to be running at.
@@ -243,19 +335,55 @@ public:
 private:
     void ApplyDebugChannelFilters();
 
+    OneBitAudioDevice m_oneBit;
+    bool m_oneBitEnabledPending = false;
+    s16 m_oneBitBuffer[GC_AUDIO_BUFFER_SIZE]{};
+    s16 m_oneBitCarry[GC_AUDIO_BUFFER_SIZE]{};
+    int m_oneBitCarryCount = 0;
     Sms_Apu* m_pApu;
     Stereo_Buffer* m_pBuffer;
     bool m_PsgChannelEnabled[4] = { true, true, true, true };
     bool m_PsgChannelMuted[4] = { false, false, false, false };
+    Sms_Apu::Variant m_PsgVariantPending = Sms_Apu::Variant::SN76489AN;
+    bool m_PsgStereoPending = false;
+
+#if GEARSF7000_ENABLE_YM2413
+    struct FmWriteEvent
+    {
+        u64 cycle;
+        u8 reg;
+        u8 value;
+        int sample = 0;
+    };
+    Ym2413* m_pYm2413;
+    bool m_bYm2413Enabled = false;
+    bool m_bYm2413EnabledPending = false;
+    bool m_bYm2413MachineAvailable = false;
+    FmInterface m_Ym2413Interface = FmInterface::ExternalFmUnit;
+    FmInterface m_Ym2413InterfacePending = FmInterface::ExternalFmUnit;
+    u8 m_Ym2413Control = 0;
+    u8 m_Ym2413FrameStartControl = 0;
+    u16 m_Ym2413CsyncCounter = 0;
+    std::vector<FmWriteEvent> m_Ym2413Writes;
+    s16 m_Ym2413Buffer[GC_AUDIO_BUFFER_SIZE];
+    bool m_bLoudnessEnabled = false;
+    LoudnessMeter m_FmLoudness;
+    LoudnessMeter m_OutputLoudness;
+    float m_LoudnessPreLimiterPeak = 0.0f;
+    unsigned int m_LoudnessLimitedSamples = 0;
+#endif
 
 #if GEARSF7000_ENABLE_AY
     // Shares m_pBuffer with the PSG. Stereo_Buffer holds exactly three fixed
     // Blip_Buffers, so a second chip cannot have a buffer of its own - it
     // attaches to the same one and Blip sums the deltas for free. That also
     // means both chips must live in the same time domain; see
-    // Ay_Apu::set_clock_divider().
+    // Ay_Apu::set_timebase_divider().
     Ay_Apu* m_pAyApu;
     bool m_bAyEnabled;
+    bool m_aySC3000 = true;
+    bool m_ayOnboard = false;
+    bool m_aySGM = false;
     bool m_bAyEnabledPending;
     AyChip m_AyChip;
     AyChip m_AyChipPending;
@@ -335,6 +463,12 @@ inline void Audio::WriteAudioRegister(u8 value)
 #endif
 }
 
+inline void Audio::WriteStereoPanning(u8 value)
+{
+    m_pApu->write_ggstereo(m_ElapsedCycles, value);
+    // Not recorded: VgmRecorder stamps its header "no GG stereo" (0x2B = 0).
+}
+
 #if GEARSF7000_ENABLE_AY
 inline void Audio::AySelectRegister(u8 reg)
 {
@@ -367,7 +501,7 @@ inline u8 Audio::AyReadData() const
     // open bus like every other unclaimed port in MachineIOPorts::In().
     if (!m_bAyEnabled)
         return 0xFF;
-    return static_cast<u8>(m_pAyApu->read(m_AySelectedRegister));
+    return static_cast<u8>(m_pAyApu->read(m_AySelectedRegister, m_ElapsedCycles));
 }
 #endif
 

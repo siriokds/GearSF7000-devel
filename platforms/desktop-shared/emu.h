@@ -28,11 +28,6 @@
     #define EXTERN extern
 #endif
 
-EXTERN u8* emu_frame_buffer;
-EXTERN u8* emu_debug_background_buffer;
-EXTERN u8* emu_debug_tile_buffer;
-EXTERN u8* emu_debug_sprite_buffers[64];
-void emu_refresh_debug_sprite_buffers(void);
 // ROM Inspector (DOCS/ROM_INSPECTOR_PLAN.md point 4): decodes an arbitrary
 // external scratch buffer at a user-chosen offset/tiles-per-row, not live
 // VRAM. Fixed-size square buffer (up to 64 tiles/row, 64 tile-rows visible
@@ -61,7 +56,6 @@ struct EmuAudioQueueDiagnostics
 };
 EXTERN bool emu_debug_disable_breakpoints_cpu;
 EXTERN bool emu_debug_disable_breakpoints_mem;
-EXTERN bool emu_debug_disable_breakpoints_vram;
 EXTERN int emu_debug_tile_palette;
 EXTERN bool emu_savefiles_dir_option;
 EXTERN bool emu_savestates_dir_option;
@@ -76,6 +70,9 @@ EXTERN void emu_init(bool enable_audio = true);
 // overscan, disc write protection, audio mute. Called by every front end, so
 // that a windowed session and a headless one start the same machine.
 EXTERN void emu_apply_startup_config(void);
+// Work that still needs the configuration (its folder, its values) and so
+// has to run before config_write()/config_destroy() at exit.
+EXTERN void emu_prepare_shutdown(void);
 EXTERN void emu_destroy(void);
 EXTERN void emu_update(void);
 // The two halves of emu_update, for front ends that pace presentation
@@ -94,6 +91,7 @@ EXTERN void emu_set_target_frame_rate(double fps);
 // contains the answer.
 EXTERN double emu_get_native_frame_rate(void);
 EXTERN void emu_pump_host(void);
+EXTERN bool emu_debug_runtime_requested(void);
 EXTERN void emu_run_frame(void);
 EXTERN void emu_render_current_frame(void);
 // pauseAtResetVector: leave the machine paused with PC already at the reset
@@ -119,6 +117,11 @@ EXTERN void emu_set_keyboard_mode(bool enabled);
 // attract mode expects.
 EXTERN bool emu_get_keyboard_mode(void);
 EXTERN void emu_input_event(SDL_Event event);
+EXTERN bool emu_set_controller_device(int player, int device);
+EXTERN void emu_release_host_input(void);
+EXTERN void emu_clear_matrix_host_input(void);
+EXTERN void emu_resync_host_input(void);
+EXTERN void emu_mark_host_input_stale(void);
 EXTERN void emu_joy_pressed(GC_Controllers controller, GC_Keys key);
 EXTERN void emu_joy_released(GC_Controllers controller, GC_Keys key);
 // Direct press/release of a single non-printable SK-1100 keyboard matrix key
@@ -182,6 +185,11 @@ EXTERN double emu_get_fast_forward_multiplier(void);
 // a reload crash usually turns out to be.
 EXTERN unsigned long long emu_get_machine_generation(void);
 EXTERN bool emu_is_empty(void);
+EXTERN const std::string& emu_get_machine_start_error();
+EXTERN bool emu_has_pending_msx_firmware();
+EXTERN const char* emu_get_cbios_license();
+bool emu_is_cbios_active();
+EXTERN void emu_reload_machine_firmware();
 EXTERN bool emu_is_bios_loaded(void);
 EXTERN void emu_reset(Cartridge::ForceConfiguration config, bool pauseAtResetVector = false);
 EXTERN void emu_eject_rom(void);
@@ -195,18 +203,26 @@ EXTERN bool emu_start_vgm_recording(const char* file_path);
 // Returns the path written, or empty if nothing was recording.
 EXTERN std::string emu_stop_vgm_recording(void);
 EXTERN bool emu_is_vgm_recording(void);
+// WAV export: the final mix, stereo, after bus gains and limiter - what the
+// speakers get. The VGM above is the register log instead.
+EXTERN bool emu_start_wav_recording(const char* file_path);
+EXTERN bool emu_stop_wav_recording(void);
+EXTERN bool emu_is_wav_recording(void);
 #if GEARSF7000_ENABLE_AY
 // Stages the SGM-style AY expansion. The port window moves at once; presence
 // and chip type take effect at the next machine reset.
 EXTERN void emu_set_ay_config(bool enabled, int chip, int port_base);
+#endif
+#if GEARSF7000_ENABLE_YM2413
+EXTERN void emu_set_ym2413_config(bool enabled);
 #endif
 EXTERN void emu_audio_suspend_for_file_dialog(void);
 EXTERN void emu_audio_resume_after_file_dialog(void);
 EXTERN bool emu_is_audio_enabled(void);
 EXTERN EmuAudioQueueDiagnostics emu_get_audio_queue_diagnostics(void);
 EXTERN void emu_reset_audio_queue_diagnostics(void);
-EXTERN void emu_palette(GC_Color* palette);
 EXTERN void emu_predefined_palette(int palette);
+EXTERN int* emu_palette_setting(void);
 EXTERN void emu_save_ram(const char* file_path);
 EXTERN void emu_load_ram(const char* file_path, Cartridge::ForceConfiguration config);
 // Writes a tokenised .bas image into the BASIC program area and rebuilds the
@@ -227,12 +243,18 @@ EXTERN bool emu_load_state_slot(int index);
 EXTERN bool emu_save_state_file(const char* file_path, size_t* bytes_written = NULL);
 EXTERN bool emu_load_state_file(const char* file_path);
 EXTERN void emu_get_runtime(GC_RuntimeInfo& runtime);
+struct config_VideoOutput;
+EXTERN config_VideoOutput emu_get_effective_video_output(bool debug);
 EXTERN GC_VideoFrameDescriptor emu_get_video_frame_descriptor(void);
+EXTERN GC_VideoFrameView emu_get_video_frame_view(void);
 EXTERN void emu_clear_video_buffer(void);
 // PNG encode of the live frame buffer, filled every frame by RunToVBlank
 // regardless of whether a GUI is presenting it. Caller frees *out_buffer with
 // free(). Returns 0 on failure.
-EXTERN int emu_get_screenshot_png(unsigned char** out_buffer);
+// full_frame false: the presented picture (visible_area - on a Game Gear the
+// 160x144 window); true: the whole frame the device rendered. out_area gets the
+// captured rectangle in frame coordinates.
+EXTERN int emu_get_screenshot_png(unsigned char** out_buffer, bool full_frame, GC_VideoRect* out_area);
 // Encodes RGBA pixels as a PNG in memory; the caller frees *out_buffer with
 // free(). Here rather than at the call site because stb_image_write's
 // to_mem entry point is only visible in the translation unit that carries
@@ -240,7 +262,7 @@ EXTERN int emu_get_screenshot_png(unsigned char** out_buffer);
 EXTERN int emu_encode_png_rgba(const u8* pixels, int width, int height,
                                unsigned char** out_buffer);
 // Debug-only visualization of the full 342-dot raster (sync/blank/burst/
-// border/active), see Video::SetFullRasterDebugEnabled. Off by default.
+// border/active), when the selected device advertises that option. Off by default.
 EXTERN void emu_set_full_raster_debug_enabled(bool enabled);
 // Plugs a recording sink into the VDP's second video output and captures
 // `lines` scanlines' worth of signal calls to file_path. Capture spans
@@ -253,6 +275,7 @@ EXTERN void crt_signal_dump_tick(void);
 // machine ready, or encoding failed. Caller frees *out_buffer with free().
 EXTERN int emu_get_full_raster_debug_png(unsigned char** out_buffer);
 EXTERN void emu_get_info(char* info);
+EXTERN const char* emu_get_mapper_name(Cartridge::CartridgeTypes type);
 EXTERN GearSF7000Core* emu_get_core(void);
 #if GEARSF7000_ENABLE_MCP
 class DebugAdapter;

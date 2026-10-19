@@ -6,18 +6,22 @@
 #include "gui_debug_mem_import.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "imgui/imgui.h"
 #include "imgui/colors.h"
-#include "nfd/nfd.h"
+#include "nfd_parented.h"
 #include "config.h"
 #include "emu.h"
 #include "gui.h"
 #include "gui_debug_memory.h"
 #include "../../src/gearsf7000.h"
+#include "../../src/IVideoDevice.h"
+#include "../../src/IVideoDebugProvider.h"
 
 namespace
 {
@@ -40,8 +44,8 @@ void browse_button(const char* id, char* path_buf, size_t path_buf_size, bool sa
         ScopedAudioPause audioPause;
         nfdchar_t* out_path = nullptr;
         nfdresult_t result = save
-            ? NFD_SaveDialog(&out_path, nullptr, 0, nullptr, nullptr)
-            : NFD_OpenDialog(&out_path, nullptr, 0, nullptr);
+            ? NFD_SaveDialogParented(&out_path, nullptr, 0, nullptr, nullptr)
+            : NFD_OpenDialogParented(&out_path, nullptr, 0, nullptr);
         if (result == NFD_OKAY)
         {
             strncpy(path_buf, out_path, path_buf_size - 1);
@@ -68,6 +72,21 @@ void path_field(const char* label, char* buf, size_t buf_size, bool save)
     browse_button(label, buf, buf_size, save);
 }
 
+bool read_file(const char* path, std::size_t maximumSize, std::vector<u8>& bytes)
+{
+    bytes.clear();
+    if (!path || !path[0] || maximumSize == 0)
+        return false;
+    FILE* file = fopen(path, "rb");
+    if (!file)
+        return false;
+    bytes.resize(maximumSize);
+    const std::size_t count = fread(bytes.data(), 1, maximumSize, file);
+    fclose(file);
+    bytes.resize(count);
+    return count != 0;
+}
+
 }
 
 void gui_debug_mem_import_window(void)
@@ -77,14 +96,16 @@ void gui_debug_mem_import_window(void)
     static char ram_export_path[1024] = "";
     static char ram_export_address[9] = "";
     static char ram_export_length[9] = "";
-    static char vram_import_path[1024] = "";
-    static char vram_export_path[1024] = "";
-    static char vram_export_address[5] = "";
-    static char vram_export_end[5] = "";
+    static char video_import_path[1024] = "";
+    static char video_import_address[9] = "";
+    static char video_export_path[1024] = "";
+    static char video_export_address[9] = "";
+    static char video_export_end[9] = "";
+    static std::string selected_video_space;
     static int selected_view = 0;
 
     ImGui::SetNextWindowPos(ImVec2(160, 300), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(700, 460), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(38.9f, 25.6f);
 
     ImGui::Begin("Mem Import", &config_debug.show_memory_import);
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());
@@ -182,45 +203,134 @@ void gui_debug_mem_import_window(void)
     }
 
     ImGui::Separator();
-    ImGui::TextColored(yellow, "VRAM");
+    ImGui::TextColored(yellow, "VIDEO MEMORY");
 
-    Video* video = emu_get_core()->GetVideo();
+    GearSF7000Core* core = emu_get_core();
+    const VideoDeviceHandle videoHandle = core->AcquireVideoDevice();
+    IVideoDebugProvider* videoDebug = core->IsVideoDeviceHandleCurrent(videoHandle)
+        ? videoHandle.device->GetDebugProvider() : nullptr;
+    std::vector<GC_VideoMemorySpaceDescriptor> videoSpaces;
+    if (videoDebug)
+        for (std::size_t index = 0; index < videoDebug->GetMemorySpaceCount(); ++index)
+        {
+            GC_VideoMemorySpaceDescriptor space;
+            if (videoDebug->DescribeMemorySpace(index, space) && space.code &&
+                space.installed_size_bytes != 0 && (space.readable || space.writable))
+                videoSpaces.push_back(space);
+        }
 
-    ImGui::Spacing();
-    ImGui::TextColored(magenta, "FILE -> VRAM");
-    path_field("##vram_import_path", vram_import_path, IM_ARRAYSIZE(vram_import_path), false);
-    if (ImGui::Button("Import##vram", ImVec2(90, 0)))
+    auto selectedSpace = videoSpaces.end();
+    if (!selected_video_space.empty())
+        selectedSpace = std::find_if(videoSpaces.begin(), videoSpaces.end(),
+            [&](const GC_VideoMemorySpaceDescriptor& space)
+            {
+                return selected_video_space == space.code;
+            });
+    if (selectedSpace == videoSpaces.end() && !videoSpaces.empty())
     {
-        MemoryImport(vram_import_path, video->GetVRAM(), 0, 0x4000);
+        selectedSpace = videoSpaces.begin();
+        selected_video_space = selectedSpace->code;
     }
 
-    ImGui::Spacing();
-    ImGui::TextColored(magenta, "VRAM -> FILE");
-    path_field("##vram_export_path", vram_export_path, IM_ARRAYSIZE(vram_export_path), true);
-    ImGui::Text("Address:"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
-    ImGui::InputTextWithHint("##vram_export_address", "XXXX", vram_export_address, IM_ARRAYSIZE(vram_export_address),
-        ImGuiInputTextFlags_CharsHexadecimal);
-    ImGui::SameLine();
-    ImGui::Text("  End:"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
-    ImGui::InputTextWithHint("##vram_export_end", "XXXX", vram_export_end, IM_ARRAYSIZE(vram_export_end),
-        ImGuiInputTextFlags_CharsHexadecimal);
-    if (ImGui::Button("Export##vram", ImVec2(90, 0)))
+    if (selectedSpace == videoSpaces.end())
+        ImGui::TextDisabled("The active video device exposes no memory space.");
+    else
     {
-        try
+        const char* selectedName = selectedSpace->name ? selectedSpace->name : selectedSpace->code;
+        float comboWidth = gui_combo_width_for_text(selectedName);
+        for (const GC_VideoMemorySpaceDescriptor& space : videoSpaces)
+            comboWidth = std::max(comboWidth,
+                gui_combo_width_for_text(space.name ? space.name : space.code));
+        ImGui::SetNextItemWidth(comboWidth);
+        if (ImGui::BeginCombo("Target##video_memory", selectedName))
         {
-            u16 addr = vram_export_address[0] ? (u16)std::stoul(vram_export_address, 0, 16) : 0;
-            u16 end = vram_export_end[0] ? (u16)std::stoul(vram_export_end, 0, 16) : 0x3FFF;
-            addr &= 0x3FFF;
-            end &= 0x3FFF;
-            if (addr > end)
-                std::swap(addr, end);
-            MemoryExport(vram_export_path, video->GetVRAM(), addr, (end - addr) + 1);
+            for (const GC_VideoMemorySpaceDescriptor& space : videoSpaces)
+            {
+                const bool selected = selected_video_space == space.code;
+                if (ImGui::Selectable(space.name ? space.name : space.code, selected))
+                    selected_video_space = space.code;
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
         }
-        catch (const std::invalid_argument&)
+        ImGui::SameLine();
+        ImGui::TextColored(cyan, "Size:"); ImGui::SameLine();
+        ImGui::Text("$%X (%u bytes)", selectedSpace->installed_size_bytes,
+            selectedSpace->installed_size_bytes);
+
+        ImGui::Spacing();
+        ImGui::TextColored(magenta, "FILE -> VIDEO MEMORY");
+        path_field("##video_import_path", video_import_path,
+            IM_ARRAYSIZE(video_import_path), false);
+        ImGui::Text("Offset:"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        ImGui::InputTextWithHint("##video_import_address", "XXXXXXXX",
+            video_import_address, IM_ARRAYSIZE(video_import_address),
+            ImGuiInputTextFlags_CharsHexadecimal);
+        ImGui::SameLine();
+        if (selectedSpace->writable && ImGui::Button("Import##video", ImVec2(90, 0)))
         {
+            try
+            {
+                u32 offset = video_import_address[0]
+                    ? static_cast<u32>(std::stoul(video_import_address, nullptr, 16)) : 0;
+                if (offset < selectedSpace->installed_size_bytes)
+                {
+                    std::vector<u8> bytes;
+                    if (read_file(video_import_path,
+                            selectedSpace->installed_size_bytes - offset, bytes))
+                        videoDebug->WriteMemorySpace(selectedSpace->code, offset,
+                            bytes.data(), bytes.size());
+                }
+            }
+            catch (const std::invalid_argument&) {}
+            catch (const std::out_of_range&) {}
         }
+        else if (!selectedSpace->writable)
+            ImGui::TextDisabled("Read-only");
+
+        ImGui::Spacing();
+        ImGui::TextColored(magenta, "VIDEO MEMORY -> FILE");
+        path_field("##video_export_path", video_export_path,
+            IM_ARRAYSIZE(video_export_path), true);
+        ImGui::Text("Address:"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        ImGui::InputTextWithHint("##video_export_address", "XXXXXXXX",
+            video_export_address, IM_ARRAYSIZE(video_export_address),
+            ImGuiInputTextFlags_CharsHexadecimal);
+        ImGui::SameLine();
+        ImGui::Text("End:"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        ImGui::InputTextWithHint("##video_export_end", "XXXXXXXX",
+            video_export_end, IM_ARRAYSIZE(video_export_end),
+            ImGuiInputTextFlags_CharsHexadecimal);
+        if (selectedSpace->readable && ImGui::Button("Export##video", ImVec2(90, 0)))
+        {
+            try
+            {
+                u32 first = video_export_address[0]
+                    ? static_cast<u32>(std::stoul(video_export_address, nullptr, 16)) : 0;
+                u32 last = video_export_end[0]
+                    ? static_cast<u32>(std::stoul(video_export_end, nullptr, 16))
+                    : selectedSpace->installed_size_bytes - 1;
+                if (first > last)
+                    std::swap(first, last);
+                if (first < selectedSpace->installed_size_bytes)
+                {
+                    last = std::min(last, selectedSpace->installed_size_bytes - 1);
+                    std::vector<u8> bytes(static_cast<std::size_t>(last - first + 1));
+                    if (videoDebug->ReadMemorySpace(selectedSpace->code, first,
+                            bytes.data(), bytes.size()))
+                        MemoryExport(video_export_path, bytes.data(), 0,
+                            static_cast<int>(bytes.size()));
+                }
+            }
+            catch (const std::invalid_argument&) {}
+            catch (const std::out_of_range&) {}
+        }
+        else if (!selectedSpace->readable)
+            ImGui::TextDisabled("Write-only");
     }
 
     ImGui::PopFont();

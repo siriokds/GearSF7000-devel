@@ -8,6 +8,7 @@
 #include "GearSF7000BusHandler.h"
 
 #include "IOPorts.h"
+#include "ISystemBus.h"
 #include "SaveStateStream.h"
 #include "Memory.h"
 
@@ -21,7 +22,8 @@ u8 LowPort(const CPU::Z80::PartialMachineCycle& cycle)
 
 GearSF7000BusHandler::GearSF7000BusHandler(
     Memory* memory, IOPorts* ioPorts, GearSF7000BusClockSink* clockSink)
-    : m_memory(memory),
+    : m_systemBus(nullptr),
+      m_memory(memory),
       m_ioPorts(ioPorts),
       m_clockSink(clockSink),
       m_elapsedHalfCycles(0),
@@ -32,6 +34,7 @@ GearSF7000BusHandler::GearSF7000BusHandler(
 void GearSF7000BusHandler::Attach(
     Memory* memory, IOPorts* ioPorts, GearSF7000BusClockSink* clockSink)
 {
+    m_systemBus = nullptr;
     m_memory = memory;
     m_ioPorts = ioPorts;
     m_clockSink = clockSink;
@@ -39,7 +42,13 @@ void GearSF7000BusHandler::Attach(
 
 void GearSF7000BusHandler::SetIOPorts(IOPorts* ioPorts)
 {
+    m_systemBus = nullptr;
     m_ioPorts = ioPorts;
+}
+
+void GearSF7000BusHandler::SetSystemBus(ISystemBus* systemBus)
+{
+    m_systemBus = systemBus;
 }
 
 void GearSF7000BusHandler::SetClockSink(GearSF7000BusClockSink* clockSink)
@@ -99,6 +108,14 @@ std::uint64_t GearSF7000BusHandler::GetElapsedTStates() const
     return m_elapsedHalfCycles >> 1;
 }
 
+HalfCycles GearSF7000BusHandler::GetM1WaitPenalty() const
+{
+    if (!m_systemBus)
+        return HalfCycles(0);
+    return HalfCycles(
+        static_cast<HalfCycles::IntType>(m_systemBus->GetWaitCyclesM1()) * 2);
+}
+
 unsigned int GearSF7000BusHandler::GetHalfCycleRemainder() const
 {
     return static_cast<unsigned int>(m_elapsedHalfCycles & 1u);
@@ -107,14 +124,16 @@ unsigned int GearSF7000BusHandler::GetHalfCycleRemainder() const
 HalfCycles GearSF7000BusHandler::GetTerminalIOWaitPenalty(
     const CPU::Z80::PartialMachineCycle& cycle) const
 {
-    if (!m_ioPorts || !cycle.is_terminal() ||
+    if ((!m_systemBus && !m_ioPorts) || !cycle.is_terminal() ||
         (cycle.operation != CPU::Z80::PartialMachineCycle::Input &&
          cycle.operation != CPU::Z80::PartialMachineCycle::Output))
         return HalfCycles(0);
 
     const bool write = cycle.operation == CPU::Z80::PartialMachineCycle::Output;
-    const unsigned int waitTStates = m_ioPorts->GetWaitStatesAt(
-        GetElapsedTStates(), LowPort(cycle), write);
+    const unsigned int waitTStates = m_systemBus
+        ? m_systemBus->GetIOWaitStates(GetElapsedTStates(),
+            cycle.address ? *cycle.address : 0, write)
+        : m_ioPorts->GetWaitStatesAt(GetElapsedTStates(), LowPort(cycle), write);
     return HalfCycles(static_cast<HalfCycles::IntType>(waitTStates) * 2);
 }
 
@@ -123,6 +142,7 @@ void GearSF7000BusHandler::Advance(HalfCycles duration)
     const std::uint64_t halfCycles = duration.as<std::uint64_t>();
     m_elapsedHalfCycles += halfCycles;
     m_pendingClockSinkHalfCycles += halfCycles;
+    if (m_systemBus) m_systemBus->AdvanceCpuHalfCycles(halfCycles);
 }
 
 HalfCycles GearSF7000BusHandler::PerformMachineCycle(
@@ -148,14 +168,27 @@ HalfCycles GearSF7000BusHandler::PerformMachineCycle(
         FlushClockSink();
     }
 
-    // Fixed-latency devices use the default IOPorts implementation, while
-    // the VDP can derive its delay from raster position, mode, sprites and
-    // display enable. Advance and re-synchronize before the actual transfer.
-    const HalfCycles penalty = GetTerminalIOWaitPenalty(cycle);
+    // Ask the motherboard for the device wait, then advance and synchronize
+    // before transfer. The current TMS has no READY line and adds no wait.
+    HalfCycles penalty = GetTerminalIOWaitPenalty(cycle);
     if (penalty != HalfCycles(0))
     {
         Advance(penalty);
         FlushClockSink();
+    }
+    else if (cycle.operation == CPU::Z80::PartialMachineCycle::ReadOpcode ||
+             cycle.operation == CPU::Z80::PartialMachineCycle::Interrupt)
+    {
+        // The board's M1 wait circuit (ColecoVision, MSX). On the
+        // ColecoVision schematic (Processor sheet, U8A 74LS74) it is clocked
+        // from /M1 alone, so every cycle with /M1 active pays: opcode fetches,
+        // prefix bytes, the NMI response (CLK issues it as an opcode fetch)
+        // and the maskable interrupt acknowledge. An opcode fetch is an
+        // ordinary memory cycle for the devices, so its time is only
+        // accumulated here and reaches them at the instruction boundary.
+        penalty = GetM1WaitPenalty();
+        if (penalty != HalfCycles(0))
+            Advance(penalty);
     }
 
     const u16 address = cycle.address ? *cycle.address : 0;
@@ -163,33 +196,53 @@ HalfCycles GearSF7000BusHandler::PerformMachineCycle(
     {
         case CPU::Z80::PartialMachineCycle::ReadOpcode:
         case CPU::Z80::PartialMachineCycle::Read:
-            if (m_memory && cycle.value)
-                *cycle.value = m_memory->Read(address);
+            if (cycle.value)
+            {
+                if (m_systemBus) *cycle.value = m_systemBus->ReadMemory(address);
+                else if (m_memory) *cycle.value = m_memory->Read(address);
+                if (m_systemBus && cycle.operation == CPU::Z80::PartialMachineCycle::ReadOpcode)
+                    m_systemBus->ObserveOpcodeFetch(*cycle.value);
+                // Only here are an opcode fetch (M1) and a data read still
+                // told apart; the ROM map wants the data reads.
+                if (m_memory && cycle.operation == CPU::Z80::PartialMachineCycle::Read)
+                    m_memory->NotifyCpuDataRead(address, *cycle.value);
+            }
             break;
 
         case CPU::Z80::PartialMachineCycle::Write:
-            if (m_memory && cycle.value)
-                m_memory->Write(address, *cycle.value);
+            if (cycle.value)
+            {
+                if (m_systemBus) m_systemBus->WriteMemory(address, *cycle.value);
+                else if (m_memory) m_memory->Write(address, *cycle.value);
+            }
             break;
 
         case CPU::Z80::PartialMachineCycle::Input:
-            if (m_ioPorts && cycle.value)
+            if ((m_systemBus || m_ioPorts) && cycle.value)
             {
                 const u8 port = LowPort(cycle);
-                *cycle.value = m_ioPorts->In(GetElapsedTStates(), port);
-                if (m_memory)
-                    m_memory->CheckIOPortAccess(m_ioPorts->GetDebugProbe(port),
+                *cycle.value = m_systemBus
+                    ? m_systemBus->ReadIO(GetElapsedTStates(), address)
+                    : m_ioPorts->In(GetElapsedTStates(), port);
+                if (m_memory && (!m_systemBus || !m_systemBus->PublishesIOEvents()))
+                    m_memory->CheckIOPortAccess(m_systemBus
+                        ? m_systemBus->GetIOProbe(address) : m_ioPorts->GetDebugProbe(port),
                         port, DebugEventAccess_Read, *cycle.value);
             }
             break;
 
         case CPU::Z80::PartialMachineCycle::Output:
-            if (m_ioPorts && cycle.value)
+            if ((m_systemBus || m_ioPorts) && cycle.value)
             {
                 const u8 port = LowPort(cycle);
-                m_ioPorts->Out(GetElapsedTStates(), port, *cycle.value);
+                // Before the write: a VDP may commit it to VRAM inside WriteIO.
                 if (m_memory)
-                    m_memory->CheckIOPortAccess(m_ioPorts->GetDebugProbe(port),
+                    m_memory->NotifyCpuPortWrite(port, *cycle.value);
+                if (m_systemBus) m_systemBus->WriteIO(GetElapsedTStates(), address, *cycle.value);
+                else m_ioPorts->Out(GetElapsedTStates(), port, *cycle.value);
+                if (m_memory && (!m_systemBus || !m_systemBus->PublishesIOEvents()))
+                    m_memory->CheckIOPortAccess(m_systemBus
+                        ? m_systemBus->GetIOProbe(address) : m_ioPorts->GetDebugProbe(port),
                         port, DebugEventAccess_Write, *cycle.value);
             }
             break;
@@ -199,9 +252,10 @@ HalfCycles GearSF7000BusHandler::PerformMachineCycle(
             // opcode and IM 2 uses it as the low vector byte. Keeping the
             // source on IOPorts gives both CPU backends the same bus-level
             // acknowledgment protocol; its default is the idle-bus $ff.
-            if (m_ioPorts && cycle.value)
-                *cycle.value = m_ioPorts->AcknowledgeInterrupt(
-                    GetElapsedTStates());
+            if ((m_systemBus || m_ioPorts) && cycle.value)
+                *cycle.value = m_systemBus
+                    ? m_systemBus->AcknowledgeInterrupt(GetElapsedTStates())
+                    : m_ioPorts->AcknowledgeInterrupt(GetElapsedTStates());
             break;
 
         case CPU::Z80::PartialMachineCycle::Refresh:

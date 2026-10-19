@@ -28,7 +28,14 @@ enum GC_GameDBMode
 	GC_GameDBMode_SG1000_16K	= 4,
 	GC_GameDBMode_SC3000		= 8,
 	GC_GameDBMode_SC3000_32K	= 16,
-	GC_GameDBMode_SF7000		= 32
+	GC_GameDBMode_SF7000		= 32,
+	GC_GameDBMode_SG1000_DAHJEE_A = 64,
+	GC_GameDBMode_SG1000_DAHJEE_B = 128,
+	GC_GameDBMode_SC3000_SURVIVORS_MULTICART = 256,
+	GC_GameDBMode_SC3000_SURVIVORS_MEGACART = 512,
+	GC_GameDBMode_SG1000_OTHELLO_2K = 1024,
+	GC_GameDBMode_SG1000_SEGA_315_5208 = 2048,
+	GC_GameDBMode_SG1000_CASTLE_8K = 4096
 };
 
 struct GC_GameDBEntry
@@ -151,7 +158,7 @@ const GC_GameDBEntry kGameDatabase[] =
 	// CART SG
 	{ 0x4916112D, "Astrododge"                                                  , GC_GameDBMode_SG1000 },
 	{ 0x0B4BCA74, "Borderline (Japan, Europe) (Compile 1984) (G-1001)"          , GC_GameDBMode_SG1000 },
-	{ 0x092F29D6, "Castle, The (Japan) (1986) (G-1046)"                         , GC_GameDBMode_SG1000 },
+	{ 0x092F29D6, "Castle, The (Japan) (1986) (G-1046)"                         , GC_GameDBMode_SG1000_CASTLE_8K },
 	{ 0x5970A12B, "Champion Baseball (Japan) (16kB) (1983) (G-1011)"            , GC_GameDBMode_SG1000 },
 	{ 0x26F947D1, "Champion Boxing (Japan) (1984) (G-1033)"                     , GC_GameDBMode_SG1000 },
 	{ 0x868419B5, "Champion Golf (Japan) (1984) (G-1005)"                       , GC_GameDBMode_SG1000 },
@@ -174,7 +181,7 @@ const GC_GameDBEntry kGameDatabase[] =
 	{ 0x652BBD1E, "N-Sub (Japan) (Compile 1983) (G-1003)"                       , GC_GameDBMode_SG1000 },
 	{ 0x3E371769, "N-Sub (Taiwan) (Compile 1983) (G-1003)"                      , GC_GameDBMode_SG1000 },
 	{ 0xF4F78B76, "Orguss (Japan, Europe) (1984) (G-1015)"                      , GC_GameDBMode_SG1000 },
-	{ 0xAF4F14BC, "Othello (Japan) (1985) (G-1044)"                             , GC_GameDBMode_SG1000 },
+	{ 0xAF4F14BC, "Othello (Japan) (1985) (G-1044)"                             , GC_GameDBMode_SG1000_OTHELLO_2K },
 	{ 0x19949375, "Pacar (Japan) (40kB) (1983) (G-1020)"                        , GC_GameDBMode_SG1000 },
 	{ 0x326587E1, "Pachinko (Japan) (1983) (G-1027)"                            , GC_GameDBMode_SG1000 },
 	{ 0xFD7CB50A, "Pachinko II (Japan) (1984) (G-1029)"                         , GC_GameDBMode_SG1000 },
@@ -196,22 +203,35 @@ const GC_GameDBEntry kGameDatabase[] =
 	{ 0x905467E4, "Zaxxon (Japan) (1985) (G-1038)"                              , GC_GameDBMode_SG1000 },
 
 	// CART TAIWAN
-	{ 0xCE5648C3, "Bomberman Special (Taiwan) (DahJee)"                         , GC_GameDBMode_SG1000 },
+	{ 0x69FC1494, "Bomber Man Special (Taiwan)"                                 , GC_GameDBMode_SG1000_DAHJEE_B },
+	{ 0xCE5648C3, "Bomberman Special (Taiwan) (DahJee)"                         , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0x2E366CCF, "The Castle (Taiwan)"                                         , GC_GameDBMode_SG1000_DAHJEE_B },
 	{ 0x042C36BA, "Flipper (Taiwan)"                                            , GC_GameDBMode_SG1000 },
 	{ 0x845BBB22, "Galaga (Taiwan)"                                             , GC_GameDBMode_SG1000 },
-	{ 0x223397A1, "King's Valley (Taiwan)"                                      , GC_GameDBMode_SG1000 },
-	{ 0x281D2888, "Knightmare (Taiwan)"                                         , GC_GameDBMode_SG1000 },
-	{ 0x2E7166D5, "Legend of Kage, The (Taiwan)"                                , GC_GameDBMode_SG1000 },
-	{ 0xFFC4EE3F, "Magical Kid Wiz (Taiwan)"                                    , GC_GameDBMode_SG1000 },
+	{ 0x1D1A0CA3, "Hei Bai Qi (Taiwan)"                                         , GC_GameDBMode_SG1000_OTHELLO_2K },
+	{ 0x223397A1, "King's Valley (Taiwan)"                                      , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0x281D2888, "Knightmare (Taiwan)"                                         , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0x2E7166D5, "Legend of Kage, The (Taiwan)"                                , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0xFFC4EE3F, "Magical Kid Wiz (Taiwan)"                                    , GC_GameDBMode_SG1000_DAHJEE_B },
 	{ 0x4573F5BC, "Orguss (Taiwan)"                                             , GC_GameDBMode_SG1000 },
-	{ 0xDF7CBFA5, "Pippols (Taiwan)"                                            , GC_GameDBMode_SG1000 },
+	{ 0xDF7CBFA5, "Pippols (Taiwan)"                                            , GC_GameDBMode_SG1000_DAHJEE_A },
 	{ 0x476A079B, "Pitfall II (Taiwan) (Chinese Logo)"                          , GC_GameDBMode_SG1000 },
-	{ 0x306D5F78, "Rally-X (Taiwan) (DahJee)"                                   , GC_GameDBMode_SG1000 },
-	{ 0x29E047CC, "Road Fighter (Taiwan) (Jumbo)"                               , GC_GameDBMode_SG1000 },
-	{ 0xE0816BB7, "Star Soldier (Taiwan) (GA006)"                               , GC_GameDBMode_SG1000 },
-	{ 0x5CBD1163, "Tank Battalion (Taiwan) (GR-014)"                            , GC_GameDBMode_SG1000 },
-	{ 0xC550B4F0, "TwinBee (Taiwan) (GB-003)"                                   , GC_GameDBMode_SG1000 },
-	{ 0xFC87463C, "Yie Ar Kung-Fu II (Taiwan) (GA008)"                          , GC_GameDBMode_SG1000 },
+	{ 0xAAAC12CF, "Rally-X (Taiwan)"                                            , GC_GameDBMode_SG1000_DAHJEE_B },
+	{ 0x306D5F78, "Rally-X (Taiwan) (DahJee)"                                   , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0xD2EDD329, "Road Fighter (Taiwan)"                                       , GC_GameDBMode_SG1000_DAHJEE_B },
+	{ 0x29E047CC, "Road Fighter (Taiwan) (Jumbo)"                               , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0xE0816BB7, "Star Soldier (Taiwan) (GA006)"                               , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0x5CBD1163, "Tank Battalion (Taiwan) (GR-014)"                            , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0xC550B4F0, "TwinBee (Taiwan) (GB-003)"                                   , GC_GameDBMode_SG1000_DAHJEE_A },
+	{ 0xFC87463C, "Yie Ar Kung-Fu II (Taiwan) (GA008)"                          , GC_GameDBMode_SG1000_DAHJEE_A },
+
+	// SC-3000 Survivors cartridges
+	{ 0xF4E7F01B, "SC-3000 Survivors MkII Multicart v2.28"                      , GC_GameDBMode_SC3000_SURVIVORS_MULTICART },
+	{ 0x0084B239, "SC-3000 Survivors MkII Multicart v2.31"                      , GC_GameDBMode_SC3000_SURVIVORS_MULTICART },
+	{ 0x76A3D2E2, "SC-3000 Survivors Megacart v2.31"                            , GC_GameDBMode_SC3000_SURVIVORS_MEGACART },
+
+	// SG-1000-compatible software on a banked Mark III cartridge
+	{ 0x323F357F, "Loretta no Shouzou (Japan) (1987) (G-1315)"                  , GC_GameDBMode_SG1000_SEGA_315_5208 },
 
 	// CART OTHELLO MULTIVISION
 	{ 0xA8B5B57F, "007 James Bond (Japan) (v2.6) (Tsukuda Original 1984) (OM-G008)"                 , GC_GameDBMode_SG1000 },
@@ -311,5 +331,3 @@ u32 CalculateCRC32(u32 crc, const u8 *buf, int size)
 }
 
 #endif /* GAME_DB_H */
-
-

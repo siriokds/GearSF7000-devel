@@ -21,8 +21,6 @@ programs or follow a single VDP access down to the exact raster dot and VRAM
 slot. GearSF7000 is designed both for enjoying the original machines and for
 understanding precisely what they are doing.
 
-<img src="https://raw.githubusercontent.com/wiki/siriokds/GearSF7000-devel/gearsf7000-debugger.png" alt="GearSF7000 desktop emulator and debugger">
-
 ## Highlights
 
 - **Two base systems:** SG-1000 console and SC-3000 computer, each with its
@@ -37,6 +35,9 @@ understanding precisely what they are doing.
   SegaDOS filesystem inspection, WAV tapes and Sega BASIC program transfer.
 - **ASC16L games:** ASCII 16 Lite cartridges with one switchable 16 KiB ROM
   page and 16 KiB of cartridge RAM.
+- **Taiwanese SG-1000 II adapters:** separate Dahjee Type A and Type B maps
+  for MSX-derived cartridge releases that use an 8 KiB pass-through RAM
+  adapter.
 - **Machine audio beyond the PSG:** SN76489, optional AY-3-8910/YM2149,
   cassette-speaker monitoring, floppy activity audio and WAV/VGM recording.
 - **Time-travel development:** save states, a frame recorder, rewind,
@@ -50,7 +51,7 @@ understanding precisely what they are doing.
 
 Current packages are published on the
 [Releases page](https://github.com/siriokds/GearSF7000-devel/releases). Windows is
-available as a ready-to-run desktop package. macOS, Linux and BSD can be built
+available as a ready-to-run desktop package. Linux can be built
 from source using the instructions below.
 
 ## Hardware coverage
@@ -151,11 +152,14 @@ incorrect rounded divisor.
 ### Audio quality and synchronisation
 
 Audio is generated from emulated clock events and mixed from separate PSG,
-AY, floppy-drive and cassette-speaker paths.
+AY, YM2413, floppy-drive and cassette-speaker paths.
 
 - SN76489 and AY/YM2149 writes retain their emulated timing in a coherent
   Blip_Buffer time domain. The AY divider and output level are calibrated
   independently instead of being inferred from incompatible amplitude tables.
+- The AY renderer's internal timebase is twice the physical chip clock. The
+  shared 3.58 MHz CPU clock therefore already matches an expansion AY clocked
+  at 1.79 MHz; no second divide-by-two is applied to tone, noise or envelope.
 - PSG output is attenuated to represent the SC-3000 A/V output network;
   mechanical drive samples and cassette monitoring retain separate gain
   staging.
@@ -166,6 +170,10 @@ AY, floppy-drive and cassette-speaker paths.
   the following frame rather than discarded.
 - The optional AY expansion is disconnected cleanly when absent, including
   its resting DC component, preventing an artificial startup click.
+- The optional YM2413 FM Sound Unit/interface is latched at reset. Mark III
+  switching keeps PSG and FM mutually exclusive; the prepared Japanese SMS
+  personality supports its four PSG/FM combinations. FM register writes are
+  available to Debug Events, the debugger, MCP and VGM capture.
 - Drift between the host audio device and emulated crystal is corrected in
   the resampler instead of by changing machine speed. The scheduler filters
   the device's block-drain ripple, targets a half-full queue and reports fill,
@@ -229,8 +237,9 @@ Supported media include:
 ### Cartridge mappers and BASIC memory profiles
 
 The **Emulator > Mapper** menu provides **Auto (detect)** and **Manual** modes.
-Automatic selection uses known CRC information and mapper signatures, with a
-configurable fallback chosen from the same mapper list. Manual mode exposes
+Automatic selection uses known CRC information, mapper signatures and safe
+layout/code heuristics, with a configurable fallback chosen from the same
+mapper list. Manual mode exposes
 these configurations exactly as shown in the application:
 
 | Menu entry | Memory configuration |
@@ -238,13 +247,24 @@ these configurations exactly as shown in the application:
 | `Flat 64K (RAM)` | One writable 64 KiB address space; the loaded image is copied directly into RAM. |
 | `ASC16L` | 32 KiB fixed ROM, one switchable 16 KiB ROM page and 16 KiB RAM. |
 | `SC-3000 (32K RAM)` | ROM at `$0000-$7FFF` and 32 KiB RAM at `$8000-$FFFF`. |
-| `SC-3000 (16K cart + 2K internal)` | ROM at `$0000-$7FFF`, 16 KiB cartridge RAM at `$8000-$BFFF` and mirrored 2 KiB internal RAM at `$C000-$FFFF`. |
-| `SC-3000 (2K RAM)` | ROM at `$0000-$7FFF` and mirrored 2 KiB internal RAM above it. |
+| `SC-3000 (16K cart + console RAM)` | ROM at `$0000-$7FFF`, 16 KiB cartridge RAM at `$8000-$BFFF` and the console's mirrored RAM at `$C000-$FFFF`; the configuration the BASIC uses. |
+| `SC-3000 standard (console RAM at 8000)` | ROM at `$0000-$7FFF` and the console's RAM mirrored across `$8000-$FFFF`, the window the SC-3000's Mitec decodes (A15). |
 | `SG-1000 (16K RAM)` | ROM at `$0000-$BFFF` and 16 KiB RAM at `$C000-$FFFF`. |
-| `SG-1000 (1K RAM)` | ROM at `$0000-$BFFF` and mirrored 1 KiB RAM at `$C000-$FFFF`. |
+| `SG-1000 standard (console RAM)` | ROM at `$0000-$BFFF` and the console's RAM mirrored at `$C000-$FFFF`. |
+| `SG-1000 Dahjee A (8K ext + console RAM)` | 8 KiB adapter RAM at `$2000-$3FFF`, cartridge ROM in the remaining space through `$BFFF`, and the console's mirrored RAM at `$C000-$FFFF`. |
+| `SG-1000 Dahjee B (8K at C000)` | Cartridge ROM at `$0000-$BFFF` and 8 KiB adapter RAM at `$C000-$DFFF`, mirrored at `$E000-$FFFF`. |
+| `SC-3000 Survivors Multicart (2MB)` | 2 MiB ROM in switchable 32 KiB blocks at `$0000-$7FFF`, with 32 KiB cartridge RAM at `$8000-$FFFF`. |
+| `SC-3000 Survivors Megacart (4MB)` | 4 MiB ROM in switchable 32 KiB blocks at `$0000-$7FFF`, with 32 KiB cartridge RAM at `$8000-$FFFF`. |
+| `SG-1000 Othello (2K cart RAM)` | Cartridge ROM around a mirrored 2 KiB cartridge-RAM window at `$8000-$9FFF`, plus the console's mirrored RAM at `$C000-$FFFF`; also used by Hei Bai Qi. |
+| `SG-1000 The Castle (8K cart + console RAM)` | 32 KiB ROM at `$0000-$7FFF`, 8 KiB cartridge RAM at `$8000-$9FFF` mirrored to `$BFFF`, and the console's mirrored RAM at `$C000-$FFFF`. |
+| `SG-1000 Sega 315-5208 (console RAM)` | Late SG-1000-compatible cartridge with Sega's 16 KiB paging controller and no RAM of its own: `$C000-$FFFF` is the console's RAM (1 KiB SG-1000, 2 KiB SC-3000, 8 KiB Mark III); used by the 128 KiB Loretta no Shouzou. |
+| `SG-1000 Sega 315-5208 + Dahjee B (8K)` | The same ROM paging with a Dahjee B's 8 KiB at `$C000-$DFFF` (mirrored to `$FFFF`) in place of the console's RAM; what an unidentified "TMR SEGA" image gets on the libretro core. |
 
 These profiles cover cartridge games as well as the memory arrangements used
-by the supported BASIC environments.
+by the supported BASIC environments. "Console RAM" is the selected model's own
+work RAM: 1 KiB on the SG-1000, 2 KiB on the SC-3000, 8 KiB on the Mark III
+and Master System. Profiles that leave it out (32K, ASC16L, Survivors, Dahjee
+B, Flat 64K) are those whose cartridge switches it off through slot pin B3.
 
 Games using the **ASC16L (ASCII 16 Lite)** mapper can be launched directly.
 Its switchable page occupies `$8000-$BFFF`, while its 16 KiB RAM occupies
@@ -257,16 +277,55 @@ ASC16L can also be selected explicitly for images without the signature. The
 selected bank is visible to the debugger and is preserved in save states and
 recorder snapshots.
 
+The Dahjee RAM interface plugs into the SG-1000 II cartridge slot and provides
+a pass-through slot for the game cartridge. The emulator therefore keeps the
+software in SG-1000 mode and applies the adapter's address decoding around the
+cartridge. Type A retains both the adapter's 8 KiB RAM and the console's 1 KiB
+internal RAM. Type B reproduces the 8 KiB work-RAM layout also seen by the
+software on a Mark III/Master System while retaining the SG-1000 video, I/O
+and machine configuration. These releases can consequently remain correctly
+identified as `.sg` images.
+
+Known Dahjee and Jumbo releases are selected by CRC. Unknown revisions can be
+identified in Auto mode from the reserved `$2000-$3FFF` image window and the
+Z80 program's absolute stores to the Type A or Type B RAM ranges. Manual mode
+always uses the profile selected by the user.
+
+The **SC-3000 Survivors MkII Multicart** and **Megacart** use separate bank
+decoders selected through the cartridge's `$E0-$FF` I/O range. Automatic
+selection recognises the 2 MiB and 4 MiB image formats and known released
+revisions. The active 32 KiB ROM block, the bank latch and both 16 KiB halves
+of cartridge RAM are represented in the debugger and preserved in save
+states. The memory editor splits the active ROM and RAM into four 16 KiB
+views, keeping multi-megabyte images practical to inspect.
+
+**Loretta no Shouzou** uses an SG-1000-specific arrangement of Sega's
+`315-5208` paging chip. ROM remains fixed at `$0000-$7FFF`; writes to `$FFFF`
+select the 16 KiB page visible at `$8000-$BFFF`. The game does not initialize
+the later SMS control and first-two-page registers at `$FFFC-$FFFE`, so this
+profile leaves both lower regions fixed, exposes no protected 1 KiB ROM area
+and does not add mapper-controlled cartridge RAM. The board (171-5363-01)
+carries only the mapper and the ROM and leaves B3 alone, so `$C000-$FFFF` is
+the console's own RAM, sized by the selected model, and the `$FFFF` page write
+also lands in it. The game clears and uses `$C000-$C3FF` with its stack at
+`$C3F0`, so it runs on 1, 2 and 8 KiB boards alike.
+GearSF7000 retains the TMS9918 video modes and palette and SN76489 audio for
+this profile. The known 128 KiB dump is selected by CRC and is accepted with
+either its `.sg` classification or its commonly used `.sms` extension; the
+filename never switches the emulator to SMS hardware. Manual mode makes the
+profile available for development images without forcing it on arbitrary SMS
+files.
+
 ## Desktop emulator
 
 The standalone application is intended both as a conventional emulator and as
 a precise hardware workbench.
 
-- Native desktop targets for Windows, macOS, Linux and BSD.
+- Native desktop targets for Windows and Linux.
 - SDL3 desktop runtime and SDL GPU renderer.
 - Dear ImGui interface with docking and multi-viewport support in development
   builds.
-- Native file dialogs: AppKit on macOS and GTK3 on Linux.
+- Native file dialogs: Win32 on Windows and GTK3 on Linux.
 - Drag and drop, recent-media lists, command-line media loading and optional
   portable mode.
 - Save-state slots, state files, screenshots and fast-forward controls.
@@ -275,7 +334,7 @@ a precise hardware workbench.
 - User-selectable post-processing with Bilinear, Advanced Scaling and CRT
   (Lottes). CRT controls include scanline shape, phosphor-mask type and
   intensity, gamma, sharpness and dark-edge reconstruction.
-- Embedded shader bytecode for Vulkan/SPIR-V, macOS Metal and Windows
+- Embedded shader bytecode for Vulkan/SPIR-V, Metal and Windows
   Direct3D 12/DXIL; ordinary builds do not require shader-compilation tools.
 - Additional development passes for captured composite/S-Video decoding and
   consumer-TV experiments. These remain diagnostic tools and are not yet the
@@ -448,7 +507,6 @@ recorder, MCP server and optional hardware without duplicating the core.
 | `GEARSF7000_ENABLE_AY` | AY-3-8910 / YM2149 expansion audio. |
 | `GEARSF7000_ENABLE_SF7000` | SF-7000 hardware. |
 | `GEARSF7000_ENABLE_SR1000` | SR-1000 cassette recorder. |
-| `GEARSF7000_ENABLE_SP400` | SP-400 build hook for future support. |
 | `GEARSF7000_PRODUCT_SC3000` | Reduced cartridge-computer target. |
 
 ## Building from source
@@ -464,45 +522,21 @@ builds do not reuse incompatible objects.
    `platforms/windows/dependencies/SDL3/`.
 3. Open `platforms/windows/GearSF7000.sln` and build the desired target.
 
-### macOS
-
-Install SDL3, then build the local application bundle:
-
-```sh
-brew install sdl3
-platforms/macos/build.sh
-```
-
-The resulting `platforms/macos/GearSF7000.app` includes its keyboard image
-and font resources. Add `--no-mcp` to build without the embedded debugging
-server.
-
 ### Linux
 
-On Ubuntu or Debian:
+`USE_PICOSMSVDP_CORE=0` builds without the external Master System video
+core, which is not part of this repository. On Ubuntu or Debian:
 
 ```sh
 sudo apt install build-essential libsdl3-dev libgtk-3-dev
-make -C platforms/linux
+make -C platforms/linux USE_PICOSMSVDP_CORE=0
 ```
 
 The reduced SC-3000 cartridge-computer target is available with:
 
 ```sh
-make -C platforms/linux computer
+make -C platforms/linux computer USE_PICOSMSVDP_CORE=0
 ```
-
-### BSD
-
-Install SDL3, GTK3, a C++ compiler and GNU Make through the package manager,
-then build from `platforms/bsd` with `gmake`.
-
-### Libretro and OpenEmu
-
-Dedicated front ends are present under `platforms/libretro` and
-`platforms/openemu`. The OpenEmu core is a reduced SC-3000/SG-1000 target;
-see [its platform notes](platforms/openemu/README.md) for its media support
-and OpenEmu SDK build instructions.
 
 ## Technical foundations and credits
 
@@ -540,8 +574,9 @@ licence files and notices remain applicable to the corresponding components.
 | [dr_libs](https://github.com/mackron/dr_libs) | David Reid | MP3 decoding through `dr_mp3`. |
 | [stb](https://github.com/nothings/stb) | Sean Barrett and contributors | Image loading and writing. |
 | [SDL_GameControllerDB](https://github.com/gabomdq/SDL_GameControllerDB) | Community contributors | Bundled controller mapping database. |
-| [Libretro](https://www.libretro.com/) | Libretro contributors | Libretro front-end interface. |
-| [OpenEmu](https://openemu.org/) | OpenEmu contributors | Native macOS front-end interface. |
+| [MAME](https://github.com/mamedev/mame) | MAME contributors | Reference implementation and software-list metadata used to verify Taiwanese RAM adapters and SC-3000 Survivors cartridge decoding. |
+| [BizHawk](https://github.com/TASEmulators/BizHawk) and [SMS Power! preservation research](https://www.smspower.org/forums/13579-Taiwan8KBRAMAdapterForPlayingMSXPortsOnSG1000II) | BizHawk contributors and SMS Power! community | Cross-reference for the two Taiwanese SG-1000 II pass-through RAM layouts. |
+| [SMS Power! Loretta research](https://www.smspower.org/forums/18914-LorettaNoShouzou) and [mapper documentation](https://www.smspower.org/Development/MapperPinouts#x3155208) | SMS Power! community | Cartridge PCB and Sega 315-5208 identification for Loretta no Shouzou. |
 
 Bundled fonts retain their own licences and authorship: Iosevka by Renzhi Li,
 IBM Plex by IBM, Roboto and Material Icons by Google, and GNU Unifont. The

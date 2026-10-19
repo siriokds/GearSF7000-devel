@@ -4,19 +4,37 @@
 #include <cstring>
 #include <limits>
 #include <sstream>
+#include <utility>
 #include "SaveStateStream.h"
 
 namespace
 {
-constexpr std::uint16_t kSF7000StateVersion = 1;
+constexpr std::uint16_t kSF7000StateVersion = 2;
 }
 
 SF7000::SF7000(Memory* pMemory, Audio* pAudio)
+	: fdc(NEC765DebugConfiguration{
+		"event.sc3000.sf7000.fdc",
+		"event.sc3000.sf7000", "uPD765 FDC", 0xE0}),
+	drive(0, pMemory, FloppyDriveDebugConfiguration{
+		"event.sc3000.sf7000.drive0",
+		"event.sc3000.sf7000", "SF-7000 Drive"}),
+	m_parallelPrinterPort(pMemory)
 {
 	m_pMemory = pMemory;
+	m_pAudio = pAudio;
+	m_usart.ConfigureDebug({"event.sc3000.sf7000.usart",
+		"event.sc3000.sf7000", "8251 USART", 0xE8});
 
-	fdc = nec765Create();
 	nec765SetAudio(fdc, pAudio);
+	Intel8255DebugConfiguration ppiDebug;
+	ppiDebug.key = "event.sc3000.sf7000.ppi2";
+	ppiDebug.parentKey = "event.sc3000.sf7000";
+	ppiDebug.name = "SF-7000 PPI2";
+	ppiDebug.ioPortBase = 0xE4;
+	ppiDebug.hasIoPorts = true;
+	m_ppi = std::make_unique<Intel8255>(static_cast<IIntel8255Pins&>(*this),
+		std::move(ppiDebug));
 
 	Reset(false);
 
@@ -26,8 +44,17 @@ SF7000::SF7000(Memory* pMemory, Audio* pAudio)
 
 SF7000::~SF7000()
 {
-	if (fdc)
-		nec765Destroy(fdc);
+}
+
+DebugDeviceDefinition SF7000::DescribeDebugDevice() const
+{
+	DebugDeviceDefinition device;
+	device.key = "event.sc3000.sf7000";
+	device.parentKey = "event.sc3000";
+	device.typeKey = "sega.sf7000";
+	device.name = "SF-7000 Control Station";
+	device.traits = DebugDeviceTrait_External;
+	return device;
 }
 
 void SF7000::Init(Audio* pAudio)
@@ -109,6 +136,7 @@ void SF7000::SetMotorOn(bool motorOn)
 	// Keeping the two separate makes FDC/index timing correct with audio disabled
 	// or when the motor sound asset is unavailable.
 	DiskMotorOn = motorOn;
+	drive.Observe(DiskMotorOn, FDCIndexActive());
 
 	if (m_pAudio == nullptr || m_pAudio->GetWavPlayer() == nullptr)
 		return;
@@ -138,8 +166,8 @@ void SF7000::SetPortE6(uint8_t value)
 	FDC_Synchronize();
 
 	const uint8_t oldPortE6 = Port_E6;
-	bool oldMotor = (Port_E6 & 0x02) == 0;
 	const bool oldFdcReset = (Port_E6 & 0x08) != 0;
+	const bool oldTerminalCount = (Port_E6 & 0x04) != 0;
 
 	Port_E6 = value;
 	if (oldPortE6 != Port_E6)
@@ -151,8 +179,10 @@ void SF7000::SetPortE6(uint8_t value)
 
 	bool motorOn = (Port_E6 & 0x02) == 0;
 	const bool fdcReset = (Port_E6 & 0x08) != 0;
+	const bool terminalCount = (Port_E6 & 0x04) != 0;
 
 #ifdef _DEBUG
+	const bool oldMotor = (oldPortE6 & 0x02) == 0;
 	printf("[SF-7000] DISK_MOTOR %d, OLDREG_MOTOR %d, NEWREG_MOTOR: %d, DiskPresent: %d, DiskEnabled: %d\n", 
 		DiskMotorOn, oldMotor, motorOn, nec765IsDiskPresent(fdc), nec765IsDiskEnabled(fdc));
 #endif
@@ -171,6 +201,8 @@ void SF7000::SetPortE6(uint8_t value)
 	//}
 
 	SetMotorOn(motorOn);
+	if (oldTerminalCount != terminalCount)
+		nec765SetTCSignal(fdc, terminalCount ? 1 : 0);
 
 	// PC3 controls the FDC reset line.  Only its assertion resets the
 	// controller; an unrelated PPI write must never teleport the head.
@@ -199,6 +231,7 @@ void SF7000::Reset(bool running, uint32_t clockRate,
 	m_fdcPendingClocks = 0;
 	m_usartPendingClocks = 0;
 	m_usartReqPending.store(false, std::memory_order_relaxed);
+	m_parallelPrinterPort.Reset();
 
 	//FDC765_Init();
 	nec765SetClockRate(fdc, fdcClockHz);
@@ -219,7 +252,8 @@ void SF7000::Reset(bool running, uint32_t clockRate,
 		DiskMotorOn = false;
 	}
 
-	Port_E7 = 0x00;
+	m_ppi->Reset();
+	Port_E7 = m_ppi->GetSnapshot().control;
 	Port_E8 = 0x00;
 	Port_E9 = 0x00;
 
@@ -355,6 +389,8 @@ void SF7000::TickFDC(uint64_t clockCycles)
 	// sector/format completion, or an INDEX edge. Ordinary instruction-sized
 	// blocks remain accumulated and are synchronized on the next FDC access.
 	const bool indexChanged = oldIndex != ((Port_E4 & 0x04) != 0);
+	if (indexChanged)
+		drive.Observe(DiskMotorOn, FDCIndexActive());
 	if (indexChanged ||
 		(nextFdcEvent != UINT64_MAX && m_fdcPendingClocks >= nextFdcEvent))
 	{
@@ -393,6 +429,7 @@ void SF7000::FDC765_DiskChanged(int drive)
 	// FDC raw-bit clock when media is inserted.
 	clocksIndex = 0;
 	nec765DiskChanged(fdc, drive);
+	this->drive.Observe(DiskMotorOn, FDCIndexActive());
 
 }
 
@@ -403,12 +440,14 @@ void SF7000::FDC765_DiskEject(int drive)
 	SetMotorOn(false);
 
 	nec765DiskChanged(fdc, drive);
+	this->drive.Observe(DiskMotorOn, FDCIndexActive());
 
 }
 
 void	SF7000::FDC765_SetReadOnly(int, bool readonly)
 {
 	nec765SetReadOnly(fdc, readonly);
+	drive.Observe(DiskMotorOn, FDCIndexActive());
 }
 
 void SF7000::GetFDCDebugInfo(NEC765DebugInfo* info) const
@@ -457,7 +496,7 @@ bool SF7000::FDCIndexActive() const
 //======================
 //E4: FDC/Printer control
 // PA0 = FDC INT : INT signal from input from FDC
-// PA1 = BUSY from Centronics printer (Not used)
+// PA1 = BUSY from Centronics printer
 // PA2 = Pin 17 (INDEX) of the FDC
 uint8_t	SF7000::PPI_ReadPortA()
 {
@@ -483,14 +522,14 @@ uint8_t	SF7000::PPI_ReadPortA()
 	//	this->Port_E4 &= 0xFB;
 	//}
 
-	return this->Port_E4 | nec765GetInt(fdc);// | FDC765_GetIntSignal();
+	return PPI_ReadRegister(0);
 }
 
 /* Printer data output (parallel) */
 // Data outputs to Centronics printer
 uint8_t	SF7000::PPI_ReadPortB()
 {
-	return this->Port_E5;
+	return PPI_ReadRegister(1);
 }
 
 
@@ -506,13 +545,13 @@ uint8_t	SF7000::PPI_ReadPortB()
 //PC7 = /STROBE to Centronics printer
 uint8_t	SF7000::PPI_ReadPortC()
 {
-	return this->Port_E6;
+	return PPI_ReadRegister(2);
 }
 
 /* Control Register */
 uint8_t	SF7000::PPI_ReadControl()
 {
-	return this->Port_E7;
+	return PPI_ReadRegister(3);
 }
 
 bool SF7000::IPL_Enabled() { return ((this->Port_E6 & 0x40) == 0) ? true : false; }
@@ -520,121 +559,96 @@ bool SF7000::IPL_Enabled() { return ((this->Port_E6 & 0x40) == 0) ? true : false
 /* E6: FDC/Printer control */
 int		SF7000::PPI_WritePortC(uint8_t val)
 {
-	int retval = 0;
-
-	SetPortE6(val);
-
-#ifdef _DEBUG
-	printf("*** [SF-7000]: Write to Port C\n");
-
-	printf("\t  /INUSE    => %d\n", val & 1);
-	printf("\t  /MOTOR ON => %d\n", val & 2);
-	printf("\t   TC       => %d\n", val & 4);
-	printf("\t   RESET    => %d\n", val & 8);
-	printf("\t  /RONSEL   => %d\n", val & 64);
-	printf("\t  /STROBE   => %d\n\n", val & 128);
-#endif
-
-	return retval;
+	PPI_WriteRegister(2, val);
+	return 0;
 }
 
 
 /* E7: FDC/Printer control */
 int		SF7000::PPI_WriteControl(uint8_t val)
 {
-	int retval = 0;
+	PPI_WriteRegister(3, val);
+	return 0;
+}
 
-	const uint8_t oldPortE7 = Port_E7;
-	Port_E7 = val;
-	if (oldPortE7 != Port_E7)
-		m_pMemory->CheckPPIStateChange(0x00E7, oldPortE7, Port_E7);
-	if (!(val & 0x80))
-	{
-		uint8_t bitVal = val & 1;
-		uint8_t bitIndex = (val >> 1) & 7;
-		uint8_t mask = 1 << bitIndex;
+uint8_t SF7000::PPI_ReadRegister(uint8_t index, uint64_t timestamp)
+{
+	return m_ppi->ReadRegister(index, timestamp);
+}
 
-		if (bitVal)		SetPortE6(Port_E6 | mask);
-		else			SetPortE6(Port_E6 & ~mask);
+void SF7000::PPI_WriteRegister(uint8_t index, uint8_t value,
+	uint64_t timestamp)
+{
+	const Intel8255Snapshot before = m_ppi->GetSnapshot();
+	m_ppi->WriteRegister(index, value, timestamp);
+	const Intel8255Snapshot after = m_ppi->GetSnapshot();
+	Port_E7 = after.control;
+	if ((index & 3) == 3 && before.control != after.control)
+		m_pMemory->CheckPPIStateChange(0x00E7, before.control, after.control);
+}
 
+Intel8255PinSample SF7000::ReadPortA(std::uint64_t timestamp)
+{
+	FDC_Synchronize();
+	const Intel8255PinSample busy = m_parallelPrinterPort.ReadBusy(timestamp);
+	return {
+		static_cast<uint8_t>((Port_E4 | nec765GetInt(fdc)) |
+			(busy.value & 0x02)),
+		static_cast<uint8_t>(0x05 | (busy.drivenMask & 0x02))
+	};
+}
 
+Intel8255PinSample SF7000::ReadPortB(std::uint64_t timestamp)
+{
+	return m_parallelPrinterPort.ReadData(timestamp);
+}
 
-		int a = 0;
+Intel8255PinSample SF7000::ReadPortC(std::uint64_t)
+{
+	return {Port_E6, 0x00};
+}
 
-		switch (bitIndex)
-		{
-			case 0:			// FDD /INUSE
-#ifdef _DEBUG
-				printf("FDD: /INUSE => %d\n", bitVal);
-#endif
-				break;
+Intel8255PinSample SF7000::PeekPortA(std::uint64_t timestamp) const
+{
+	const Intel8255PinSample busy = m_parallelPrinterPort.PeekBusy(timestamp);
+	return {
+		static_cast<uint8_t>((Port_E4 | nec765GetInt(fdc)) |
+			(busy.value & 0x02)),
+		static_cast<uint8_t>(0x05 | (busy.drivenMask & 0x02))
+	};
+}
 
-		case 1:				// FDD /MOTORON
-				a = 0;
-#ifdef _DEBUG
-				printf("FDD: /MOTOR ON => %d\n", bitVal);
-#endif
-				break;
+Intel8255PinSample SF7000::PeekPortB(std::uint64_t timestamp) const
+{
+	return m_parallelPrinterPort.PeekData(timestamp);
+}
 
+Intel8255PinSample SF7000::PeekPortC(std::uint64_t) const
+{
+	return {Port_E6, 0x00};
+}
 
+void SF7000::DrivePortA(std::uint8_t value, std::uint8_t mask,
+	std::uint64_t timestamp)
+{
+	Port_E4 = static_cast<uint8_t>((Port_E4 & ~mask) | (value & mask));
+	m_parallelPrinterPort.DriveBusyFromPPI(value, mask, timestamp);
+}
 
-			/*
+void SF7000::DrivePortB(std::uint8_t value, std::uint8_t mask,
+	std::uint64_t timestamp)
+{
+	Port_E5 = static_cast<uint8_t>((Port_E5 & ~mask) | (value & mask));
+	m_parallelPrinterPort.DriveData(value, mask, timestamp);
+}
 
-			TC = Terminal Count
-
-			This signal indicates to FDC765 that data transfer is complete.
-			If DMA operational mode is selected for command execution, TC will be qualified by DACK , but not in the programmed I/O execution.
-			In PC AT or Special mode, qualification by DACK requires the Operations mode, qualification by DACK requires the operations
-			resister signal DMAEN to be logically true.
-
-			Note also that in PC AT mode, TC will be qualified by DACK, whether in DMA or non-DMA host operation. programmed I/O in PC
-			AT mode will cause an abnormal termination error at the completion of a command.
-			*/
-
-		case 2:			// FDD TC
-#ifdef _DEBUG
-
-			if (bitVal) //printf("FDD: TC\n\n");
-			//				printf("\nFDD: TC => %d\t", bitVal);
-							//if (!bitVal) printf("\n");
-#endif
-			{
-				retval = 1;
-				//FDC765_SetTCSignal(bitVal);
-				nec765SetTCSignal(fdc, bitVal);
-			}
-			break;
-
-		case 3:			// FDD RESET (handled on the PC3 edge by SetPortE6)
-#ifdef _DEBUG
-			printf("FDD: RESET => %d\n", bitVal);
-#endif
-
-			break;
-		case 6:			// /RONSEL
-#ifdef _DEBUG
-			printf("/RONSEL => %d\n", bitVal);
-#endif
-			break;
-	
-		case 7:			// /STROBE
-#ifdef _DEBUG
-			printf("/STROBE => %d\n", bitVal);
-#endif
-			break;
-
-
-
-		}
-	}
-	else
-	{
-#ifdef _DEBUG
-		printf("\n*** [SF-7000 PPI]: Control => $%02X\n", val);
-#endif
-	}
-
-	return retval;
+void SF7000::DrivePortC(std::uint8_t value, std::uint8_t mask,
+	std::uint64_t timestamp)
+{
+	m_parallelPrinterPort.DriveStrobe(value, mask, timestamp);
+	if (mask == 0) return;
+	SetPortE6(static_cast<uint8_t>((Port_E6 & ~mask) | (value & mask)));
+	m_pMemory->SetIPLRomDisabled(!IPL_Enabled());
 }
 
 
@@ -746,6 +760,7 @@ void SF7000::SaveState(std::ostream& stream)
     StateWriter w(stream);
 
     w.U16(kSF7000StateVersion);
+    m_ppi->SaveState(stream);
 
     // 8255 #2. Port E6 bit 6 is the IPL overlay, so these four bytes also
     // decide what the CPU sees in the bottom of the address space.
@@ -787,7 +802,11 @@ bool SF7000::LoadState(std::istream& stream)
 {
     StateReader r(stream);
 
-    if (r.U16() != kSF7000StateVersion)
+    const std::uint16_t version = r.U16();
+    if (version != 1 && version != kSF7000StateVersion)
+        return false;
+
+    if (version >= 2 && !m_ppi->LoadState(stream))
         return false;
 
     const uint8_t e4 = r.U8();
@@ -817,6 +836,18 @@ bool SF7000::LoadState(std::istream& stream)
         r.Bytes(&fdcPayload[0], fdcBytes);
         if (!r.Ok())
             return false;
+    }
+
+    if (version == 1)
+    {
+        // Version 1 stored only the four visible legacy bytes. Reconstruct
+        // the Mode 0 state before restoring the FDC payload, so any wiring
+        // edges produced by the conversion cannot alter the loaded disk.
+        m_ppi->Reset();
+        if (e7 & 0x80) m_ppi->WriteRegister(3, e7);
+        m_ppi->WriteRegister(0, e4);
+        m_ppi->WriteRegister(1, e5);
+        m_ppi->WriteRegister(2, e6);
     }
 
     Port_E4 = e4;

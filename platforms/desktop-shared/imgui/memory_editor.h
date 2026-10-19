@@ -85,6 +85,7 @@ public:
     ~MemEditor();
 
     void Reset(const char* title, uint8_t* mem_data, int mem_size, int base_display_addr = 0x0000, int word = 1);
+    void Invalidate();
     void Draw(bool ascii = true, bool preview = true, bool options = true, bool cursors = true);
     void DrawWatchWindow();
     void DrawSearchWindow();

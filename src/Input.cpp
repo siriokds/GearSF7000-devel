@@ -38,6 +38,13 @@ void Input::Reset()
     m_iSpinnerRel[0] = m_iSpinnerRel[1] = 0;
 }
 
+void Input::ReleaseAll()
+{
+    m_Gamepad[0] = m_Gamepad[1] = 0xFF;
+    m_Keypad[0] = m_Keypad[1] = 0xFF;
+    m_iSpinnerRel[0] = m_iSpinnerRel[1] = 0;
+}
+
 void Input::SetInputSegment(InputSegments segment)
 {
     m_Segment = segment;

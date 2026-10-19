@@ -12,7 +12,7 @@
 
 #include "cpu/CpuDebugContext.h"
 #include "cpu/CpuInterruptLines.h"
-#include "cpu/CpuStateAccess.h"
+#include "cpu/ICpuStateAccess.h"
 
 class IOPorts;
 class CpuInstructionObserver;
@@ -21,7 +21,7 @@ class CpuInstructionObserver;
 // encoding and legacy breakpoint storage intentionally remain separate.
 class CpuExecution : public CpuDebugContext,
                      public CpuInterruptLines,
-                     public CpuStateAccess
+                     public virtual ICpuStateAccess
 {
 public:
     virtual ~CpuExecution() = default;

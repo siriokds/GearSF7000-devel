@@ -9,6 +9,7 @@
 #define GEARSF7000_CPU_STATE_ACCESS_H
 
 #include <cstdint>
+#include "cpu/ICpuStateAccess.h"
 
 enum class CpuRegister
 {
@@ -43,10 +44,15 @@ struct CpuStateSnapshot
     int interruptMode = 0;
 };
 
-class CpuStateAccess
+class CpuStateAccess : public virtual ICpuStateAccess
 {
 public:
     virtual ~CpuStateAccess() = default;
+
+    std::uint16_t GetProgramCounter() const override
+    {
+        return GetCpuStateSnapshot().pc;
+    }
 
     virtual CpuStateSnapshot GetCpuStateSnapshot() const = 0;
     virtual bool SetCpuRegister(CpuRegister reg, std::uint16_t value) = 0;

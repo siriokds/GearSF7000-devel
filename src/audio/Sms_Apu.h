@@ -5,11 +5,25 @@
 #define SMS_APU_H
 
 #include "Sms_Oscs.h"
+#include "../IDebugEventProvider.h"
 
 #include <iosfwd>
 
-class Sms_Apu {
+class Sms_Apu : public IDebugEventProvider {
 public:
+	enum class Variant : unsigned char
+	{
+		SN76489AN,
+		SegaIntegrated
+	};
+
+	struct NoiseConfiguration
+	{
+		int lfsrWidth;
+		unsigned whiteNoiseTapMask;
+	};
+
+	DebugDeviceDefinition DescribeDebugDevice() const override;
 	struct WriteInfo
 	{
 		unsigned char rawData = 0;
@@ -39,9 +53,25 @@ public:
 	
 	// Reset oscillators and internal state
 	void reset( unsigned noise_feedback = 0, int noise_width = 0 );
+	// Hardware personality. SG-1000/SC-3000 use the discrete TI chip; SMS
+	// uses Sega's VDP-integrated derivative. Tone and attenuation logic are
+	// shared, while the noise LFSR differs.
+	void SetVariant( Variant variant ) { variant_ = variant; }
+	Variant GetVariant() const { return variant_; }
+	NoiseConfiguration GetNoiseConfiguration() const;
+	const char* GetVariantName() const;
+	const char* GetVariantKey() const;
 	
-	// Write GameGear left/right assignment byte
+	// Write GameGear left/right assignment byte. Ignored unless the chip has it: the
+	// Game Gear's PSG does, the SMS's and the discrete SN76489AN do not. Which one
+	// this is the machine decides once, like the variant; the port that reaches it
+	// is the system bus's to decode.
 	void write_ggstereo( blip_time_t, int );
+	void SetGgStereoEnabled( bool enabled ) { ggstereo_enabled = enabled; }
+	bool IsGgStereoEnabled() const { return ggstereo_enabled; }
+	// The byte last accepted by write_ggstereo(); $FF (every channel on both sides)
+	// after reset.
+	unsigned int GetGgStereo() const { return ggstereo_save; }
 	
 	// Write to data port
 	void write_data( blip_time_t, int );
@@ -110,11 +140,13 @@ private:
 	Sms_Noise   noise;
 	unsigned    noise_feedback;
 	unsigned    looped_feedback;
+	Variant     variant_ = Variant::SN76489AN;
 
 	bool debug_enabled;
 	Blip_Buffer debug_bufs[osc_count];
 
 	unsigned int ggstereo_save;
+	bool ggstereo_enabled = false; // a machine setting: reset does not touch it
 	
 	void run_until( blip_time_t );
 };

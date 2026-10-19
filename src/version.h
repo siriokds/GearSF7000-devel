@@ -1,0 +1,14 @@
+/*
+ * GearSF7000 release version
+ * Copyright (C) 2026 Saverio Russo
+ */
+
+#ifndef GEARSF7000_VERSION_H
+#define GEARSF7000_VERSION_H
+
+#define GEARSF7000_VERSION_MAJOR 2
+#define GEARSF7000_VERSION_MINOR 0
+#define GEARSF7000_VERSION_PATCH 0
+#define GEARSF7000_VERSION "2.0.0"
+
+#endif /* GEARSF7000_VERSION_H */

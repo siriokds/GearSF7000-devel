@@ -10,23 +10,27 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "TMS9918RasterTiming.h"
+enum class GC_CrtSignalOutput : std::uint8_t
+{
+    Composite,
+    Component
+};
 
 // Optional per-line output for a real signal-level CRT simulator (e.g. a
 // bridge to Clock Signal's Outputs::CRT::CRT), kept entirely separate from
-// the normal palette-index -> RGB rendering path in Video.cpp. Video calls
-// these only when a sink is attached (see Video::AttachCrtSignalSink);
+// the normal palette-index -> RGB rendering path in TMS99xx.cpp. Video calls
+// these only when a sink is attached (see TMS99xx::AttachCrtSignalSink);
 // with no sink attached the calls never happen, so this costs nothing when
 // unused.
 //
-// The sequence per scanline mirrors TMS9918RasterTiming::HorizontalRegion
+// The sequence per scanline mirrors TMS99xxRasterTiming::HorizontalRegion
 // in dot order, the same for both signal types: HSync -> LeftBlankA ->
 // ColorBurst -> LeftBlankB -> LeftBorder -> Active -> RightBorder ->
 // RightBlank. Border dots are real displayed pixels (the backdrop color)
 // and are reported through OutputData like the active region, not as
 // blanking.
 //
-// Durations are in TMS9918 dots (TMS9918RasterTiming::DotsPerLine == 342
+// Durations are in TMS9918 dots (TMS99xxRasterTiming::DotsPerLine == 342
 // dots per line) - a concrete sink converts to whatever cycle unit its own
 // signal-level model expects, that conversion is not this interface's
 // concern.
@@ -36,12 +40,12 @@ public:
     virtual ~ICrtSignalSink() = default;
 
     // Called once, whenever the signal type or region (PAL/NTSC) changes -
-    // not per line. Mirrors TMS9918RasterTiming::SignalOutput: composite
+    // not per line. Mirrors TMS99xxRasterTiming::SignalOutput: composite
     // (TMS9918A) has a color burst and no separate R-Y/B-Y outputs;
     // component (TMS9928A/TMS9929A) does not encode a burst into the same
     // signal the sink receives (see OutputColourBurst).
     virtual void ConfigureSignal(bool isPAL,
-        TMS9918RasterTiming::SignalOutput signalOutput) = 0;
+        GC_CrtSignalOutput signalOutput) = 0;
 
     // Sync pulse. Carries both kinds, distinguished only by duration -
     // there is deliberately no separate vertical-sync call:

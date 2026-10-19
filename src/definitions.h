@@ -29,6 +29,7 @@
 #include <fstream>
 #include <sstream>
 #include "DiagnosticLog.h"
+#include "version.h"
 
 #ifndef EMULATOR_BUILD
 #define EMULATOR_BUILD "undefined"
@@ -49,16 +50,22 @@
 #ifndef GEARSF7000_ENABLE_AY
 #define GEARSF7000_ENABLE_AY 1
 #endif
+
+#ifndef GEARSF7000_ENABLE_YM2413
+#define GEARSF7000_ENABLE_YM2413 1
+#endif
 #ifndef GEARSF7000_ENABLE_SF7000
 #define GEARSF7000_ENABLE_SF7000 1
 #endif
 #ifndef GEARSF7000_ENABLE_SR1000
 #define GEARSF7000_ENABLE_SR1000 1
 #endif
-#ifndef GEARSF7000_ENABLE_SP400
-#define GEARSF7000_ENABLE_SP400 1
+#ifndef GEARSF7000_ENABLE_PICO9918
+#define GEARSF7000_ENABLE_PICO9918 1
 #endif
-
+#ifndef GEARSF7000_USE_PICOSMSVDP_CORE
+#define GEARSF7000_USE_PICOSMSVDP_CORE 0
+#endif
 // SDL is a desktop frontend detail. Existing IDE projects keep the legacy
 // adapter; non-SDL frontends explicitly compile it out and inject input via
 // the joystick and keyboard-matrix API.
@@ -75,7 +82,6 @@
 #define GEARSF7000_TITLE "GearSF7000"
 #endif
 //#endif
-#define GEARSF7000_VERSION EMULATOR_BUILD
 #if GEARSF7000_PRODUCT_SC3000
 #define GEARSF7000_TITLE_ASCII "GearSC3000"
 #else
@@ -119,7 +125,6 @@
 //#define GEARSF7000_DISABLE_DISASSEMBLER
 
 #define MAX_ROM_SIZE    0x800000
-#define MAX_SRAM_SIZE   0x800   
 
 #define SafeDelete(pointer) if(pointer != NULL) {delete pointer; pointer = NULL;}
 #define SafeDeleteArray(pointer) if(pointer != NULL) {delete [] pointer; pointer = NULL;}
@@ -173,10 +178,10 @@ typedef void (*RamChangedCallback) (void);
 #define GC_RESOLUTION_HEIGHT_WITH_OVERSCAN 256
 #define GC_RESOLUTION_SMS_OVERSCAN_H_320_L 0
 #define GC_RESOLUTION_SMS_OVERSCAN_H_320_R 0
-#define GC_RESOLUTION_SMS_OVERSCAN_H_284_L 4
-#define GC_RESOLUTION_SMS_OVERSCAN_H_284_R 12
-#define GC_RESOLUTION_SMS_OVERSCAN_H_272_L 2
-#define GC_RESOLUTION_SMS_OVERSCAN_H_272_R 6
+#define GC_RESOLUTION_SMS_OVERSCAN_H_284_L 14
+#define GC_RESOLUTION_SMS_OVERSCAN_H_284_R 14
+#define GC_RESOLUTION_SMS_OVERSCAN_H_272_L 4
+#define GC_RESOLUTION_SMS_OVERSCAN_H_272_R 12
 #define GC_RESOLUTION_OVERSCAN_V 16
 #define GC_RESOLUTION_OVERSCAN_V_PAL 32
 
@@ -264,7 +269,16 @@ enum GC_Keys
     Key_Down = 0x12,
     Key_Left = 0x13,
     Key_Left_Button = 0x14,
-    Key_Right_Button = 0x15
+    Key_Right_Button = 0x15,
+    // A Mega Drive pad's buttons beyond B and C, which are Key_Left_Button and
+    // Key_Right_Button. Only a Master System port with a Mega Drive pad reads them.
+    Key_MD_A = 0x16,
+    Key_MD_Start = 0x17,
+    Key_MD_X = 0x18,
+    Key_MD_Y = 0x19,
+    Key_MD_Z = 0x1A,
+    Key_MD_Mode = 0x1B,
+    Key_GG_Start = 0x1C
 };
 
 enum GC_Controllers

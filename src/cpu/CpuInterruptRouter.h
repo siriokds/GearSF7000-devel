@@ -20,10 +20,16 @@ public:
         if (target == m_target)
             return;
         if (m_target)
+        {
             m_target->SetMaskableInterruptLine(false);
+            m_target->SetNonMaskableInterruptLevel(false);
+        }
         m_target = target;
         if (m_target)
+        {
             m_target->SetMaskableInterruptLine(m_intLine);
+            m_target->SetNonMaskableInterruptLevel(m_nmiLevel);
+        }
     }
 
     CpuInterruptLines* GetTarget() const
@@ -44,9 +50,17 @@ public:
             m_target->PulseNonMaskableInterrupt();
     }
 
+    void SetNonMaskableInterruptLevel(bool asserted) override
+    {
+        m_nmiLevel = asserted;
+        if (m_target)
+            m_target->SetNonMaskableInterruptLevel(asserted);
+    }
+
 private:
     CpuInterruptLines* m_target = nullptr;
     bool m_intLine = false;
+    bool m_nmiLevel = false;
 };
 
 #endif

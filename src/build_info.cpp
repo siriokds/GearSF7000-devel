@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include "build_info.h"
+#include "version.h"
 
 #ifndef EMULATOR_BUILD
 #define EMULATOR_BUILD "undefined"
@@ -77,6 +78,11 @@ void build_timestamp_once(void)
 
 const char* build_info_version(void)
 {
+    return GEARSF7000_VERSION;
+}
+
+const char* build_info_revision(void)
+{
     return EMULATOR_BUILD;
 }
 
@@ -91,7 +97,8 @@ const char* build_info_full(void)
     if (g_full[0] == 0)
     {
         build_timestamp_once();
-        snprintf(g_full, sizeof(g_full), "%s (%s)", EMULATOR_BUILD, g_timestamp);
+        snprintf(g_full, sizeof(g_full), "%s build %s (%s)",
+                 GEARSF7000_VERSION, EMULATOR_BUILD, g_timestamp);
     }
     return g_full;
 }

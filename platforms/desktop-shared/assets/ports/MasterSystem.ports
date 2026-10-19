@@ -1,0 +1,22 @@
+; Mark III / Master System port names for the Disassembler window, in
+; Emulicious' .ports format: <hex port> <name> [in|out]; without a
+; direction the name serves both. A file of the same name in a project's
+; folder takes its place.
+
+3E Port_MemoryControl out
+3F Port_IOPortControl out
+
+7E Port_VCounter in
+7F Port_HCounter in
+7F Port_PSG out
+
+BE Port_VDPData
+BF Port_VDPAddress out
+BF Port_VDPStatus in
+
+DC Port_IOPort1 in
+DD Port_IOPort2 in
+
+F0 Port_FMAddress out
+F1 Port_FMData out
+F2 Port_AudioControl

@@ -5,10 +5,11 @@
 #include <fstream>
 #include <queue>
 #include <iostream>
+#include "SC3000SerialPrinterPort.h"
 
 // SPI Mode 0 = CPOL=0, CPHA=0
 
-class SPITapePlayer {
+class SPITapePlayer : public ISegaSerialPrinterPeripheral {
 private:
     struct {
         uint8_t last_values[4] = { 0 };  // Ultimi 4 stati
@@ -39,6 +40,35 @@ private:
 
 public:
     SPITapePlayer() = default;
+
+    void Reset() override {
+        state = IDLE;
+        bit_counter = 0;
+        rx_byte = 0;
+        tx_byte = 0;
+        cs_active = false;
+        sclk_last = false;
+        mosi = false;
+        miso = false;
+        ready = tape_loaded && tape_position < tape_data.size();
+    }
+
+    Intel8255PinSample ReadPortB(std::uint64_t) override {
+        return {readPortB(), 0x60};
+    }
+
+    Intel8255PinSample PeekPortB(std::uint64_t) const override {
+        return {readPortB(), 0x60};
+    }
+
+    void DrivePortC(std::uint8_t value, std::uint8_t drivenMask,
+                    std::uint64_t) override {
+        // The experimental adapter is useful only while all three serial
+        // outputs are owned by the PPI. A high-impedance connector must not
+        // be interpreted as an SPI edge.
+        if ((drivenMask & 0xE0) == 0xE0)
+            writePortC(value);
+    }
 
     int GetBitCounter() const {
         return bit_counter;
@@ -149,7 +179,7 @@ public:
     }
 
     // Read port B (returns PB6=ready, PB5=miso)
-    uint8_t readPortB() {
+    uint8_t readPortB() const {
         uint8_t result = 0x00;
 
         if (!ready) result |= 0x40;  // PB6: 1=busy, 0=ready
@@ -250,6 +280,7 @@ private:
 //    }
 //
     void handleReceivedByte(uint8_t byte) {
+        (void)byte;
         // This could be used for save operations
         // For now, just log it
 //        if (debug_enabled) {

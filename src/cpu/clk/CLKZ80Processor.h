@@ -9,11 +9,15 @@
 #define GEARSF7000_CLK_Z80_PROCESSOR_H
 
 #include "cpu/CpuExecution.h"
+#include "cpu/CpuStateAccess.h"
 #include "cpu/CpuStatePersistence.h"
 #include "cpu/clk/GearSF7000BusHandler.h"
+#include "IDebugEventProvider.h"
 
 class CLKZ80Processor final : public CpuExecution,
-                             public CpuStatePersistence
+                             public CpuStateAccess,
+                             public CpuStatePersistence,
+                             public IDebugEventProvider
 {
 public:
     using Core = CPU::Z80::Processor<GearSF7000BusHandler, false, false>;
@@ -36,6 +40,7 @@ public:
                                      HalfCycles offset = HalfCycles(0));
     void SetMaskableInterruptLine(bool asserted) override;
     void PulseNonMaskableInterrupt() override;
+    void SetNonMaskableInterruptLevel(bool asserted) override;
     CpuStateSnapshot GetCpuStateSnapshot() const override;
     bool SetCpuRegister(CpuRegister reg, std::uint16_t value) override;
     std::uint64_t GetElapsedTStates() const override;
@@ -66,6 +71,9 @@ public:
     bool IsDebugPauseRequested() const;
     bool ConsumeDebugPauseRequest();
 
+    void SetDebugParentKey(const std::string& key);
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+
     GearSF7000BusHandler& GetBusHandler();
     const GearSF7000BusHandler& GetBusHandler() const;
     Core& GetCore();
@@ -80,6 +88,7 @@ private:
     CpuInstructionObserver* m_instructionObserver;
     bool m_debugPauseRequested;
     bool m_powerOnResetPending;
+    std::string m_debugParentKey = "event.sc3000";
 };
 
 #endif

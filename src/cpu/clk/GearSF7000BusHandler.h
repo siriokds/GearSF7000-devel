@@ -15,6 +15,7 @@
 
 class IOPorts;
 class Memory;
+class ISystemBus;
 
 // Receives objective elapsed time from the CLK Z80.  A future machine clock
 // implementation will fan this out to the VDP, PSG, tape, FDC and other
@@ -26,10 +27,8 @@ public:
     virtual void AdvanceZ80HalfCycles(std::uint64_t halfCycles) = 0;
 };
 
-// Connects CLK's partial Z80 machine cycles to the existing GearSF7000 memory
-// and I/O decoders.  It is compiled but not selected as the active CPU yet.
-// This makes the integration independently testable without changing current
-// emulator behaviour.
+// Connects the active CLK CPU to its motherboard. The Memory/IOPorts entry
+// points remain available for existing isolated CPU tests during migration.
 class GearSF7000BusHandler final : public CPU::Z80::BusHandler
 {
 public:
@@ -39,6 +38,8 @@ public:
     void Attach(Memory* memory, IOPorts* ioPorts,
                 GearSF7000BusClockSink* clockSink = nullptr);
     void SetIOPorts(IOPorts* ioPorts);
+    // Attach/detach only while execution is stopped; caller owns the board.
+    void SetSystemBus(ISystemBus* systemBus);
     void SetClockSink(GearSF7000BusClockSink* clockSink);
     void FlushClockSink();
     // Debugger-relative clock reset: first delivers pending physical time.
@@ -70,9 +71,11 @@ private:
         const CPU::Z80::PartialMachineCycle& cycle);
     HalfCycles GetTerminalIOWaitPenalty(
         const CPU::Z80::PartialMachineCycle& cycle) const;
+    HalfCycles GetM1WaitPenalty() const;
     void Advance(HalfCycles duration);
 
 private:
+    ISystemBus* m_systemBus;
     Memory* m_memory;
     IOPorts* m_ioPorts;
     GearSF7000BusClockSink* m_clockSink;

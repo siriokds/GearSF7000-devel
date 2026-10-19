@@ -11,6 +11,14 @@
 
 namespace CPU::Z80 {
 
+void GearSF7000StateAccess::ClearMachineInterruptRequests(ProcessorStorage& storage)
+{
+    const auto mask = ProcessorStorage::Interrupt::IRQ | ProcessorStorage::Interrupt::NMI;
+    storage.request_status_ &= ~mask;
+    storage.last_request_status_ &= ~mask;
+    storage.irq_line_ = storage.nmi_line_ = false;
+}
+
 namespace {
 
 constexpr std::uint32_t kMagic = 0x5A383053; // 'Z80S'

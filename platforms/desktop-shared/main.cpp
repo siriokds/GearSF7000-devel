@@ -57,7 +57,8 @@ int main(int argc, char* argv[])
         else if ((strcmp(argv[i], "-v") == 0) || (strcmp(argv[i], "--version") == 0))
         {
             printf("%s\n", GEARSF7000_TITLE_ASCII);
-            printf("Build: %s\n", build_info_version());
+            printf("Version: %s\n", build_info_version());
+            printf("Build: %s\n", build_info_revision());
             printf("Compiled: %s\n", build_info_timestamp());
             printf("Author: Saverio Russo\n");
             return 0;

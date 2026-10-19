@@ -26,7 +26,6 @@
 #include "Memory.h"
 #include "Cartridge.h"
 #include "Audio.h"
-#include "Video.h"
 #include "SR1000.h"
 
 #endif	/* GEARSF7000_H */

@@ -30,27 +30,53 @@ SOURCES_CXX := \
     $(DESKTOP_SRC_DIR)/implot/implot_items.cpp \
     $(AUDIO_SRC_DIR)/sound_queue.cpp \
     $(SRC_DIR)/Audio.cpp \
+    $(SRC_DIR)/audio/OneBitAudioDevice.cpp \
     $(SRC_DIR)/COM8251A.cpp \
     $(SRC_DIR)/BasicProgramLoader.cpp \
     $(SRC_DIR)/Cartridge.cpp \
+    $(SRC_DIR)/Intel8255.cpp \
+    $(SRC_DIR)/Z80CTC.cpp \
+    $(SRC_DIR)/ControllerDevice.cpp \
+    $(SRC_DIR)/MSXSlotMapper.cpp \
+    $(SRC_DIR)/M5MemoryMapper.cpp \
+    $(SRC_DIR)/M5Input.cpp \
+    $(SRC_DIR)/SystemBusM5.cpp \
+    $(SRC_DIR)/SystemBusMSX.cpp \
     $(SRC_DIR)/MachineIOPorts.cpp \
+    $(SRC_DIR)/SC3000SerialPrinterPort.cpp \
+    $(SRC_DIR)/SegaCassettePort.cpp \
+    $(SRC_DIR)/SystemBusColeco.cpp \
+    $(SRC_DIR)/SystemBusSC3000.cpp \
+    $(SRC_DIR)/SystemBusSG1000.cpp \
+    $(SRC_DIR)/SystemBusSMS.cpp \
+    $(SRC_DIR)/SystemBusGG.cpp \
+    $(SRC_DIR)/GameGearInternalBusHandler.cpp \
+    $(SRC_DIR)/TMS99xxDebugEvents.cpp \
+    $(SRC_DIR)/SN76489DebugEvents.cpp \
     $(SRC_DIR)/cpu/clk/CLKZ80Processor.cpp \
     $(SRC_DIR)/cpu/clk/CLKZ80StateAccess.cpp \
     $(SRC_DIR)/cpu/clk/GearSF7000ClockDomains.cpp \
     $(SRC_DIR)/cpu/clk/GearSF7000BusHandler.cpp \
     $(SRC_DIR)/DebugEvents.cpp \
+    $(SRC_DIR)/DebugEventCatalog.cpp \
     $(SRC_DIR)/DiagnosticLog.cpp \
     $(SRC_DIR)/GearSF7000Core.cpp \
+    $(SRC_DIR)/VideoDeviceFactory.cpp \
+    $(SRC_DIR)/VideoCatalog.cpp \
     $(SRC_DIR)/Input.cpp \
     $(SRC_DIR)/Led.cpp \
     $(SRC_DIR)/Memory.cpp \
     $(SRC_DIR)/SystemClock.cpp \
-    $(SRC_DIR)/TMS9918CpuAccessTiming.cpp \
-    $(SRC_DIR)/TMS9918VramSlotSchedule.cpp \
-    $(SRC_DIR)/TMS9918VramSequencer.cpp \
-    $(SRC_DIR)/Video.cpp \
+    $(SRC_DIR)/TMS99xxCpuAccessTiming.cpp \
+    $(SRC_DIR)/TMS99xxVramSlotSchedule.cpp \
+    $(SRC_DIR)/TMS99xxVramSequencer.cpp \
+    $(SRC_DIR)/TMS99xx.cpp \
+    $(SRC_DIR)/TMS9918B.cpp \
+    $(SRC_DIR)/tms9918b/TMS9918BAnalysis.cpp \
+    $(SRC_DIR)/tms9918b/TMS9918BCalendar.cpp \
     $(SRC_DIR)/WAVUtils.cpp \
-    $(SRC_DIR)/sk1100.cpp \
+    $(SRC_DIR)/SegaKeyboard.cpp \
+    $(SRC_DIR)/MSXKeyboard.cpp \
     $(SRC_DIR)/audio/Blip_Buffer.cpp \
     $(SRC_DIR)/audio/Effects_Buffer.cpp \
     $(SRC_DIR)/audio/Sms_Apu.cpp \
@@ -74,6 +100,11 @@ ENABLE_DEBUG_TOOLS ?= 1
 ifeq ($(ENABLE_DEBUG_TOOLS),1)
     SOURCES_CXX += \
         $(DESKTOP_SRC_DIR)/gui_debug.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_events.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_nametable.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_pattern_table.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_sprites.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_video_registers.cpp \
         $(DESKTOP_SRC_DIR)/gui_debug_memory.cpp \
         $(DESKTOP_SRC_DIR)/gui_debug_mem_import.cpp \
         $(DESKTOP_SRC_DIR)/gui_debug_audio.cpp \
@@ -81,7 +112,16 @@ ifeq ($(ENABLE_DEBUG_TOOLS),1)
         $(DESKTOP_SRC_DIR)/gui_debug_disassembler_export.cpp \
         $(DESKTOP_SRC_DIR)/gui_debug_rom_inspector.cpp \
         $(DESKTOP_SRC_DIR)/gui_debug_rewind.cpp \
-        $(SRC_DIR)/Z80Disassembler.cpp
+        $(SRC_DIR)/Z80Disassembler.cpp \
+        $(SRC_DIR)/RomMap.cpp \
+        $(SRC_DIR)/SourceListing.cpp \
+        $(SRC_DIR)/JumpTables.cpp \
+        $(SRC_DIR)/DeepSearch.cpp \
+        $(DESKTOP_SRC_DIR)/rom_map_project.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_rom_map.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_disassembler_view.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_deep_search.cpp \
+        $(DESKTOP_SRC_DIR)/gui_debug_palettes.cpp
 else
     SOURCES_CXX += $(DESKTOP_SRC_DIR)/gui_debug_stub.cpp
 endif
@@ -97,6 +137,18 @@ ifeq ($(ENABLE_MCP),1)
         $(DESKTOP_SRC_DIR)/mcp/mcp_server.cpp
 endif
 
+# Pico9918 is an optional video-device module. The full desktop product builds
+# it by default; reduced frontends opt out until they expose the device.
+ENABLE_PICO9918 ?= 1
+USE_PICOSMSVDP_CORE ?= 1
+ifeq ($(ENABLE_PICO9918),1)
+    SOURCES_C += $(SRC_DIR)/Pico9918LegacyCoreBridge.c
+    SOURCES_CXX += $(SRC_DIR)/Pico9918LegacyCore.cpp $(SRC_DIR)/Pico9918.cpp
+ifeq ($(USE_PICOSMSVDP_CORE),1)
+    SOURCES_CXX += $(SRC_DIR)/PicoSMSVdpCoreAdapter.cpp
+endif
+endif
+
 # The AY expansion is optional. Defined here rather than in Makefile.common
 # because that file is included after this one, and the source list has to know.
 # Makefile.common turns the same variable into -DGEARSF7000_ENABLE_AY. Keeping
@@ -105,6 +157,14 @@ endif
 ENABLE_AY ?= 1
 ifeq ($(ENABLE_AY),1)
     SOURCES_CXX += $(SRC_DIR)/audio/Ay_Apu.cpp
+endif
+
+# YM2413 FM Sound Unit. emu2413 is the MIT-licensed synthesis core vendored
+# from the same libgme checkout as the existing audio components.
+ENABLE_YM2413 ?= 1
+ifeq ($(ENABLE_YM2413),1)
+    SOURCES_C += $(SRC_DIR)/audio/emu2413.c
+    SOURCES_CXX += $(SRC_DIR)/audio/Ym2413.cpp
 endif
 
 # The SF-7000 floppy drive (FDC + disk image formats + its own disc explorer
@@ -116,6 +176,8 @@ ifeq ($(ENABLE_SF7000),1)
     SOURCES_CXX += \
         $(SRC_DIR)/NEC765.cpp \
         $(SRC_DIR)/SF7000.cpp \
+        $(SRC_DIR)/SF7000Memory.cpp \
+        $(SRC_DIR)/SF7000ParallelPrinterPort.cpp \
         $(SRC_DIR)/Disk.cpp \
         $(SRC_DIR)/DiskLayout.cpp \
         $(SRC_DIR)/EDSKLoader.cpp \
@@ -136,17 +198,12 @@ ENABLE_SR1000 ?= 1
 ifeq ($(ENABLE_SR1000),1)
     SOURCES_CXX += \
         $(SRC_DIR)/SR1000.cpp \
+        $(SRC_DIR)/TapeRecorder.cpp \
+        $(SRC_DIR)/MSXTape.cpp \
         $(SRC_DIR)/SR1000_Speaker.cpp \
         $(SRC_DIR)/SegaBasicBitTape.cpp \
         $(SRC_DIR)/SegaBasicWavTape.cpp \
         $(SRC_DIR)/Tape.cpp \
         $(SRC_DIR)/TapeMotor.cpp \
         $(SRC_DIR)/SPITapePlayer.cpp
-endif
-
-# The SP-400 printer, same pattern. Independent of SF7000/SR1000: it hangs off
-# the base SC-3000 PPI, not off either of the other two.
-ENABLE_SP400 ?= 1
-ifeq ($(ENABLE_SP400),1)
-    SOURCES_CXX += $(SRC_DIR)/SP400.cpp
 endif

@@ -34,8 +34,9 @@
 static const int k_buffer_size = 8 * 1024;
 
 // Shared with the MCP tools, which is why this is not a local static inside
-// the window function: external tools can load a fragment into the panel and
-// clear it again without selecting the text by hand.
+// the window function: an agent driving the emulator has to be able to load a
+// fragment into the panel, and to clear it out again, without the user having
+// to select the text and delete it by hand.
 static char buffer[k_buffer_size] = "";
 static std::string status;
 static ImVec4 status_color = cyan;
@@ -253,7 +254,7 @@ bool gui_debug_basic_typer_send(const char* source)
 void gui_debug_basic_typer_window(void)
 {
     ImGui::SetNextWindowPos(ImVec2(220, 200), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(28.9f, 20.0f);
 
     ImGui::Begin("BASIC Typer", &config_debug.show_basic_typer);
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());

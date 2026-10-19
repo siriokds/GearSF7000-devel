@@ -52,6 +52,14 @@ public:
     std::string GetCategoryDescription(const std::string& category) const;
     int GetCategoryToolCount(const std::string& category) const;
     json SearchTools(const std::string& query) const;
+    // help: no topic -> every category with its tool names; a category name
+    // -> its tools with descriptions; anything else -> keyword search.
+    json GetHelp(const std::string& topic) const;
+    json GetAllCategoryNames() const;
+    // One line per non-empty category, for the initialize instructions.
+    std::string GetCategoryOverview() const;
+    // Comma-separated category names, for the help_ai tool description.
+    static std::string GetCategoryNameList();
 
     bool IsRouterTool(const std::string& tool_name) const;
     bool IsRouterTool(const std::string& tool_name, const std::string& router_tool_name) const;

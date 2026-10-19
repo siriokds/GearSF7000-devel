@@ -21,6 +21,7 @@
 #define	RENDERER_H
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include <SDL3/SDL.h>
@@ -34,16 +35,32 @@
 #endif
 
 EXTERN ImTextureID renderer_emu_texture;
-EXTERN ImTextureID renderer_emu_debug_vram_background;
-EXTERN ImTextureID renderer_emu_debug_vram_tiles;
-EXTERN ImTextureID renderer_emu_debug_vram_sprites[64];
+
+// The emulator texture is allocated at the active device's declared maximum
+// capacity.  The completed frame, and its presentation crop, can occupy only
+// part of it.  Consumers drawing renderer_emu_texture directly must use this
+// region instead of assuming UV 0..1 describes the current picture.
+struct RendererTextureRegion
+{
+    ImVec2 uv0 = ImVec2(0.0f, 0.0f);
+    ImVec2 uv1 = ImVec2(1.0f, 1.0f);
+    int width = 0;
+    int height = 0;
+};
+
+EXTERN RendererTextureRegion renderer_get_emulator_texture_region(void);
+// Post-processing debug targets keep maximum capacity too, but render the
+// current picture at their top-left corner. Use this region when displaying
+// those targets directly.
+EXTERN RendererTextureRegion renderer_get_emulator_output_texture_region(void);
+EXTERN ImTextureID renderer_emu_debug_sprite_atlas;
 // ROM Inspector (DOCS/ROM_INSPECTOR_PLAN.md point 4) - decodes an
 // arbitrary external scratch buffer, not live VRAM. Fixed at
 // ROM_INSPECTOR_TEXTURE_SIZE so the GPU texture never needs recreating
 // when the user changes tiles-per-row; only the UV window shown changes.
 EXTERN ImTextureID renderer_emu_debug_rom_inspector;
 // Output of the CRT test pass (see shaders/crt_pass/README.md) - a plain
-// GPU-side horizontal blur of renderer_emu_texture, proving the
+// GPU-side horizontal blur of the current visible RGB crop, proving the
 // render-to-texture plumbing for a future real decode, not a decode
 // itself. Only written when renderer_set_crt_test_enabled(true).
 EXTERN ImTextureID renderer_crt_test_texture;
@@ -54,8 +71,8 @@ EXTERN ImTextureID renderer_crt_test_texture;
 // shaders' own hardcoded picture geometry.
 EXTERN ImTextureID renderer_composite_decode_texture;
 // Display-stage test (trimmed GearSystem crt_consumer.glsl port, see
-// shaders/crt_pass/crt_consumer.frag) - runs on renderer_emu_texture
-// directly (live RGB, whatever produced it), matching real gameplay
+// shaders/crt_pass/crt_consumer.frag) - runs on the current visible RGB crop
+// (live RGB, whatever produced it), matching real gameplay
 // resolution.
 EXTERN ImTextureID renderer_crt_consumer_texture;
 // Display-stage test (trimmed crt-lottes-fast.glsl port, see shaders/
@@ -74,6 +91,18 @@ EXTERN ImTextureID renderer_crt_lottes_live_texture;
 // renderer_crt_lottes_live_texture.
 EXTERN ImTextureID renderer_advanced_scaling_live_texture;
 EXTERN const char* renderer_gpu_driver;
+
+// Returns the GPU texture cached for one device-owned debug layer and requests
+// it for the next upload pass. Hidden Name Table tabs never request a surface.
+// A missing or older texture is reported as ImTextureID_Invalid.
+EXTERN ImTextureID renderer_get_debug_layer_texture(std::uint64_t device_generation,
+                                                    const char* layer_code,
+                                                    std::uint64_t option_mask,
+                                                    std::uint64_t surface_generation);
+EXTERN ImTextureID renderer_get_debug_preview_texture(std::uint64_t device_generation,
+                                                      std::uint64_t visible_part_mask,
+                                                      std::uint64_t option_mask,
+                                                      std::uint64_t surface_generation);
 
 // Not derived from a datasheet or a verified reference - a starting
 // point to tune by eye, same as the original shader's own parameters are
@@ -197,6 +226,10 @@ EXTERN bool renderer_ensure_crt_lottes_pipeline(void);
 // Same pair of calls as the CRT (Lottes) ones above, for Advanced Scaling.
 EXTERN void renderer_set_advanced_scaling_output_size(int width, int height);
 EXTERN bool renderer_ensure_advanced_scaling_pipeline(void);
+// Compatibility is frame-driven. A device can change this with its current
+// output mode; unsupported configured effects fall back to the plain RGB
+// presentation without rewriting the saved preference.
+EXTERN bool renderer_postprocessing_supported(int postprocessing);
 // Surround an emulator image with these calls so the UI font atlas retains
 // ImGui's linear sampler while the emulated pixels follow Video/Bilinear.
 EXTERN void renderer_begin_emulator_image(void);

@@ -187,28 +187,31 @@ struct McpToolCategoryTools
 
 static const McpToolCategory kMcpToolCategories[] =
 {
-    {"execution", "Execution Control", "Pause, resume, step, frame-step, reset, run-to-address, and fast-forward emulator execution."},
-    {"breakpoints", "Breakpoints", "Set, clear, toggle, and list CPU execution/read/write/range breakpoints and interrupt breakpoints."},
-    {"memory", "Memory", "List memory areas, read/write bytes, select ranges, fill selections, search memory, and manage watches/bookmarks."},
-    {"cpu", "CPU", "Inspect Z80 registers, flags, interrupts, PC, stack, and write CPU register values."},
-    {"disassembly", "Disassembly", "Read executed-code disassembly, run to addresses, inspect call stacks, and manage disassembly bookmarks."},
+    {"execution", "Execution Control", "Pause, resume, step (into/over/out/frame), run to an address, reset, fast forward."},
+    {"breakpoints", "Breakpoints", "Stop on execute, read or write of an address or range, or on interrupts."},
+    {"memory", "Memory", "List memory areas, read/write bytes, atomic multi-area snapshots, select ranges, search memory, watches (freeze, conditions), bookmarks, export/import memory files."},
+    {"cpu", "CPU", "Read and write Z80 registers and flags; the T-state clock."},
+    {"disassembly", "Disassembly", "Disassembly of executed code, call stack, code coverage (what has actually run), the ROM map (per-ROM classification of every byte, coverage percent, persisted across sessions), bookmarks, save a listing to file."},
     {"symbols", "Symbols", "Add, remove, load, list, and look up debug symbols or labels."},
-    {"hardware_video", "Video Hardware", "Inspect TMS9918A VDP registers, display timing, status, sprites, scanlines, and video state."},
-    {"hardware_audio", "Audio Hardware", "Inspect ColecoVision PSG and AY-3-8910 audio state, channels, mixer, and sound registers."},
+    {"hardware_video", "Video Hardware", "VDP registers, status and timing, video region, renderer source, framebuffer rows, slot history."},
+    {"hardware_audio", "Audio Hardware", "SN76489 PSG, onboard/expansion AY-3-8910, one-bit click and YM2413 FM state; connect/disconnect the FM unit; perceived loudness (LUFS) of the FM bus and final mix."},
+    {"hardware_m5", "Sord M5 Hardware", "M5 memory decode, CTC, keyboard and peripheral latches."},
+    {"hardware_msx", "MSX Hardware", "MSX slot mapping, PPI, International keyboard, onboard AY and click audio."},
     {"hardware_sf7000", "SF-7000 Hardware", "Inspect SF-7000 expansion state: disk drive, FDC, serial port, and IPL ROM banking."},
-    {"media", "Media", "Load ROMs, list recent media, load symbols, and inspect loaded cartridge/media information."},
-    {"capture", "Capture", "Capture current screenshots and ColecoVision sprite images or sprite metadata."},
-    {"state", "Save States", "List save slots, select a slot, save emulator state, and load emulator state."},
-    {"rewind", "Rewind", "Inspect rewind buffer status and seek to rewind snapshots for time-travel debugging."},
-    {"input", "Input", "Inspect, press, release, tap, or macro controller input."},
-    {"trace", "Trace", "Read trace log entries and configure CPU, interrupt, video, audio, memory, and debug-message tracing."},
-    {"tools", "Other Tools", "Additional emulator/debugger tools that do not fit another category."}
+    {"media", "Media", "Load, reload or eject ROMs; tapes (play, stop, rewind, speed); disks; start the SF-7000 IPL; load/save BASIC programs; recent files."},
+    {"capture", "Capture", "Screenshots, sprite images and metadata, full-raster debug view, CRT signal dump, debug PNGs."},
+    {"state", "Save States", "Save and load complete machine snapshots, in slots or files."},
+    {"rewind", "Rewind", "Rewind recorder: recent frames are recorded continuously. See what it holds, seek back to any recorded frame, play/pause/step through the history, analyse a range. Also frame pacing settings."},
+    {"input", "Input", "Joypad (press, release, macros), SK-1100 and MSX International keyboard keys, type text into SC-3000 BASIC, keyboard mode, NMI, current input state; on the Master System and Mark III the controller type of each port (SMS pad, Mega Drive 3 or 6 buttons), changeable at any time."},
+    {"trace", "Debug Events / Trace", "Debug Events: who touched what, and when. Devices form a tree (machine > device > space, e.g. event.sms > event.sms.fm > registers); list_debug_devices shows it with targets and presets, add_device_debug_rule attaches log-or-break rules to any node, set_trace_log records whole kinds unfiltered, get_debug_events reads the shared event ring."},
+    {"tools", "Other Tools", "Build identity, MCP transport status and this help."}
 };
 
 static const char* const kMcpExecutionTools[] =
 {
     "debug_pause", "debug_continue", "debug_step_into", "debug_step_over", "debug_step_out",
     "debug_step_frame", "debug_run_to_cursor", "debug_reset", "debug_get_status",
+    "get_system_options", "set_system_options",
     "set_fast_forward_speed", "toggle_fast_forward"
 };
 
@@ -222,9 +225,10 @@ static const char* const kMcpMemoryTools[] =
 {
     "list_memory_areas", "read_memory", "write_memory", "select_memory_range",
     "set_memory_selection_value", "get_memory_selection", "add_memory_bookmark",
-    "remove_memory_bookmark", "list_memory_bookmarks", "add_memory_watch", "remove_memory_watch",
-    "list_memory_watches", "memory_search_capture", "memory_search", "memory_find_bytes",
-    "memory_find_bytes_advanced"
+    "remove_memory_bookmark", "list_memory_bookmarks", "watch_add", "watch_remove", "watch_list",
+    "watch_freeze", "watch_unfreeze", "watch_set_condition", "watch_clear_condition",
+    "watch_condition_status", "memory_search_capture", "memory_search", "memory_find_bytes",
+    "memory_find_bytes_advanced", "get_atomic_snapshot", "export_memory_file", "import_memory_file"
 };
 
 static const char* const kMcpCpuTools[] =
@@ -236,7 +240,9 @@ static const char* const kMcpDisassemblyTools[] =
 {
     "get_disassembly", "add_disassembler_bookmark", "remove_disassembler_bookmark",
     "list_disassembler_bookmarks", "get_call_stack", "get_code_coverage",
-    "clear_code_coverage"
+    "clear_code_coverage", "save_disassembly_file", "get_rom_map",
+    "set_rom_map_enabled", "save_rom_map", "reset_rom_map", "create_rom_map_project",
+    "set_rom_map_projects_folder", "open_rom_map_project"
 };
 
 static const char* const kMcpSymbolTools[] =
@@ -252,8 +258,14 @@ static const char* const kMcpVideoTools[] =
 
 static const char* const kMcpAudioTools[] =
 {
-    "get_psg_status", "get_ay8910_status"
+    "get_psg_status", "get_ay8910_status", "get_ym2413_status",
+    "set_ym2413_enabled", "set_ym2413_loudness_enabled", "get_ym2413_loudness",
+    "start_vgm_recording", "stop_vgm_recording", "get_vgm_recording_status",
+    "start_wav_recording", "stop_wav_recording", "set_audio_mute"
 };
+
+static const char* const kMcpM5Tools[] = {"get_m5_status"};
+static const char* const kMcpMSXTools[] = {"get_msx_status"};
 
 static const char* const kMcpSF7000Tools[] =
 {
@@ -268,7 +280,8 @@ static const char* const kMcpMediaTools[] =
 static const char* const kMcpCaptureTools[] =
 {
     "get_screenshot", "list_sprites", "get_sprite_image",
-    "get_sprite_pipeline", "get_sprite_scanline_history"
+    "get_sprite_pipeline", "get_sprite_scanline_history", "set_full_raster_debug_enabled",
+    "get_full_raster_debug_screenshot", "dump_crt_signal", "save_debug_png"
 };
 
 static const char* const kMcpStateTools[] =
@@ -286,7 +299,7 @@ static const char* const kMcpRewindTools[] =
 
 static const char* const kMcpInputTools[] =
 {
-    "trigger_nmi", "keyboard_text", "cancel_keyboard_text", "keyboard_key", "controller_button", "controller_macro", "get_input_state", "get_keyboard_mode", "set_keyboard_mode",
+    "trigger_nmi", "keyboard_text", "cancel_keyboard_text", "keyboard_key", "controller_button", "set_controller_device", "controller_macro", "get_input_state", "get_keyboard_mode", "set_keyboard_mode",
     "basic_typer_set_text", "basic_typer_clear", "basic_typer_status"
 };
 
@@ -306,6 +319,8 @@ static const McpToolCategoryTools kMcpToolCategoryTools[] =
     {"symbols", kMcpSymbolTools, MCP_ARRAY_COUNT(kMcpSymbolTools)},
     {"hardware_video", kMcpVideoTools, MCP_ARRAY_COUNT(kMcpVideoTools)},
     {"hardware_audio", kMcpAudioTools, MCP_ARRAY_COUNT(kMcpAudioTools)},
+    {"hardware_m5", kMcpM5Tools, MCP_ARRAY_COUNT(kMcpM5Tools)},
+    {"hardware_msx", kMcpMSXTools, MCP_ARRAY_COUNT(kMcpMSXTools)},
     {"hardware_sf7000", kMcpSF7000Tools, MCP_ARRAY_COUNT(kMcpSF7000Tools)},
     {"media", kMcpMediaTools, MCP_ARRAY_COUNT(kMcpMediaTools)},
     {"capture", kMcpCaptureTools, MCP_ARRAY_COUNT(kMcpCaptureTools)},
@@ -529,6 +544,120 @@ int McpToolRegistry::GetCategoryToolCount(const std::string& category) const
     return CountToolsInCategory(category, false);
 }
 
+json McpToolRegistry::GetHelp(const std::string& topic) const
+{
+    // Unlike the router helpers this lists direct tools too: help is the
+    // manual for every tool, whichever listing mode the server runs in.
+    const size_t category_count = MCP_ARRAY_COUNT(kMcpToolCategories);
+    const std::string key = ToLower(topic);
+
+    if (key.empty())
+    {
+        json sections = json::array();
+        for (size_t i = 0; i < category_count; i++)
+        {
+            json names = json::array();
+            for (json::const_iterator it = m_tools.begin(); it != m_tools.end(); ++it)
+            {
+                const std::string name = (*it)["name"].get<std::string>();
+                if (ToolCategoryForName(name) == kMcpToolCategories[i].name)
+                    names.push_back(name);
+            }
+            if (names.empty())
+                continue;
+            sections.push_back({{"category", kMcpToolCategories[i].name},
+                                {"description", kMcpToolCategories[i].description},
+                                {"tools", names}});
+        }
+        return {{"categories", sections},
+                {"next", "help with a category name lists its tools with descriptions; "
+                         "any other word searches every tool."}};
+    }
+
+    for (size_t i = 0; i < category_count; i++)
+    {
+        if (key != kMcpToolCategories[i].name)
+            continue;
+        json tools = json::array();
+        for (json::const_iterator it = m_tools.begin(); it != m_tools.end(); ++it)
+        {
+            const std::string name = (*it)["name"].get<std::string>();
+            if (ToolCategoryForName(name) == key)
+                tools.push_back(ToolToSummaryJson(*it));
+        }
+        return {{"category", kMcpToolCategories[i].name},
+                {"title", kMcpToolCategories[i].title},
+                {"description", kMcpToolCategories[i].description},
+                {"tools", tools}};
+    }
+
+    // Keyword: every tool whose name, description, category or aliases
+    // contain all the words, grouped by category.
+    json byCategory = json::object();
+    int matches = 0;
+    for (json::const_iterator it = m_tools.begin(); it != m_tools.end(); ++it)
+    {
+        const std::string name = (*it)["name"].get<std::string>();
+        const std::string category = ToolCategoryForName(name);
+        const std::string haystack = ToLower(name + " " + it->value("title", "") + " " +
+            it->value("description", "") + " " + category + " " + AliasesForTool(name));
+        std::istringstream terms(key);
+        std::string term;
+        bool all = true;
+        while (terms >> term)
+            all = all && haystack.find(term) != std::string::npos;
+        if (!all)
+            continue;
+        byCategory[category].push_back(ToolToSummaryJson(*it));
+        ++matches;
+    }
+    if (matches == 0)
+        return {{"topic", topic}, {"matches", 0},
+                {"categories", GetAllCategoryNames()},
+                {"next", "No tool matched. Try a category name or a shorter word."}};
+    return {{"topic", topic}, {"matches", matches}, {"by_category", byCategory}};
+}
+
+json McpToolRegistry::GetAllCategoryNames() const
+{
+    json names = json::array();
+    const size_t category_count = MCP_ARRAY_COUNT(kMcpToolCategories);
+    for (size_t i = 0; i < category_count; i++)
+        if (CountToolsInCategory(kMcpToolCategories[i].name, true) > 0)
+            names.push_back(kMcpToolCategories[i].name);
+    return names;
+}
+
+std::string McpToolRegistry::GetCategoryNameList()
+{
+    std::string text;
+    const size_t category_count = MCP_ARRAY_COUNT(kMcpToolCategories);
+    for (size_t i = 0; i < category_count; i++)
+    {
+        if (!text.empty())
+            text += ", ";
+        text += kMcpToolCategories[i].name;
+    }
+    return text;
+}
+
+std::string McpToolRegistry::GetCategoryOverview() const
+{
+    std::string text;
+    const size_t category_count = MCP_ARRAY_COUNT(kMcpToolCategories);
+    for (size_t i = 0; i < category_count; i++)
+    {
+        if (CountToolsInCategory(kMcpToolCategories[i].name, true) == 0)
+            continue;
+        text += "- ";
+        text += kMcpToolCategories[i].name;
+        text += ": ";
+        text += kMcpToolCategories[i].description;
+        text += "\n";
+    }
+    return text;
+}
+
 json McpToolRegistry::SearchTools(const std::string& query) const
 {
     json tools = json::array();
@@ -647,13 +776,15 @@ bool McpToolRegistry::IsDirectToolName(const std::string& tool_name) const
 {
     std::string name = NormalizeToolName(tool_name);
 
-    return (name == "load_rom") ||
+    return (name == "help_ai") ||
+           (name == "load_rom") ||
            (name == "eject_rom") ||
            (name == "set_start_paused") ||
            (name == "load_tape") ||
            (name == "mount_disk") ||
            (name == "start_sf7000") ||
            (name == "get_media_info") ||
+           (name == "get_system_info") ||
            (name == "list_recent_roms") ||
            (name == "list_recent_tapes") ||
            (name == "list_recent_disks") ||
@@ -703,6 +834,11 @@ std::string McpToolRegistry::AliasesForTool(const std::string& tool_name) const
         StringContains(name, "audio") || StringContains(name, "ym2413") ||
         StringContains(name, "ay8910"))
         aliases += " sound audio channel tone noise volume";
+    if (StringContains(name, "controller"))
+        aliases += " pad joypad gamepad genesis megadrive mega drive 3-button 6-button"
+                   " three six buttons start mode controller type port";
+    if (StringContains(name, "loudness"))
+        aliases += " lufs lkfs r128 bs1770 perceived level db decibel meter";
     if (StringContains(name, "sf7000") || StringContains(name, "fdc") ||
         StringContains(name, "floppy"))
         aliases += " disk floppy fdc765 drive motor index track sector ppi ipl";

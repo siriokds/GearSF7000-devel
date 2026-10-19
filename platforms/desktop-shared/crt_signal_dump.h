@@ -43,7 +43,7 @@ public:
     bool WriteTo(const char* path) const;
 
     void ConfigureSignal(bool isPAL,
-        TMS9918RasterTiming::SignalOutput signalOutput) override;
+        GC_CrtSignalOutput signalOutput) override;
     void OutputSync(int dots) override;
     void OutputBlank(int dots) override;
     void OutputColourBurst(int dots) override;

@@ -12,6 +12,11 @@
 #include <stdint.h>
 #include "DiskModel.h"   /* DiskTrack, DiskSector, DISC_DRIVE, all constants */
 
+#ifdef __cplusplus
+#include "IDebugEventProvider.h"
+#include <string>
+#endif
+
 /* =========================================================
  * Configuration
  * ========================================================= */
@@ -134,5 +139,55 @@ uint8_t diskSaveDS7(int driveId, const char* fileName);
  * Returns true on success.
  * ========================================================= */
 bool diskCreateEmptyDS7(const char* filename);
+
+#ifdef __cplusplus
+
+class DebugDeviceRegistry;
+class Memory;
+
+struct FloppyDriveDebugConfiguration
+{
+    std::string key;
+    std::string parentKey;
+    std::string name;
+};
+
+// Device facade for one physical drive slot. The disk-image engine remains
+// behind the C API while it is modernised; this object supplies stable device
+// identity and publishes only discrete drive-line transitions.
+class FloppyDriveDevice : public IDebugEventProvider
+{
+public:
+    enum State : uint8_t
+    {
+        MediaPresent = 0,
+        Enabled,
+        WriteProtected,
+        Motor,
+        Index,
+        StateCount
+    };
+
+    FloppyDriveDevice(int driveId, Memory* memory,
+                      FloppyDriveDebugConfiguration debug);
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+    void BindDebugEvents(const DebugDeviceRegistry& registry);
+    // Establishes the current electrical state without creating startup or
+    // catalog-recomposition events.
+    void Capture(bool motor, bool index);
+    void Observe(bool motor, bool index);
+
+private:
+    void Publish(State state, bool value);
+
+    int m_driveId;
+    Memory* m_memory;
+    FloppyDriveDebugConfiguration m_debug;
+    DebugDeviceId m_debugDevice = 0;
+    bool m_observed[StateCount] = {};
+    bool m_hasObservation = false;
+};
+
+#endif
 
 #endif /* DISK_H */

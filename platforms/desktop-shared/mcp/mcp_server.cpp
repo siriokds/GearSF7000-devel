@@ -157,6 +157,18 @@ void McpServer::Run()
                         {"data", resp->result["data"]},
                         {"mimeType", resp->result["mimeType"]}
                     });
+                    // Whatever else the tool returned (a screenshot's size and
+                    // content_area, a sprite's index...) as a text item after
+                    // the image; until this, it never reached the client.
+                    json meta = resp->result;
+                    meta.erase("__mcp_image");
+                    meta.erase("data");
+                    meta.erase("mimeType");
+                    if (!meta.empty())
+                        mcpResult["content"].push_back({
+                            {"type", "text"},
+                            {"text", meta.dump(2, ' ', false, json::error_handler_t::replace)}
+                        });
                 }
                 else
                 {
@@ -411,16 +423,52 @@ void McpServer::HandleInitialize(const json& request)
         {"serverInfo", {
             {"name", "gearsf7000-mcp-server"},
             {"title", GEARSF7000_TITLE " MCP Server"},
-            {"description", "Debug/control " GEARSF7000_TITLE ": SC-3000/SF-7000 execution, Z80, memory, TMS9918 VDP, SN76489 PSG, cassette and save states."},
+            {"description", "Debug/control " GEARSF7000_TITLE ": machine execution, Z80, memory, active video device, SN76489 PSG, cassette and save states."},
             {"version", build_info_version()},
+            {"revision", build_info_revision()},
             // This identifies the binary currently installed in the app bundle.
             {"compiled", build_info_timestamp()}
         }}
     };
 
+    // Sent once per connection and kept in the client's context for the whole
+    // session: the one place an agent learns what exists before it starts
+    // choosing tools. Clients that defer tool schemas show only names until
+    // searched, and nobody searches for a capability they do not know about.
+    // So this names every category and what it lets you do - generated from
+    // the registry so it cannot drift - and hands the detail to the help tool.
+    EnsureToolRegistry();
     response["result"]["instructions"] =
-        "Use this server for SC-3000 and SF-7000 debugging: execution, Z80 inspection, memory, "
-        "breakpoints, TMS9918 VDP, SN76489 PSG, cassette/media information and save states.";
+        "GearSF7000 emulates the Sega SC-3000 / SF-7000, SG-1000, the SMS family (Mark III, "
+        "Master System), MSX1 (PAL/NTSC) and the ColecoVision: Z80, TMS9918A or SMS VDP, SN76489 PSG, optional "
+        "AY-3-8910 and YM2413 FM. The ColecoVision board adds one wait state to every M1 cycle "
+        "and wires the VDP interrupt to NMI; get_system_info reports both. "
+        "MSX1 has 32 KiB BIOS, 64 KiB RAM, linear 8/16/32 KiB cartridges and onboard AY; "
+        "Sord M5 supports standard cartridges up to 20 KB, an external 8 KB BIOS, optional EM-5 32 KB RAM, active-high keyboard and two joysticks. Fire 1/2 share keyboard contacts 1/2 (P1) and 5/6 (P2). Tape transport and printer are not implemented. get_m5_status exposes CTC, memory decode, inputs and provisional PSG WAIT timing. "
+        "MSX has an International keyboard through the PPI, PC7 click audio and WAV/MP3 cassette playback. Small BASIC cartridges are mapped in page 2 and need an external BIOS with BASIC (built-in C-BIOS has no BASIC). Joystick and banked cartridges are not implemented yet. Use get_msx_status for slots, PPI, keyboard, AY, click and cassette. "
+        "On the Master System and Mark III each controller port can hold a Mega Drive pad "
+        "(3 or 6 buttons) instead of the SMS pad: set_controller_device switches it at any "
+        "time, controller_button then takes a, b, c, start, x, y, z and mode. "
+        "get_system_options discovers machine and mapper choices; set_system_options stages "
+        "them until debug_reset/load_rom. The AY card and specific VDP choice remain GUI settings. "
+        "Projects can be resumed with open_rom_map_project; set_rom_map_projects_folder selects "
+        "where new projects are created.\n"
+        "Categories, and what each lets you do:\n" +
+        m_toolRegistry.GetCategoryOverview() +
+        "Call help_ai with a category name (e.g. topic=\"rewind\") to get its tools with "
+        "descriptions, with any word to search all tools, with no topic for the full index. Start with get_system_info (which machine and what its board wires), debug_get_status, get_media_info and get_screenshot (264x224, borders "
+        "included; on a Game Gear only its 160x144 window - area \"frame\" shows the whole picture).\n"
+        "Pitfalls:\n"
+        "- Addresses in arguments are hex strings (\"C000\").\n"
+        "- controller_button rejects press_and_release: send press, step frames with "
+        "debug_step_frame mode=sync, then release. Check frames_completed and breakpoint_hit.\n"
+        "- Settings the GUI marks \"reset required\" (such as set_ym2413_enabled) only stage the "
+        "change: it takes effect after a ROM reset (debug_reset).\n"
+        "- paused_by_core in debug_get_status can mean a person paused from the GUI: ask before "
+        "resuming.\n"
+        "- A GUI instance may be in use by a person. For long or disruptive work run your own: "
+        "gearsf7000 --mcp-http --headless --mcp-http-port <free port>. It shares the GUI's "
+        "settings file, and settings it changes are saved there too.";
 
     if (g_mcp_router_enabled)
     {
@@ -446,6 +494,9 @@ json McpServer::BuildToolList()
 
     for (json::iterator it = tools.begin(); it != tools.end(); ++it)
     {
+        if (it->value("name", "") == "help_ai")
+            (*it)["description"] = (*it)["description"].get<std::string>() +
+                " Categories: " + McpToolRegistry::GetCategoryNameList() + ".";
         if (it->contains("inputSchema") && (*it)["inputSchema"].is_object() &&
             !(*it)["inputSchema"].contains("additionalProperties"))
         {
@@ -676,6 +727,19 @@ void McpServer::HandleToolsCall(const json& request)
 
     EnsureToolRegistry();
 
+    // Answered from the registry in both listing modes, so it always sees
+    // the full catalogue rather than the adapter.
+    if (m_toolRegistry.IsRouterTool(toolName, "help_ai"))
+    {
+        if (arguments.contains("topic") && !arguments["topic"].is_string())
+        {
+            SendError(id, MCP_ERROR_INVALID_PARAMS, "Invalid params: topic must be a string");
+            return;
+        }
+        SendToolResult(id, m_toolRegistry.GetHelp(arguments.value("topic", "")));
+        return;
+    }
+
     if (g_mcp_router_enabled && m_toolRegistry.IsRouterTool(toolName, "list_tool_categories"))
     {
         if (!arguments.empty())
@@ -797,8 +861,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     }
     if (normalizedTool == "debug_continue")
     {
-        m_debugAdapter.Resume();
-        return {{"success", true}};
+        return m_debugAdapter.Resume();
     }
     if (normalizedTool == "debug_step_into")
     {
@@ -834,7 +897,9 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         const bool paused = arguments.value("paused", false);
         m_debugAdapter.Reset(paused);
-        return {{"success", true}, {"paused", paused}};
+        return {{"success", true}, {"paused", paused},
+                {"system", m_debugAdapter.GetSystemInfo()},
+                {"rewind_history_reset", true}};
     }
     if (normalizedTool == "debug_get_status")
     {
@@ -844,6 +909,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         return {
             {"version", build_info_version()},
+            {"revision", build_info_revision()},
             {"compiled", build_info_timestamp()},
             {"summary", build_info_full()},
             // What is compiled in decides which tools exist at all, so clients
@@ -854,6 +920,11 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
                 {"ay_expansion", true}
 #else
                 {"ay_expansion", false}
+#endif
+#if GEARSF7000_ENABLE_YM2413
+                , {"ym2413", true}
+#else
+                , {"ym2413", false}
 #endif
             }}
         };
@@ -869,6 +940,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
             // "which binary is this" is the first thing to rule out.
             {"build", {
                 {"version", build_info_version()},
+                {"revision", build_info_revision()},
                 {"compiled", build_info_timestamp()}
             }},
             {"transport", {
@@ -901,7 +973,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     if (normalizedTool == "set_breakpoint")
     {
         std::string addrStr = arguments["address"];
-        u16 address;
+        u32 address;
         if (!parse_mcp_hex_with_prefix(addrStr, &address))
             return {{"error", "Invalid address format"}};
 
@@ -920,15 +992,18 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
         if (!read && !write && !execute)
             return {{"error", "At least one of read, write, or execute must be true"}};
 
-        u16 max_address = 0xFFFF;
-        if (breakpoint_type == 1)
-            max_address = 0x3FFF;
-        else if (breakpoint_type == 2)
-            max_address = 0x0007;
-        if (address > max_address)
+        u32 min_address = 0;
+        u32 max_address = 0xFFFF;
+        if (breakpoint_type == 1 &&
+            !m_debugAdapter.GetVideoBreakpointAddressRange(min_address,
+                                                            max_address))
+            return {{"error", "The active video device exposes no debug memory space"}};
+        if (address < min_address || address > max_address)
         {
             char msg[128];
-            snprintf(msg, sizeof(msg), "Address 0x%04X out of range for %s (max: 0x%04X)", address, memory_area.c_str(), max_address);
+            snprintf(msg, sizeof(msg),
+                "Address 0x%04X out of range for %s (0x%08X-0x%08X)",
+                address, memory_area.c_str(), min_address, max_address);
             return {{"error", msg}};
         }
 
@@ -939,7 +1014,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         std::string startAddrStr = arguments["start_address"];
         std::string endAddrStr = arguments["end_address"];
-        u16 start_address, end_address;
+        u32 start_address, end_address;
 
         if (!parse_mcp_hex_with_prefix(startAddrStr, &start_address))
             return {{"error", "Invalid start_address format"}};
@@ -963,15 +1038,18 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
         if (!read && !write && !execute)
             return {{"error", "At least one of read, write, or execute must be true"}};
 
-        u16 max_address = 0xFFFF;
-        if (breakpoint_type == 1)
-            max_address = 0x3FFF;
-        else if (breakpoint_type == 2)
-            max_address = 0x0007;
-        if (start_address > max_address || end_address > max_address)
+        u32 min_address = 0;
+        u32 max_address = 0xFFFF;
+        if (breakpoint_type == 1 &&
+            !m_debugAdapter.GetVideoBreakpointAddressRange(min_address,
+                                                            max_address))
+            return {{"error", "The active video device exposes no debug memory space"}};
+        if (start_address < min_address || end_address > max_address)
         {
             char msg[128];
-            snprintf(msg, sizeof(msg), "Address out of range for %s (max: 0x%04X)", memory_area.c_str(), max_address);
+            snprintf(msg, sizeof(msg),
+                "Address out of range for %s (0x%08X-0x%08X)",
+                memory_area.c_str(), min_address, max_address);
             return {{"error", msg}};
         }
 
@@ -982,7 +1060,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     if (normalizedTool == "remove_breakpoint")
     {
         std::string addrStr = arguments["address"];
-        u16 address;
+        u32 address;
         if (!parse_mcp_hex_with_prefix(addrStr, &address))
             return {{"error", "Invalid address format"}};
 
@@ -991,7 +1069,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
             return {{"error", "Invalid memory_area (must be: rom_ram or vram)"}};
         int breakpoint_type = GetBreakpointTypeFromString(memory_area);
 
-        u16 end_address = 0;
+        u32 end_address = 0;
         if (arguments.contains("end_address"))
         {
             std::string endAddrStr = arguments["end_address"];
@@ -1205,7 +1283,8 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
         if (!parse_mcp_hex_with_prefix(valueStr, &value))
             return {{"error", "Invalid value format"}};
 
-        m_debugAdapter.SetRegister(name, value);
+        if (!m_debugAdapter.SetRegister(name, value))
+            return {{"error", "Unknown register: " + name}};
         return {{"success", true}, {"register", name}, {"value", valueStr}};
     }
     // Disassembly
@@ -1331,6 +1410,40 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         return m_debugAdapter.ClearCodeCoverage();
     }
+    if (normalizedTool == "get_rom_map")
+    {
+        return m_debugAdapter.GetRomMap(arguments);
+    }
+    if (normalizedTool == "set_rom_map_enabled")
+    {
+        if (!arguments.contains("enabled") || !arguments["enabled"].is_boolean())
+            return {{"error", "enabled (boolean) is required"}};
+        return m_debugAdapter.SetRomMapEnabled(arguments["enabled"].get<bool>());
+    }
+    if (normalizedTool == "create_rom_map_project")
+    {
+        return m_debugAdapter.CreateRomMapProject(arguments.value("name", std::string()));
+    }
+    if (normalizedTool == "set_rom_map_projects_folder")
+        return m_debugAdapter.SetRomMapProjectsFolder(arguments.at("directory").get<std::string>());
+    if (normalizedTool == "open_rom_map_project")
+        return m_debugAdapter.OpenRomMapProject(arguments.at("directory").get<std::string>());
+    if (normalizedTool == "save_rom_map")
+    {
+        return m_debugAdapter.SaveRomMap();
+    }
+    if (normalizedTool == "reset_rom_map")
+    {
+        return m_debugAdapter.ResetRomMap();
+    }
+    if (normalizedTool == "get_system_info")
+    {
+        return m_debugAdapter.GetSystemInfo();
+    }
+    if (normalizedTool == "get_system_options")
+        return m_debugAdapter.GetSystemOptions();
+    if (normalizedTool == "set_system_options")
+        return m_debugAdapter.SetSystemOptions(arguments);
     // Media info
     if (normalizedTool == "get_media_info")
     {
@@ -1392,6 +1505,10 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         return m_debugAdapter.GetPSGStatus();
     }
+    if (normalizedTool == "get_m5_status")
+        return m_debugAdapter.GetM5Status();
+    if (normalizedTool == "get_msx_status")
+        return m_debugAdapter.GetMSXStatus();
     if (normalizedTool == "get_sf7000_status")
     {
         return m_debugAdapter.GetSF7000Status();
@@ -1400,9 +1517,68 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         return m_debugAdapter.GetAY8910Status();
     }
+    if (normalizedTool == "get_ym2413_status")
+    {
+        return m_debugAdapter.GetYM2413Status();
+    }
+    if (normalizedTool == "set_ym2413_enabled")
+    {
+        if (!arguments.contains("enabled") || !arguments["enabled"].is_boolean())
+            return {{"error", "enabled (boolean) is required"}};
+        return m_debugAdapter.SetYM2413Enabled(
+            arguments["enabled"].get<bool>(), arguments.value("reset", false));
+    }
+    if (normalizedTool == "set_ym2413_loudness_enabled")
+    {
+        if (!arguments.contains("enabled") || !arguments["enabled"].is_boolean())
+            return {{"error", "enabled (boolean) is required"}};
+        return m_debugAdapter.SetYM2413LoudnessEnabled(
+            arguments["enabled"].get<bool>(), arguments.value("reset", false));
+    }
+    if (normalizedTool == "get_ym2413_loudness")
+    {
+        return m_debugAdapter.GetYM2413Loudness();
+    }
+    if (normalizedTool == "start_vgm_recording")
+    {
+        if (!arguments.contains("file_path") || !arguments["file_path"].is_string())
+            return {{"error", "file_path (string) is required"}};
+        return m_debugAdapter.StartVgmRecording(arguments["file_path"].get<std::string>());
+    }
+    if (normalizedTool == "stop_vgm_recording")
+    {
+        return m_debugAdapter.StopVgmRecording();
+    }
+    if (normalizedTool == "get_vgm_recording_status")
+    {
+        return m_debugAdapter.GetVgmRecordingStatus();
+    }
+    if (normalizedTool == "start_wav_recording")
+    {
+        if (!arguments.contains("file_path") || !arguments["file_path"].is_string())
+            return {{"error", "file_path (string) is required"}};
+        return m_debugAdapter.StartWavRecording(arguments["file_path"].get<std::string>());
+    }
+    if (normalizedTool == "stop_wav_recording")
+    {
+        return m_debugAdapter.StopWavRecording();
+    }
+    if (normalizedTool == "set_audio_mute")
+    {
+        if (!arguments.contains("mute") || !arguments["mute"].is_boolean())
+            return {{"error", "mute (boolean) is required"}};
+        return m_debugAdapter.SetAudioMute(arguments["mute"].get<bool>());
+    }
     if (normalizedTool == "get_screenshot")
     {
-        return m_debugAdapter.GetScreenshot();
+        std::string area = "visible";
+        if (arguments.contains("area"))
+        {
+            if (!arguments["area"].is_string())
+                return {{"error", "area must be \"visible\" or \"frame\""}};
+            area = arguments["area"].get<std::string>();
+        }
+        return m_debugAdapter.GetScreenshot(area);
     }
     if (normalizedTool == "set_full_raster_debug_enabled")
     {
@@ -1584,6 +1760,11 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
         std::string action = arguments["action"];
         return m_debugAdapter.ControllerButton(player, button, action);
     }
+    if (normalizedTool == "set_controller_device")
+    {
+        return m_debugAdapter.SetControllerDevice(arguments.value("player", 0),
+                                                  arguments.value("device", ""));
+    }
     if (normalizedTool == "trigger_nmi")
     {
         return m_debugAdapter.TriggerNMI();
@@ -1651,7 +1832,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         int sprite_index = arguments.value("sprite_index", 0);
         return m_debugAdapter.GetSpriteImage(sprite_index,
-            arguments.value("source", "live"));
+            arguments.value("source", "live"), arguments.value("line", -1));
     }
     if (normalizedTool == "get_sprite_pipeline")
     {

@@ -71,9 +71,10 @@ EXTERN int gui_debug_load_symbols_file_counted(const char* path);
 EXTERN void gui_debug_toggle_breakpoint(void);
 EXTERN void gui_debug_reset_breakpoints_cpu(void);
 EXTERN void gui_debug_reset_breakpoints_mem(void);
-EXTERN void gui_debug_reset_breakpoints_vram(void);
 EXTERN void gui_debug_runtocursor(void);
 EXTERN void gui_debug_go_back(void);
+// Shared by detached debugger panels that link a trace PC to disassembly.
+EXTERN void gui_debug_request_goto_address(u16 address);
 EXTERN void gui_debug_copy_memory(void);
 EXTERN void gui_debug_paste_memory(void);
 

@@ -5,7 +5,9 @@
 
 #include "gui_debug_audio.h"
 
+#include <cmath>
 #include <cstdio>
+#include <limits>
 
 #include "imgui/imgui.h"
 #include "imgui/colors.h"
@@ -18,6 +20,12 @@
 
 namespace
 {
+
+float peak_dbfs(float peak)
+{
+    return peak > 0.0f ? 20.0f * std::log10(peak / 32767.0f)
+                       : -std::numeric_limits<float>::infinity();
+}
 
 // Rows are taller than their text so the waveform has room, which leaves
 // every other cell floating at the top of its row unless it is nudged down.
@@ -208,10 +216,285 @@ void draw_ay_channel_waveform(Audio* audio, int channel, float width, float heig
 
 }
 
+#if GEARSF7000_ENABLE_YM2413
+static void draw_fm_waveform(Ym2413* fm, int channel)
+{
+    ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(1, 1));
+    if (ImPlot::BeginPlot("##fm_wave", ImVec2(-1, 28), ImPlotFlags_CanvasOnly))
+    {
+        const ImPlotAxisFlags flags = ImPlotAxisFlags_NoDecorations | ImPlotAxisFlags_Lock;
+        ImPlot::SetupAxes(nullptr, nullptr, flags, flags);
+        const int count = fm->GetDebugSampleCount();
+        const s16* raw = fm->GetDebugSamples(channel);
+        float wave[4096];
+        float peak = 0;
+        int trigger = 0;
+        for (int i = 0; raw && i < count; ++i)
+        {
+            wave[i] = raw[i];
+            peak = std::fmax(peak, std::fabs(wave[i]));
+            if (!trigger && i && raw[i - 1] < 0 && raw[i] >= 0) trigger = i;
+        }
+        const int begin = trigger > 100 ? trigger - 100 : 0;
+        const int end = count > begin + 200 ? begin + 200 : count;
+        ImPlot::SetupAxesLimits(begin, end > begin ? end : begin + 1,
+            -std::fmax(peak * 1.1f, 16.0f), std::fmax(peak * 1.1f, 16.0f), ImPlotCond_Always);
+        if (raw && count > 1)
+        {
+            ImPlot::SetNextLineStyle(green, 1.0f);
+            ImPlot::PlotLine("wave", wave, count);
+        }
+        ImPlot::EndPlot();
+    }
+    ImPlot::PopStyleVar();
+}
+
+static void draw_fm_controls(Ym2413* fm, int ch)
+{
+    bool enabled = fm->IsChannelEnabled(ch);
+    bool muted = fm->IsChannelMuted(ch);
+    ImGui::TableNextColumn();
+    center_in_row(28, ImGui::GetFrameHeight());
+    if (ImGui::Checkbox("##enable", &enabled)) fm->SetChannelEnabled(ch, enabled);
+    ImGui::TableNextColumn();
+    center_in_row(28, ImGui::GetFrameHeight());
+    if (ImGui::Checkbox("##mute", &muted)) fm->SetChannelMuted(ch, muted);
+}
+
+void gui_debug_ym2413_window(void)
+{
+    ImGui::SetNextWindowPos(ImVec2(200, 400), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(55.6f, 47.2f);
+
+    Audio* audio = emu_get_core()->GetAudio();
+    ImGui::Begin("YM2413 FM Sound Unit", &config_debug.show_ym2413);
+    ImGui::PushFont(gui_default_font, gui_get_default_font_size());
+
+    if (!audio->IsYm2413Enabled())
+    {
+        ImGui::TextColored(magenta, "FM SOUND UNIT NOT PRESENT");
+        ImGui::TextColored(cyan,
+            "Connect FM hardware in Audio, then reset an SMS-family machine.");
+        ImGui::PopFont();
+        ImGui::End();
+        return;
+    }
+
+    Ym2413* fm = audio->GetYm2413();
+    const u8 control = audio->GetYm2413ControlLatch();
+    ImGui::TextColored(magenta, "YM2413 / OPLL"); ImGui::SameLine();
+    ImGui::TextColored(cyan,
+        "  CLOCK %u Hz   PORTS $F0-$F2   LATCHED R$%02X",
+        fm->GetClockHz(), fm->GetSelectedRegister());
+    ImGui::TextColored(cyan, "%s   $F2=$%02X   PSG %s   FM %s",
+        audio->GetYm2413Interface() == Audio::FmInterface::JapaneseSMS ? "INTEGRATED FM" : "EXTERNAL FM INTERFACE", control, audio->IsPsgOutputEnabled() ? "ON" : "MUTED",
+        audio->IsFmOutputEnabled() ? "ON" : "MUTED");
+    ImGui::Separator();
+
+    if (ImGui::Button("Enable all / unmute"))
+        for (int ch = 0; ch < 14; ++ch)
+        {
+            fm->SetChannelEnabled(ch, true);
+            fm->SetChannelMuted(ch, false);
+        }
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Enable filters channel writes and silences the voice. Mute only silences.\n"
+            "Waves are before output routing and independently scaled.\n"
+            "Rhythm replaces FM 7-9. Drums share pitch; key/volume are filtered separately.\n"
+            "User patch and rhythm mode remain global. Use Mute for listening comparisons.");
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 1));
+    if (ImGui::BeginTable("##ym2413_channels", 10,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+    {
+        ImGui::TableSetupColumn("Ch", ImGuiTableColumnFlags_WidthFixed, 42);
+        ImGui::TableSetupColumn("Enable", ImGuiTableColumnFlags_WidthFixed, 48);
+        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableSetupColumn("F-num");
+        ImGui::TableSetupColumn("Block");
+        ImGui::TableSetupColumn("Key");
+        ImGui::TableSetupColumn("Sustain");
+        ImGui::TableSetupColumn("Volume");
+        ImGui::TableSetupColumn("Instrument", ImGuiTableColumnFlags_WidthFixed, 135);
+        ImGui::TableSetupColumn("Wave", ImGuiTableColumnFlags_WidthStretch, 3);
+        ImGui::TableHeadersRow();
+        for (int ch = 0; ch < 9; ++ch)
+        {
+            const u8 low = fm->ReadRegister(0x10 + ch);
+            const u8 high = fm->ReadRegister(0x20 + ch);
+            const u8 instVol = fm->ReadRegister(0x30 + ch);
+            const int fnum = low | ((high & 1) << 8);
+            ImGui::PushID(ch);
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, 28);
+            ImGui::TableNextColumn(); ImGui::Text("%d", ch + 1);
+            draw_fm_controls(fm, ch);
+            ImGui::TableNextColumn(); ImGui::Text("$%03X", fnum);
+            ImGui::TableNextColumn(); ImGui::Text("%d", (high >> 1) & 7);
+            ImGui::TableNextColumn(); ImGui::Text("%s", (high & 0x10) ? "ON" : "OFF");
+            ImGui::TableNextColumn(); ImGui::Text("%s", (high & 0x20) ? "ON" : "OFF");
+            ImGui::TableNextColumn(); ImGui::Text("$%X", instVol & 0x0F);
+            ImGui::TableNextColumn();
+            if (ch >= 6 && (fm->ReadRegister(0x0e) & 0x20))
+                ImGui::TextDisabled("Rhythm shared");
+            else
+                ImGui::Text("$%X %s", instVol >> 4, fm->GetInstrumentName(instVol >> 4));
+            ImGui::TableNextColumn(); draw_fm_waveform(fm, ch);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    const u8 rhythm = fm->ReadRegister(0x0E);
+    ImGui::Separator();
+    ImGui::TextColored(magenta, "RHYTHM"); ImGui::SameLine();
+    ImGui::TextColored(cyan, "$0E=$%02X  MODE %s  BD %d  SD %d  TOM %d  CYM %d  HH %d",
+        rhythm, (rhythm & 0x20) ? "ON" : "OFF",
+        !!(rhythm & 0x10), !!(rhythm & 0x08), !!(rhythm & 0x04),
+        !!(rhythm & 0x02), !!(rhythm & 0x01));
+
+    if (ImGui::BeginTable("##fm_drums", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+    {
+        ImGui::TableSetupColumn("Percussion", ImGuiTableColumnFlags_WidthFixed, 110);
+        ImGui::TableSetupColumn("Enable", ImGuiTableColumnFlags_WidthFixed, 48);
+        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 36);
+        ImGui::TableSetupColumn("Att", ImGuiTableColumnFlags_WidthFixed, 36);
+        ImGui::TableSetupColumn("Wave");
+        ImGui::TableHeadersRow();
+        const int order[] = {13, 12, 11, 10, 9};
+        const int volumeReg[] = {0x37, 0x38, 0x38, 0x37, 0x36};
+        for (int ch : order)
+        {
+            ImGui::PushID(ch);
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, 28);
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(fm->GetChannelName(ch));
+            draw_fm_controls(fm, ch);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted((rhythm & 0x20) && (rhythm & (1 << (ch - 9))) ? "ON" : "OFF");
+            ImGui::TableNextColumn();
+            const int shift = ch == 9 || ch == 11 ? 4 : 0;
+            ImGui::Text("$%X", (fm->ReadRegister(volumeReg[ch - 9]) >> shift) & 15);
+            ImGui::TableNextColumn(); draw_fm_waveform(fm, ch);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::PopStyleVar();
+
+    if (ImGui::CollapsingHeader("Registers"))
+    {
+        for (int row = 0; row < 4; ++row)
+        {
+            ImGui::Text("%02X: ", row * 16); ImGui::SameLine();
+            for (int col = 0; col < 16; ++col)
+            {
+                ImGui::Text("%02X", fm->ReadRegister(row * 16 + col));
+                if (col != 15) ImGui::SameLine();
+            }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Level / headroom"))
+    {
+        const Audio::PeakInfo& peaks = audio->GetPeakInfo();
+        if (audio->IsOneBitEnabled())
+            ImGui::Text("1-bit output: %s | peak %.1f dBFS",
+                audio->GetOneBitDevice().GetLevel() ? "HIGH" : "LOW", peak_dbfs(peaks.oneBit));
+        const float fmDb = peak_dbfs(peaks.fm);
+        const float outputDb = peak_dbfs(peaks.output);
+        ImGui::TextColored(cyan, "FM MAX: %.1f dBFS   headroom %.1f dB",
+            fmDb, std::isfinite(fmDb) ? -fmDb : 0.0f);
+        ImGui::TextColored(cyan, "OUTPUT MAX: %.1f dBFS   headroom %.1f dB",
+            outputDb, std::isfinite(outputDb) ? -outputDb : 0.0f);
+        ImGui::TextColored(cyan, "SOFT-LIMIT SAMPLES: %u",
+            peaks.softLimitSamples);
+        ImGui::TextDisabled("Maxima accumulate until reset.");
+        if (ImGui::Button("Reset YM2413 level maxima"))
+            audio->ResetPeakInfo();
+    }
+
+    if (ImGui::CollapsingHeader("Perceived loudness (LUFS)"))
+    {
+        bool loudness = audio->IsLoudnessMeterEnabled();
+        if (ImGui::Checkbox("Measure loudness", &loudness))
+            audio->EnableLoudnessMeter(loudness);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("ITU-R BS.1770-4 / EBU R128: K-weighted, gated loudness.\n"
+                "Equal LUFS sounds equally loud; peak dBFS does not say that.\n"
+                "Momentary 400 ms, short-term 3 s, integrated since enable/reset\n"
+                "(silence and passages 10 LU below the average are gated out).\n"
+                "LRA: spread of short-term loudness, 10th-95th percentile.\n"
+                "Measured in emulated time, so fast forward is fine.\n"
+                "Keeps running with this window closed. Off by default: costs CPU.");
+        if (loudness)
+        {
+            ImGui::SameLine();
+            if (ImGui::Button("Reset measurement"))
+                audio->ResetLoudnessMeter();
+
+            auto lufs = [](double v, char* out, size_t size) {
+                if (std::isfinite(v)) snprintf(out, size, "%.1f", v);
+                else snprintf(out, size, "-inf");
+                return out;
+            };
+            if (ImGui::BeginTable("##fm_loudness", 7,
+                                  ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+            {
+                ImGui::TableSetupColumn("Bus", ImGuiTableColumnFlags_WidthFixed, 70);
+                ImGui::TableSetupColumn("Momentary");
+                ImGui::TableSetupColumn("Short-term");
+                ImGui::TableSetupColumn("Integrated");
+                ImGui::TableSetupColumn("M max");
+                ImGui::TableSetupColumn("S max");
+                ImGui::TableSetupColumn("LRA");
+                ImGui::TableHeadersRow();
+                const struct { const char* name; const LoudnessMeter& meter; } rows[] = {
+                    { "FM", audio->GetFmLoudness() },
+                    { "OUTPUT", audio->GetOutputLoudness() },
+                };
+                char buf[32];
+                for (const auto& row : rows)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::TextUnformatted(row.name);
+                    ImGui::TableNextColumn(); ImGui::Text("%s", lufs(row.meter.GetMomentary(), buf, sizeof(buf)));
+                    ImGui::TableNextColumn(); ImGui::Text("%s", lufs(row.meter.GetShortTerm(), buf, sizeof(buf)));
+                    ImGui::TableNextColumn(); ImGui::TextColored(magenta, "%s", lufs(row.meter.GetIntegrated(), buf, sizeof(buf)));
+                    ImGui::TableNextColumn(); ImGui::Text("%s", lufs(row.meter.GetMomentaryMax(), buf, sizeof(buf)));
+                    ImGui::TableNextColumn(); ImGui::Text("%s", lufs(row.meter.GetShortTermMax(), buf, sizeof(buf)));
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f LU", row.meter.GetRange());
+                }
+                ImGui::EndTable();
+            }
+            const float preLimiter = audio->GetLoudnessPreLimiterPeak();
+            ImGui::TextColored(cyan,
+                "PEAK: FM %.1f dBFS   pre-limiter %.1f dBFS (knee -0.4)   limited samples %u",
+                audio->GetFmLoudness().GetPeakDbfs(), peak_dbfs(preLimiter),
+                audio->GetLoudnessLimitedSamples());
+            const int seconds = static_cast<int>(audio->GetOutputLoudness().GetSeconds());
+            ImGui::TextDisabled("Values in LUFS. Measured %d:%02d of emulated audio.",
+                seconds / 60, seconds % 60);
+        }
+    }
+
+    ImGui::PopFont();
+    ImGui::End();
+}
+#endif
+
 void gui_debug_psg_window(void)
 {
-    ImGui::SetNextWindowPos(ImVec2(160, 350), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500, 150), ImGuiCond_FirstUseEver);
+    // Size from Saverio's own saved layout (638x434 on a 4K panel at 175%,
+    // where 1 em was 31.5px). The position keeps its original unscaled
+    // authoring origin, which is why it divides by 18 and the size by 31.5.
+    ImGui::SetNextWindowPos(ImVec2(8.9f * ImGui::GetFontSize(),
+                                   19.4f * ImGui::GetFontSize()), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(20.3f, 13.8f);
 
     GearSF7000Core* core = emu_get_core();
     Audio* audio = core->GetAudio();
@@ -232,6 +515,14 @@ void gui_debug_psg_window(void)
     ImGui::Begin("PSG", &config_debug.show_psg);
 
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());
+
+    const Sms_Apu::NoiseConfiguration noise =
+        audio->GetApu()->GetNoiseConfiguration();
+    ImGui::TextColored(magenta, "%s", audio->GetApu()->GetVariantName());
+    ImGui::SameLine();
+    ImGui::TextColored(cyan, "  NOISE LFSR %d BIT   TAPS $%04X",
+        noise.lfsrWidth, noise.whiteNoiseTapMask);
+    ImGui::Separator();
 
     // One row per channel, not one column: a waveform plot (C8) needs
     // horizontal room to be readable, which four narrow table columns side
@@ -324,8 +615,17 @@ void gui_debug_psg_window(void)
     if (ImGui::CollapsingHeader("Diagnostics"))
     {
         const Audio::PeakInfo& peaks = audio->GetPeakInfo();
-        ImGui::TextColored(cyan, "MIXER PEAKS: PSG %.0f  DRIVE %.0f  TAPE %.0f", peaks.psg, peaks.drive, peaks.cassette);
-        ImGui::TextColored(cyan, "MASTER: pre %.0f  out %.0f  soft-limit samples %u", peaks.preLimiter, peaks.output, peaks.softLimitSamples);
+        if (audio->IsOneBitEnabled())
+            ImGui::Text("1-bit output: %s | peak %.1f dBFS",
+                audio->GetOneBitDevice().GetLevel() ? "HIGH" : "LOW", peak_dbfs(peaks.oneBit));
+        ImGui::TextColored(cyan,
+            "MIXER MAX: PSG %.1f dBFS  FM %.1f dBFS  DRIVE %.1f dBFS  TAPE %.1f dBFS",
+            peak_dbfs(peaks.psg), peak_dbfs(peaks.fm),
+            peak_dbfs(peaks.drive), peak_dbfs(peaks.cassette));
+        ImGui::TextColored(cyan,
+            "MASTER MAX: pre %.1f dBFS  out %.1f dBFS  soft-limit samples %u",
+            peak_dbfs(peaks.preLimiter), peak_dbfs(peaks.output),
+            peaks.softLimitSamples);
         ImGui::TextColored(cyan, "FRAME SAMPLES: PSG %d  DRIVE %d  TAPE %d",
             peaks.psgFrameSamples, peaks.driveFrameSamples, peaks.cassetteFrameSamples);
         ImGui::TextColored(cyan, "TAPE MONITOR: %.1f Hz", peaks.cassetteFrequencyHz);
@@ -368,8 +668,11 @@ void gui_debug_psg_window(void)
 #if GEARSF7000_ENABLE_AY
 void gui_debug_ay_window(void)
 {
-    ImGui::SetNextWindowPos(ImVec2(180, 380), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500, 260), ImGuiCond_FirstUseEver);
+    // Size from Saverio's saved layout (723x428 at 175%), same split as the
+    // PSG window above: size from the tuned layout, position from the code.
+    ImGui::SetNextWindowPos(ImVec2(10.0f * ImGui::GetFontSize(),
+                                   21.1f * ImGui::GetFontSize()), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(23.0f, 13.6f);
 
     Audio* audio = emu_get_core()->GetAudio();
 
@@ -407,7 +710,9 @@ void gui_debug_ay_window(void)
 
     ImGui::TextColored(magenta, "%s", ym ? "YM2149" : "AY-3-8910"); ImGui::SameLine();
     ImGui::TextColored(cyan, "  CLOCK %d Hz   PORTS $%02X-$%02X   LATCHED R%d",
-        clockHz, GetAyPortBase(), GetAyPortBase() + 3, audio->GetAySelectedRegister());
+        clockHz, emu_get_core()->GetSGMDevice().IsPresent() ? 0x50 : GetAyPortBase(),
+        emu_get_core()->GetSGMDevice().IsPresent() ? 0x52 : GetAyPortBase() + 3,
+        audio->GetAySelectedRegister());
 
     ImGui::Separator();
 
@@ -505,7 +810,7 @@ void gui_debug_ay_window(void)
     const int noisePeriod = (int)ay->read(6) & 0x1F;
     ImGui::TextColored(cyan, "NOISE PERIOD: "); ImGui::SameLine();
     ImGui::Text("$%02X  (%.0f Hz)", noisePeriod,
-        noisePeriod ? (double)clockHz / (32.0 * noisePeriod) : 0.0);
+        noisePeriod ? (double)clockHz / (16.0 * noisePeriod) : 0.0);
     ImGui::SameLine();
 
     const int envPeriod = ((int)ay->read(12) << 8) | (int)ay->read(11);

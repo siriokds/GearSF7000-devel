@@ -12,7 +12,7 @@ public:
     ~WavRecorder();
 
     // Inizia la registrazione
-    bool Start(const std::string& filename, int sampleRate = 48000);
+    bool Start(const std::string& filename, int sampleRate = 48000, int channels = 1);
 
     // Aggiunge un singolo campione (Mono, 16-bit)
     void WriteSample(int16_t sample);
@@ -26,6 +26,7 @@ private:
     std::ofstream m_File;
     uint32_t m_DataSize; // Dimensione totale dei campioni in byte
     int m_SampleRate;
+    int m_Channels;
 
     void WriteWavHeader();
 };

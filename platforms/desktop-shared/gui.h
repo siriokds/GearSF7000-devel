@@ -96,6 +96,14 @@ EXTERN void gui_sk1100_release_virtual_keys(void);
 
 EXTERN ImFont* gui_get_font(int index);
 EXTERN float gui_get_default_font_size(void);
+// A panel's default size, in em (multiples of the current font size) rather
+// than pixels, clamped to the monitor work area. Pixel literals do not follow
+// the DPI or the interface scale, so on a high-DPI display the text grew while
+// the window stayed put. Call before Begin(); 1 em is the chrome font (18px at
+// scale 1.0) when no font is pushed. The em figures in the callers were derived
+// from a real tuned layout - see tools/derive_panel_defaults.py.
+EXTERN void gui_set_next_window_size_em(float width_em, float height_em,
+                                        ImGuiCond cond = ImGuiCond_FirstUseEver);
 // Combo widths follow the active font and global content scale. The helper
 // includes the arrow button, frame padding and a small readability margin.
 EXTERN float gui_combo_width_for_text(const char* longest_item);

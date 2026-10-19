@@ -224,6 +224,26 @@ void MemEditor::Reset(const char* title, uint8_t* mem_data, int mem_size, int ba
     memcpy(m_search_data, m_mem_data, m_mem_size * m_mem_word);
 }
 
+void MemEditor::Invalidate()
+{
+    Reset("", nullptr, 0);
+    m_selection_start = 0;
+    m_selection_end = 0;
+    m_editing_address = -1;
+    m_jump_to_address = -1;
+    m_scroll_to_address = -1;
+    m_add_bookmark = false;
+    m_watch_window = false;
+    m_add_watch = false;
+    m_search_window = false;
+    m_find_bytes_window = false;
+    m_bookmarks.clear();
+    m_watches.clear();
+    m_search_results.clear();
+    m_find_bytes_results.clear();
+    m_find_bytes_match_lengths.clear();
+}
+
 void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
 {
     if (!IsValidPointer(m_mem_data) || m_mem_size <= 0)

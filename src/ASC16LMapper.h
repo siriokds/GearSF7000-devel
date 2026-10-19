@@ -22,6 +22,11 @@ public:
 
     // 'A16L'
     virtual u32 GetMapperId() const override { return 0x4C363141u; }
+    DebugDeviceDefinition DescribeDebugDevice() const override
+    {
+        return DescribeBankedMapper("asc16l",
+            "ascii.asc16l", "ASC16L Mapper");
+    }
 
 private:
     u8 m_RomBank;

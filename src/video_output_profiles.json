@@ -1,0 +1,286 @@
+{
+  "schema_version": 2,
+  "catalogs": {
+    "devices": "video_devices.json",
+    "capabilities": "video_output_capabilities.json"
+  },
+  "description": "Reusable output profiles and explicit VDP assignments. Resolved once by the shared runtime catalogue.",
+  "rules": {
+    "capabilities": "Each key references a capability code; its array lists allowed value codes. Missing capabilities are unsupported.",
+    "overrides": "Conditions match selected capability values. Matching overrides replace the named value lists; other lists remain unchanged. Replacements must be subsets of the profile lists.",
+    "contexts": "Intersect profile values with capability and value contexts from the capability catalogue. Missing contexts impose no context restriction.",
+    "runtime": "Runtime frame and renderer support may further restrict these lists.",
+    "validation": "Reject unknown references, duplicate codes, conflicting matching overrides, and missing VDP assignments.",
+    "crop_regions": "Rectangles use packed framebuffer pixels (x, y, width, height), not timing raster units. Sources name GC_VideoFrameDescriptor fields and must be read again when its revision changes. default_crop selects the existing presentation region; regions do not imply a user-selectable CROP capability. logical_window describes the LCD window within logical content coordinates.",
+    "variants": "Default output profile per variant code; null means not implemented. Concrete machine options can reference a profile explicitly."
+  },
+  "profiles": {
+    "TMS_RASTER": {
+      "capabilities": {
+        "SCALE": [
+          "AUTO_INTEGER",
+          "1X",
+          "1_5X",
+          "2X",
+          "2_5X",
+          "3X",
+          "3_5X",
+          "4X",
+          "4_5X",
+          "5X",
+          "WINDOW_HEIGHT",
+          "WINDOW_HEIGHT_HALF_STEPS",
+          "WINDOW_WIDTH_HEIGHT"
+        ],
+        "ASPECT_RATIO": [
+          "DEVICE_PIXEL_ASPECT_RATIO",
+          "DAR_4_3",
+          "DAR_16_9"
+        ],
+        "POST_PROCESSING": [
+          "NONE",
+          "BILINEAR",
+          "ADVANCED_SCALING",
+          "CRT_LOTTES"
+        ],
+        "OVERSCAN": [
+          "DISABLED",
+          "TOP_BOTTOM",
+          "FULL_272",
+          "FULL_284",
+          "FULL_320"
+        ],
+        "FULL_RASTER": [
+          "DISABLED",
+          "ENABLED"
+        ]
+      },
+      "overrides": [
+        {
+          "when": {
+            "capability": "FULL_RASTER",
+            "value": "ENABLED"
+          },
+          "capabilities": {
+            "POST_PROCESSING": [
+              "NONE",
+              "BILINEAR",
+              "ADVANCED_SCALING"
+            ]
+          }
+        }
+      ],
+      "crop_regions": {
+        "VISIBLE": {
+          "source": "visible_area"
+        },
+        "CONTENT": {
+          "source": "content_area"
+        }
+      },
+      "default_crop": "VISIBLE",
+      "defaults": {
+        "computer": {
+          "SCALE": "AUTO_INTEGER",
+          "ASPECT_RATIO": "DAR_4_3",
+          "POST_PROCESSING": "NONE",
+          "OVERSCAN": "TOP_BOTTOM"
+        },
+        "debug": {
+          "SCALE": "1X",
+          "ASPECT_RATIO": "DEVICE_PIXEL_ASPECT_RATIO",
+          "POST_PROCESSING": "NONE",
+          "OVERSCAN": "DISABLED",
+          "FULL_RASTER": "DISABLED"
+        }
+      }
+    },
+    "SMS_RASTER": {
+      "capabilities": {
+        "SCALE": [
+          "AUTO_INTEGER",
+          "1X",
+          "1_5X",
+          "2X",
+          "2_5X",
+          "3X",
+          "3_5X",
+          "4X",
+          "4_5X",
+          "5X",
+          "WINDOW_HEIGHT",
+          "WINDOW_HEIGHT_HALF_STEPS",
+          "WINDOW_WIDTH_HEIGHT"
+        ],
+        "ASPECT_RATIO": [
+          "DEVICE_PIXEL_ASPECT_RATIO",
+          "DAR_4_3",
+          "DAR_16_9"
+        ],
+        "POST_PROCESSING": [
+          "NONE",
+          "BILINEAR",
+          "ADVANCED_SCALING",
+          "CRT_LOTTES"
+        ],
+        "OVERSCAN": [
+          "DISABLED",
+          "TOP_BOTTOM",
+          "FULL_272",
+          "FULL_284"
+        ]
+      },
+      "crop_regions": {
+        "VISIBLE": {
+          "source": "visible_area"
+        },
+        "CONTENT": {
+          "source": "content_area"
+        }
+      },
+      "default_crop": "VISIBLE",
+      "defaults": {
+        "computer": {
+          "SCALE": "AUTO_INTEGER",
+          "ASPECT_RATIO": "DAR_4_3",
+          "POST_PROCESSING": "NONE",
+          "OVERSCAN": "TOP_BOTTOM"
+        },
+        "debug": {
+          "SCALE": "1X",
+          "ASPECT_RATIO": "DEVICE_PIXEL_ASPECT_RATIO",
+          "POST_PROCESSING": "NONE",
+          "OVERSCAN": "DISABLED"
+        }
+      }
+    },
+    "VGA_FRAME": {
+      "capabilities": {
+        "SCALE": [
+          "AUTO_INTEGER",
+          "1X",
+          "1_5X",
+          "2X",
+          "2_5X",
+          "3X",
+          "3_5X",
+          "4X",
+          "4_5X",
+          "5X",
+          "WINDOW_HEIGHT",
+          "WINDOW_HEIGHT_HALF_STEPS",
+          "WINDOW_WIDTH_HEIGHT"
+        ],
+        "ASPECT_RATIO": [
+          "DEVICE_PIXEL_ASPECT_RATIO",
+          "DAR_4_3",
+          "DAR_16_9"
+        ],
+        "POST_PROCESSING": [
+          "NONE",
+          "BILINEAR",
+          "ADVANCED_SCALING",
+          "CRT_LOTTES"
+        ]
+      },
+      "crop_regions": {
+        "VISIBLE": {
+          "source": "visible_area",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 640,
+            "height": 480
+          }
+        },
+        "CONTENT": {
+          "source": "content_area"
+        }
+      },
+      "default_crop": "VISIBLE",
+      "defaults": {
+        "computer": {
+          "SCALE": "AUTO_INTEGER",
+          "ASPECT_RATIO": "DAR_4_3",
+          "POST_PROCESSING": "NONE"
+        },
+        "debug": {
+          "SCALE": "1X",
+          "ASPECT_RATIO": "DEVICE_PIXEL_ASPECT_RATIO",
+          "POST_PROCESSING": "NONE"
+        }
+      }
+    },
+    "GAME_GEAR_LCD": {
+      "capabilities": {
+        "SCALE": [
+          "AUTO_INTEGER",
+          "1X",
+          "1_5X",
+          "2X",
+          "2_5X",
+          "3X",
+          "3_5X",
+          "4X",
+          "4_5X",
+          "5X",
+          "WINDOW_HEIGHT",
+          "WINDOW_HEIGHT_HALF_STEPS",
+          "WINDOW_WIDTH_HEIGHT"
+        ],
+        "ASPECT_RATIO": [
+          "DEVICE_PIXEL_ASPECT_RATIO",
+          "DAR_4_3",
+          "DAR_16_9"
+        ],
+        "POST_PROCESSING": [
+          "NONE",
+          "BILINEAR",
+          "ADVANCED_SCALING",
+          "CRT_LOTTES"
+        ]
+      },
+      "crop_regions": {
+        "VISIBLE": {
+          "source": "visible_area",
+          "logical_window": {
+            "width": 160,
+            "height": 144,
+            "horizontal_alignment": "center",
+            "vertical_alignment": "center"
+          }
+        },
+        "CONTENT": {
+          "source": "content_area"
+        }
+      },
+      "default_crop": "VISIBLE",
+      "defaults": {
+        "computer": {
+          "SCALE": "AUTO_INTEGER",
+          "ASPECT_RATIO": "DAR_4_3",
+          "POST_PROCESSING": "NONE"
+        },
+        "debug": {
+          "SCALE": "1X",
+          "ASPECT_RATIO": "DEVICE_PIXEL_ASPECT_RATIO",
+          "POST_PROCESSING": "NONE"
+        }
+      }
+    }
+  },
+  "variants": {
+    "TMS9918-NTSC": "TMS_RASTER",
+    "TMS9918B-NTSC": "TMS_RASTER",
+    "TMS9928-NTSC": "TMS_RASTER",
+    "TMS9929-PAL": "TMS_RASTER",
+    "PICO9918-VGA": "VGA_FRAME",
+    "SEGA3155124-NTSC": "SMS_RASTER",
+    "PICOSMSVDP-VGA": "VGA_FRAME",
+    "SEGA3155378": "GAME_GEAR_LCD",
+    "F18A-VGA": null,
+    "SEGA3155124-PAL": null,
+    "TMS9928-VGA": null,
+    "TMS9929-VGA": null
+  }
+}

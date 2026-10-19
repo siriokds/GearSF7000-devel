@@ -38,6 +38,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <utility>
 #include "SaveStateStream.h"
 
 namespace
@@ -126,6 +127,64 @@ struct NEC765 {
     FDC_FormatEntry formatEntries[MAX_SECTORS]; /* collected CHRN data */
     int             formatEntriesCount;         /* how many collected */
 };
+
+NEC765Device::NEC765Device(NEC765DebugConfiguration debug)
+    : m_fdc(nec765Create()), m_debug(std::move(debug))
+{
+}
+
+NEC765Device::~NEC765Device()
+{
+    nec765Destroy(m_fdc);
+}
+
+DebugDeviceDefinition NEC765Device::DescribeDebugDevice() const
+{
+    DebugDeviceDefinition device;
+    device.key = m_debug.key;
+    device.parentKey = m_debug.parentKey;
+    device.typeKey = "nec.upd765";
+    device.name = m_debug.name.empty() ? "uPD765 FDC" : m_debug.name;
+
+    const u8 readWrite = DebugEventAccess_Read | DebugEventAccess_Write;
+    DebugSpaceDefinition ports;
+    ports.id = DebugCommonSpace::IoPorts;
+    ports.key = "io_ports";
+    ports.name = "I/O Ports";
+    ports.targetMin = m_debug.ioPortBase;
+    ports.targetMax = m_debug.ioPortBase + 1u;
+    ports.supportedAccesses = readWrite;
+    ports.afterValueAccesses = readWrite;
+    // The System Bus owns the CPU transaction event.
+    ports.capabilities = DebugDescriptorCapability_None;
+    ports.targets.push_back({m_debug.ioPortBase, "Main Status", 8});
+    ports.targets.push_back({m_debug.ioPortBase + 1u, "Data", 8});
+    device.spaces.push_back(std::move(ports));
+
+    DebugSpaceDefinition state;
+    state.id = DebugCommonSpace::State;
+    state.key = "state";
+    state.name = "Controller State";
+    state.targetMax = 3;
+    state.supportedAccesses = DebugEventAccess_Event;
+    state.beforeValueAccesses = DebugEventAccess_Event;
+    state.afterValueAccesses = DebugEventAccess_Event;
+    state.capabilities = DebugDescriptorCapability_EventsPublished;
+    state.targets.push_back({0, "Command", 8});
+    state.targets.push_back({1, "Phase", 8});
+    state.targets.push_back({2, "IRQ", 1});
+    state.targets.push_back({3, "Track", 8});
+    device.spaces.push_back(std::move(state));
+
+    DebugRulePresetDefinition preset;
+    preset.key = "controller_state";
+    preset.name = "FDC";
+    preset.spaceKey = "state";
+    preset.targetEnd = 3;
+    preset.accessMask = DebugEventAccess_Event;
+    device.presets.push_back(std::move(preset));
+    return device;
+}
 
 static void nec765RefreshRotationTiming(NEC765* fdc,
                                         bool resetFraction)

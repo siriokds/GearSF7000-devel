@@ -1,0 +1,92 @@
+/*
+ * GearSF7000 - SC-3000/SK-1100 cassette connector signals
+ * Copyright (C) 2026 Saverio Russo
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+#include "SegaCassettePort.h"
+
+#include "DebugEvents.h"
+#include "Memory.h"
+
+#include <utility>
+
+SegaCassettePort::SegaCassettePort(
+    const char* key, const char* parentKey, const char* name, Memory* memory)
+    : m_key(key), m_parentKey(parentKey), m_name(name), m_memory(memory)
+{
+    m_signalState.fill(PinState::HighImpedance);
+}
+
+DebugDeviceDefinition SegaCassettePort::DescribeDebugDevice() const
+{
+    DebugDeviceDefinition device;
+    device.key = m_key;
+    device.parentKey = m_parentKey;
+    device.typeKey = "sega.cassette_interface";
+    device.name = m_name;
+
+    DebugSpaceDefinition signals;
+    signals.id = DebugCommonSpace::Signals;
+    signals.key = "signals";
+    signals.name = "Cassette Signals";
+    signals.targetMax = SignalCount - 1;
+    signals.supportedAccesses = DebugEventAccess_Event;
+    signals.beforeValueAccesses = DebugEventAccess_Event;
+    signals.afterValueAccesses = DebugEventAccess_Event;
+    // 0=low, 1=high, 2=high impedance.
+    signals.defaultBitWidth = 2;
+    signals.capabilities = DebugDescriptorCapability_EventsPublished |
+                           DebugDescriptorCapability_SnapshotReadable;
+    signals.targets = {
+        {TapeIn, "TAPE IN (PB7)", 2},
+        {TapeOut, "TAPE OUT (PC4)", 2},
+        {VirtualMotor, "Virtual Motor (PC3)", 2}
+    };
+    device.spaces.push_back(std::move(signals));
+    return device;
+}
+
+void SegaCassettePort::BindDebugEvents(
+    const DebugDeviceRegistry& registry)
+{
+    const DebugDeviceDescriptor* device = registry.FindDevice(m_key);
+    m_debugDevice = device != nullptr ? device->id : 0;
+}
+
+void SegaCassettePort::ObserveTapeInput(bool high)
+{
+    PublishSignal(TapeIn, high ? PinState::High : PinState::Low);
+}
+
+void SegaCassettePort::Reset()
+{
+    for (unsigned i = 0; i < SignalCount; ++i)
+        PublishSignal(static_cast<Signal>(i), PinState::HighImpedance);
+}
+
+void SegaCassettePort::DrivePortC(
+    std::uint8_t value, std::uint8_t drivenMask)
+{
+    PublishSignal(TapeOut,
+        (drivenMask & 0x10) == 0 ? PinState::HighImpedance :
+        ((value & 0x10) != 0 ? PinState::High : PinState::Low));
+    PublishSignal(VirtualMotor,
+        (drivenMask & 0x08) == 0 ? PinState::HighImpedance :
+        ((value & 0x08) != 0 ? PinState::High : PinState::Low));
+}
+
+void SegaCassettePort::PublishSignal(Signal signal, PinState state)
+{
+    const PinState before = m_signalState[signal];
+    if (before == state)
+        return;
+    m_signalState[signal] = state;
+    if (m_memory == nullptr || m_debugDevice == 0)
+        return;
+    m_memory->CheckDeviceStateChange(
+        {m_debugDevice, DebugCommonSpace::Signals, signal},
+        static_cast<std::uint8_t>(before),
+        static_cast<std::uint8_t>(state));
+}

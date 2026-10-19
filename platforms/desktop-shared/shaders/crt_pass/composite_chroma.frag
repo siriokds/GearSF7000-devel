@@ -28,7 +28,7 @@ const int kSamplesPerDot = 8;
 const int kPictureDots = 284;
 const int kPictureLines = 294;
 // Fixed by the PAL standard itself, not by the VDP - see
-// TMS9918RasterTiming.h / the ICrtSignalSink work this decode is built on.
+// TMS99xxRasterTiming.h / the ICrtSignalSink work this decode is built on.
 const float kSubcarrierCyclesPerLine = 283.7516;
 const float kCyclesPerSample = kSubcarrierCyclesPerLine / float(kDotsPerLine * kSamplesPerDot);
 // Chroma is the narrow-band signal - a wide window here is what gives

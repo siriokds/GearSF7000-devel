@@ -11,19 +11,26 @@
 #include "Disk.h"
 #include "Audio.h"
 #include "COM8251A.h"
+#include "Intel8255.h"
+#include "SF7000ParallelPrinterPort.h"
+#include "SF7000Memory.h"
+#include <memory>
 //#include "Input.h"
 
 class Memory;
 
-class	SF7000
+class	SF7000 : public IDebugEventProvider, private IIntel8255Pins
 {
 private:
 
 	Memory* m_pMemory;
-	NEC765* fdc;
+	NEC765Device fdc;
+	FloppyDriveDevice drive;
 
 	Audio* m_pAudio;
 	COM8251A m_usart;
+	SF7000ParallelPrinterPort m_parallelPrinterPort;
+	SF7000MemoryDevice m_memoryDevice;
 
 	// USART pending request (thread-safe GUI → emulator handoff)
 	struct UsartRequest {
@@ -51,10 +58,23 @@ private:
 	void SetPortE6(uint8_t value);
 	void CaptureFDCDebugState();
 	void PublishFDCChanges();
+	Intel8255PinSample ReadPortA(std::uint64_t timestamp) override;
+	Intel8255PinSample ReadPortB(std::uint64_t timestamp) override;
+	Intel8255PinSample ReadPortC(std::uint64_t timestamp) override;
+	Intel8255PinSample PeekPortA(std::uint64_t timestamp) const override;
+	Intel8255PinSample PeekPortB(std::uint64_t timestamp) const override;
+	Intel8255PinSample PeekPortC(std::uint64_t timestamp) const override;
+	void DrivePortA(std::uint8_t value, std::uint8_t drivenMask,
+		std::uint64_t timestamp) override;
+	void DrivePortB(std::uint8_t value, std::uint8_t drivenMask,
+		std::uint64_t timestamp) override;
+	void DrivePortC(std::uint8_t value, std::uint8_t drivenMask,
+		std::uint64_t timestamp) override;
+	std::unique_ptr<Intel8255> m_ppi;
 
 public:
-	uint8_t	Port_E4, Port_E5, Port_E6, Port_E7;
-	uint8_t	Port_E8, Port_E9;
+	uint8_t	Port_E4 = 0x04, Port_E5 = 0x00, Port_E6 = 0x02, Port_E7 = 0x9B;
+	uint8_t	Port_E8 = 0x00, Port_E9 = 0x00;
 
 	bool	DiskMotorOn;
 	uint64_t clocksIndex;
@@ -65,6 +85,7 @@ public:
 
 	SF7000(Memory* pMemory, Audio* pAudio);
 	~SF7000();
+	DebugDeviceDefinition DescribeDebugDevice() const override;
 	void	Init(Audio* pAudio);
 	void	Reset(bool running = true,
 			  uint32_t clockRate = GC_MASTER_CLOCK_NTSC,
@@ -86,6 +107,9 @@ public:
 	int		FDC765_IsIndex(int drive);
 	void	FDC765_SetReadOnly(int drive, bool readonly);
 	void	GetFDCDebugInfo(NEC765DebugInfo* info) const;
+	const NEC765Device& GetFDC() const { return fdc; }
+	const FloppyDriveDevice& GetDrive() const { return drive; }
+	FloppyDriveDevice& GetDrive() { return drive; }
 	void	GetDiskDebugInfo(DiskDebugInfo* info) const;
 	uint32_t GetFDCRotationBits() const;
 	uint32_t GetFDCBitsPerRevolution() const;
@@ -98,6 +122,19 @@ public:
 	uint8_t	PPI_ReadPortB();				/* E5: Printer data output (parallel) */
 	uint8_t	PPI_ReadPortC();				/* E6: FDC/Printer control */
 	uint8_t	PPI_ReadControl();				/* E7: Control Register */
+	uint8_t PPI_ReadRegister(uint8_t index, uint64_t timestamp = 0);
+	void PPI_WriteRegister(uint8_t index, uint8_t value,
+		uint64_t timestamp = 0);
+	const Intel8255& GetPPI() const { return *m_ppi; }
+	const SF7000ParallelPrinterPort& GetParallelPrinterPort() const
+	{
+		return m_parallelPrinterPort;
+	}
+	SF7000ParallelPrinterPort& GetParallelPrinterPort()
+	{
+		return m_parallelPrinterPort;
+	}
+	const SF7000MemoryDevice& GetMemoryDevice() const { return m_memoryDevice; }
 
 	int		PPI_WritePortC(uint8_t val);		/* E6: FDC/Printer control */
 	int		PPI_WriteControl(uint8_t val);	/* E7: Control Register */
@@ -135,6 +172,8 @@ public:
 	// Accessors (GUI read-only)
 	uint32_t USART_GetBaudRate()   const  { return m_usart.GetBaudRate(); }
 	uint32_t USART_GetCpuClockHz() const  { return m_usart.GetCpuClockHz(); }
+	const COM8251A& GetUSART() const { return m_usart; }
+	COM8251A& GetUSART() { return m_usart; }
 
 
 

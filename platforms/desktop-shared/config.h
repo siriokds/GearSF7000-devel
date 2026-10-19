@@ -1,3 +1,5 @@
+#include "../../src/VideoCatalog.h"
+#include "MachineMenuOptions.h"
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
  * Copyright (C) 2026  Saverio Russo
@@ -38,6 +40,24 @@ static const int config_max_recent_discs = 10;
 
 static const int config_max_recent_cassettes = 10;
 
+// Separate instances per recorder; changing machine never swaps or merges them.
+struct config_Tape
+{
+    std::string path;
+    bool write_protected = true;
+    std::string recent[config_max_recent_cassettes];
+    void Remember(const std::string& filename) {
+        if (filename.empty()) return;
+        // Copy first: filename can refer to an entry that is about to move.
+        const std::string value = filename;
+        int slot = 0;
+        while (slot < config_max_recent_cassettes && recent[slot] != value) ++slot;
+        if (slot == config_max_recent_cassettes) --slot;
+        for (int i = slot; i > 0; --i) recent[i] = recent[i - 1];
+        recent[0] = value;
+    }
+};
+
 struct config_Emulator
 {
     bool fullscreen = false;
@@ -48,25 +68,51 @@ struct config_Emulator
     bool start_paused = false;
     bool ffwd = false;
     int ffwd_speed = 1;
-    int vdp = 0;
-    // 0 = auto (signature and CRC decide), 1 = manual (mapper_type wins).
+    int machine = (int)SystemModel::SC3000Export;
+    // The Sega model in use before a ColecoVision image selected that board,
+    // so loading a Sega image afterwards returns to it: a ColecoVision cannot
+    // run a Sega cartridge and must not silently keep it.
+    int last_sega_machine = (int)SystemModel::SC3000Export;
+    bool coleco_sgm = false;
+    int vdp = 0; // Compatibility mirror for older callers.
+    std::map<std::string, int> last_board_by_machine;
+    std::string video_option; // Empty means machine default.
+    std::string video_option_by_model[static_cast<int>(SystemModel::GameGearExport) + 1];
+    // Stable disk keys are declared by ConfigProfiles; this array is runtime only.
+    int vdp_by_model[static_cast<int>(SystemModel::GameGearExport) + 1] = {};
+    int last_model_by_family[6] = {static_cast<int>(SystemModel::SC3000Export),
+        static_cast<int>(SystemModel::SegaMarkIII), static_cast<int>(SystemModel::ColecoVision),
+        static_cast<int>(SystemModel::MSX1NTSC), static_cast<int>(SystemModel::SordM5PAL),
+        static_cast<int>(SystemModel::GameGearExport)};
+    // 0 = auto (signature, CRC and heuristics), 1 = manual (mapper_type wins).
     // Manual performs no signature or checksum check at all.
     int mapper_mode = 0;
     // Only meaningful when mapper_mode == 1. Holds a Cartridge::CartridgeTypes.
     int mapper_type = (int)Cartridge::SC3000_FLAT64K;
-    // Used in auto mode when nothing identifies the image. The historic
-    // behaviour was SG-1000 16K, hardcoded; keeping it as the default means
-    // auto behaves exactly as before unless this is changed.
-    int mapper_fallback = (int)Cartridge::SG1000_16K;
+    // Mapper choices are stored per machine profile. Game Gear and SMS can
+    // use the same mapper implementation but retain independent selections.
+    // mapper_mode/mapper_type are the live values; config_select_machine()
+    // swaps them when the profile changes.
+    int mapper_mode_by_family[6] = {0, 0, 0, 0, 0, 0};
+    int mapper_type_by_family[6] = {
+        (int)Cartridge::SC3000_FLAT64K,
+        (int)Cartridge::SMS_SEGA_MAPPER,
+        (int)Cartridge::COLECOVISION, (int)Cartridge::MSX_LINEAR, (int)Cartridge::SORD_M5_LINEAR,
+        (int)Cartridge::SMS_SEGA_MAPPER};
     bool show_info = false;
     std::string recent_roms[config_max_recent_roms];
     std::string recent_discs[config_max_recent_discs];
-    std::string recent_cassettes[config_max_recent_cassettes];
+    config_Tape sr1000_tape;
+    config_Tape msx_tape;
     std::string bios_path;
+    // [Machine.Coleco] BiosPath: the console ROM at $0000 (8 KiB).
+    std::string coleco_bios_path;
+    std::string msx_bios_path;
+    std::string m5_bios_path;
+    bool m5_em5_installed = false;
+    bool msx_use_cbios;
     std::string disc_path;
     bool disc_write_protected = true;
-    std::string cassette_path;
-    bool cassette_write_protected = true;
 
     int savefiles_dir_option = 0;
     std::string savefiles_path;
@@ -206,12 +252,9 @@ struct config_Video : config_VideoOutput
     // sync itself changes immediately, as it always did.
     int pacing = PACING_GAMING_VSYNC;
     int palette = 0;
-    GC_Color color[16] = {
-        {0, 0, 0}, {0, 0, 0}, {33, 200, 66}, {94, 20, 120},
-        {84, 85, 237}, {112, 118, 252}, {212, 82, 77}, {66, 235, 245},
-        {252, 85, 84}, {255, 121, 120}, {212, 193, 84}, {230, 206, 128},
-        {33, 176, 59}, {201, 91, 186}, {204, 204, 204}, {255, 255, 255}
-    };
+    // The Mark III's VDP in a TMS mode: its own choice, so picking the
+    // 315-5124's colours there leaves the SC-3000's palette alone.
+    int sms_tms_palette = 0;
 };
 
 struct config_Audio
@@ -223,6 +266,11 @@ struct config_Audio
     bool ay_enable = false;
     int  ay_chip = 0;               // 0 = AY-3-8910, 1 = YM2149
     int  ay_port_base = 0x20;       // see IsSC3000_AYport() for why $20
+#endif
+#if GEARSF7000_ENABLE_YM2413
+    // Optional Sega FM Sound Unit. The selected machine decides whether this
+    // attachment is meaningful; currently only Mark III installs it.
+    bool ym2413_enable = false;
 #endif
 };
 
@@ -262,6 +310,18 @@ struct config_Input
     // deliberately separate from the two joystick profiles above: keyboard
     // mode addresses the complete physical SK-1100 matrix.
     SDL_Scancode sk1100_key[64];
+    // ColecoVision controller keypad, indexed like coleco_keypad_layout.
+    SDL_Scancode keypad_key[12];
+    // Master System: what is plugged into this player's controller port
+    // (SystemControllerDevice), and the keys and gamepad buttons for a Mega
+    // Drive pad's A, Start, X, Y, Z and Mode, indexed like md_pad_layout.
+    // Unbound until the user binds them.
+    int controller_device;
+    SDL_Scancode md_key[6];
+    int gamepad_md_button[6];
+    // The Game Gear has one built-in Start button, separate from SMS/MD pads.
+    SDL_Scancode gg_start_key;
+    int gamepad_gg_start_button;
     //int gamepad_1;
     //int gamepad_2;
     //int gamepad_3;
@@ -330,11 +390,16 @@ struct config_Debug
     bool show_disassembler = true;
     bool show_processor = true;
     bool show_memory = true;
-    bool show_video = false;
-    bool show_video_registers = true;
+    bool show_pattern_table = false;
+    bool show_sprites = false;
+    bool show_nametable = false;
+    bool show_video_register_explorer = false;
     bool show_psg = true;
 #if GEARSF7000_ENABLE_AY
     bool show_ay = false;
+#endif
+#if GEARSF7000_ENABLE_YM2413
+    bool show_ym2413 = false;
 #endif
     bool show_cassette = false;
     bool show_rewind = false;
@@ -350,6 +415,19 @@ struct config_Debug
     bool show_ppi_registers = true;
     bool show_sf7000 = false;
     bool show_events = false;
+    // ROM map (DOCS/PROGRAM_ANALYSIS_AUDIT.md section 12): the window, and
+    // whether the map accumulates. Off by default - off costs nothing.
+    bool show_rom_map = false;
+    bool show_disassembler_new = false;
+    bool show_deep_search = false;
+    bool show_to_check = false;
+    bool show_palettes = false;
+    bool rom_map_enabled = false;
+    // Where the ROM map projects live (Debug > Analysis). Never left empty:
+    // config_read() fills in config_default_projects_dir() when a config
+    // from before this setting names none, so the value is always there to
+    // see in gearconfig.ini and in the menu.
+    std::string projects_dir;
     // Debug Events display filters - same class of bug as the grid/region
     // toggles above: plain statics that reset on every restart instead of
     // remembering how the list was left.
@@ -369,17 +447,22 @@ struct config_Debug
     // whole drawn area, same convention/step values as Video > Scale.
     float vram_background_area_scale = 2.0f;
     float vram_tiles_area_scale = 2.0f;
+    std::string vram_pattern_disabled_layer_options;
     float vram_sprites_area_scale = 4.0f;
     float vram_sprites_preview_area_scale = 1.0f;
     // 0 live SAT, 1 last rendered frame, 2 current fetch pipeline,
     // 3 one scanline from the last completed/rewind-restored frame.
-    int vram_sprites_source = 0;
+    std::string vram_sprites_source_code = "live-sat";
+    std::string vram_sprites_hidden_preview_parts;
+    std::string vram_sprites_disabled_preview_options;
     int vram_sprites_scanline = 0;
+    bool gray_inactive_sprite_attributes = true;
     // Grid/region overlays on the Name Table and Pattern Table views. These
     // used to be plain function-local statics, which meant they reset to
     // their default every restart - the whole point of a debug overlay
     // toggle is to stay how you left it.
     bool show_grid_background = true;
+    bool show_viewport_background = true;
     bool show_regions_background = false;
     bool show_grid_tiles = true;
     // GPU render-to-texture test pass (horizontal blur), not a real CRT
@@ -427,7 +510,6 @@ struct config_Debug
     bool multi_viewport = false;
 };
 
-EXTERN mINI::INIFile* config_ini_file;
 EXTERN mINI::INIStructure config_ini_data;
 EXTERN char* config_root_path;
 EXTERN char config_emu_file_path[4096];
@@ -450,9 +532,109 @@ inline Cartridge::CartridgeTypes config_forced_cartridge_type(void)
 // Only consulted in auto mode, and only when detection recognises nothing.
 inline Cartridge::CartridgeTypes config_fallback_cartridge_type(void)
 {
-    return config_emulator.mapper_mode == 1
-        ? Cartridge::CartridgeNotSupported
-        : (Cartridge::CartridgeTypes)config_emulator.mapper_fallback;
+    if (config_emulator.mapper_mode == 1)
+        return Cartridge::CartridgeNotSupported;
+
+    SystemModel model = static_cast<SystemModel>(config_emulator.machine);
+    if (!IsValidSystemModel(model))
+        model = SystemModel::SC3000Export;
+    return Cartridge::DefaultTypeForMachine(GetSystemMotherboard(model));
+}
+
+// The machine profile a model takes its mapper choice from.
+enum config_MapperFamily
+{
+    config_MapperFamily_SG1000 = 0,   // SG-1000 and SC-3000: the same slot
+    config_MapperFamily_SMS = 1,
+    config_MapperFamily_Coleco = 2,
+    config_MapperFamily_MSX = 3,
+    config_MapperFamily_M5 = 4,
+    config_MapperFamily_GameGear = 5,
+    config_MapperFamily_COUNT = 6
+};
+
+inline config_MapperFamily config_mapper_family(SystemModel model)
+{
+    if (!IsValidSystemModel(model))
+        return config_MapperFamily_SG1000;
+    return IsGameGearSystem(model) ? config_MapperFamily_GameGear
+        : IsSMSSystem(model) ? config_MapperFamily_SMS
+        : IsColecoSystem(model) ? config_MapperFamily_Coleco
+        : IsM5System(model) ? config_MapperFamily_M5
+        : IsMSXSystem(model) ? config_MapperFamily_MSX : config_MapperFamily_SG1000;
+}
+
+// Keeps the live mapper choice in its family's slot: called before the
+// configuration is written and before the machine changes family.
+inline void config_mapper_store(void)
+{
+    const config_MapperFamily f =
+        config_mapper_family(static_cast<SystemModel>(config_emulator.machine));
+    config_emulator.mapper_mode_by_family[f] = config_emulator.mapper_mode;
+    config_emulator.mapper_type_by_family[f] = config_emulator.mapper_type;
+}
+
+// The one way to change config_emulator.machine when the family may change:
+// the mapper choice of the family being left is kept, the one of the family
+// being entered comes back. Within a family (SG-1000 to SC-3000) nothing
+// moves, so a manual choice survives.
+inline std::string config_resolve_video_option(int legacy, const std::string& code)
+{
+    if (legacy == 0) return {};
+    const auto* option = GetVideoCatalog().FindOption(code);
+    if (option && option->legacyConfig == legacy) return code;
+    SystemVideoDevice device;
+    if (!GetSystemVideoDeviceFromConfigValue(legacy, device)) return {};
+    option = GetVideoCatalog().FindLegacyOption(device);
+    return option ? option->code : std::string{};
+}
+
+inline std::string config_selected_video_option()
+{
+    return config_resolve_video_option(config_emulator.vdp, config_emulator.video_option);
+}
+
+inline bool config_select_video_option(const std::string& code)
+{
+    if (code.empty()) {
+        config_emulator.vdp = 0;
+        config_emulator.video_option.clear();
+        return true;
+    }
+    const auto model = static_cast<SystemModel>(config_emulator.machine);
+    for (const auto* option : GetMachineVideoOptions(model))
+        if (option->code == code) {
+            config_emulator.video_option = code;
+            config_emulator.vdp = option->legacyConfig;
+            return true;
+        }
+    return false;
+}
+
+inline void config_select_machine(SystemModel model)
+{
+    if (!IsValidSystemModel(model)) return;
+    const int old = config_emulator.machine;
+    if (old == static_cast<int>(model)) return;
+    config_mapper_store();
+    config_emulator.last_board_by_machine[GetMachineMenuGroup(static_cast<SystemModel>(old)).code] = old;
+    config_emulator.vdp_by_model[old] = config_emulator.vdp;
+    config_emulator.video_option_by_model[old] = config_selected_video_option();
+    config_emulator.last_model_by_family[config_mapper_family(static_cast<SystemModel>(old))] = old;
+    config_emulator.vdp = config_emulator.vdp_by_model[static_cast<int>(model)];
+    config_emulator.video_option = config_emulator.video_option_by_model[static_cast<int>(model)];
+    if (IsColecoSystem(model)) config_emulator.coleco_sgm = HasSGM(model);
+    config_emulator.machine = (int)model;
+    const config_MapperFamily f = config_mapper_family(model);
+    config_emulator.mapper_mode = config_emulator.mapper_mode_by_family[f];
+    config_emulator.mapper_type = config_emulator.mapper_type_by_family[f];
+}
+
+inline SystemModel config_machine_group_selection(const MachineMenuGroup& group)
+{
+    const auto saved = config_emulator.last_board_by_machine.find(group.code);
+    return ChooseMachineMenuModel(group, static_cast<SystemModel>(config_emulator.machine),
+        saved == config_emulator.last_board_by_machine.end() ? group.defaultModel : static_cast<SystemModel>(saved->second));
 }
 
 EXTERN config_Input config_input[2];
@@ -465,14 +647,35 @@ inline config_VideoOutput& config_video_output_for_mode(bool debug_mode)
         ? config_debug.video : static_cast<config_VideoOutput&>(config_video);
 }
 
-EXTERN void config_init(void);
+// Optional explicit root for isolated integration tests / embedded desktop hosts.
+EXTERN void config_init(const char* settings_root = nullptr);
+// The headless instance's own settings folder, seeded once from the main one.
+EXTERN void config_init_headless(void);
+// The projects folder to use when the config names none. See config.cpp.
+EXTERN std::string config_default_projects_dir(void);
 EXTERN void config_destroy(void);
+EXTERN const std::string& config_get_storage_error();
+EXTERN const std::string& config_get_storage_notice();
+EXTERN bool config_storage_writable();
 EXTERN void config_read(void);
-EXTERN void config_write(void);
+struct config_SaveResult {
+    bool success;
+    bool retry_allowed;
+    std::string file;
+    std::string operation;
+    std::string error;
+};
+EXTERN config_SaveResult config_write(void);
+EXTERN config_SaveResult config_get_storage_result();
 EXTERN void config_update_hotkey_string(config_Hotkey* hotkey);
 EXTERN const char* config_hotkey_name(config_HotkeyIndex index);
 EXTERN const char* config_hotkey_label(config_HotkeyIndex index);
 EXTERN config_Hotkey config_default_hotkey(config_HotkeyIndex index);
+// Factory value of one joypad binding, found by which field of config_input it
+// is: the Default button of the binding popup and config_init share it. False
+// for a pointer that is not a joypad key or gamepad button.
+EXTERN bool config_default_key_binding(const SDL_Scancode* binding, SDL_Scancode* value);
+EXTERN bool config_default_button_binding(const int* binding, int* value);
 
 #undef CONFIG_IMPORT
 #undef EXTERN

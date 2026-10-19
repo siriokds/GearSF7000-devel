@@ -29,8 +29,9 @@
 // 12 KB costs about seventeen minutes at the matrix timing the injector needs.
 void gui_debug_basic_typer_window(void);
 
-// Driving the panel from outside the GUI - MCP tools can load a fragment,
-// clear it, or send it without the user having to touch the window.
+// Driving the panel from outside the GUI - the MCP tools use these, so an
+// agent can load a fragment in, clear it out, or send it without the user
+// having to touch the window.
 void gui_debug_basic_typer_set_text(const char* text);
 void gui_debug_basic_typer_clear(void);
 const char* gui_debug_basic_typer_get_text(void);

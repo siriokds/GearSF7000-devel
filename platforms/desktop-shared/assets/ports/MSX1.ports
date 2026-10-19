@@ -1,0 +1,11 @@
+; MSX1 motherboard ports (low eight address bits decoded).
+98 Port_VDPData
+99 Port_VDPControl out
+99 Port_VDPStatus in
+A0 Port_AYSelect out
+A1 Port_AYData out
+A2 Port_AYData in
+A8 Port_PrimarySlots
+A9 Port_KeyboardRow in
+AA Port_PPIControlLines
+AB Port_PPIControl out

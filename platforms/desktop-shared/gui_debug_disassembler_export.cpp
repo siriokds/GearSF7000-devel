@@ -87,7 +87,7 @@ void save_visible(FILE* file, Memory* memory)
             Memory::stDisassembleRecord* r = memory->GetDisassembleRecord((u16)address, false);
             if ((r != nullptr) && (r->name[0] != 0))
                 break;
-            gap_bytes.push_back(memory->Read((u16)address));
+            gap_bytes.push_back(memory->Peek((u16)address));
             address++;
         }
         fprintf(file, "L%04X:\n", gap_start);
@@ -136,15 +136,18 @@ void save_map_gapfilled(FILE* file, const char* segment, const u8* raw,
     }
 }
 
-// Dumps every physical disassembly map unconditionally, independent of
-// which bank/IPL-vs-RAM overlay happens to be active right now - the
-// counterpart to the mapper-agnostic "internal buffers" design already
-// used by Mem Import (point 1 of the same plan).
+// Export installed regions, including RAM currently hidden by an overlay.
 void save_full(FILE* file, Memory* memory, Cartridge* cartridge)
 {
-    save_map_gapfilled(file, "BIOS", memory->GetBios(), memory->GetDisassembledBiosMemoryMap(), 0x2000);
-    save_map_gapfilled(file, "RAM", memory->GetRam(), memory->GetDisassembledRamMemoryMap(), 0x0800);
-    save_map_gapfilled(file, "SGM", memory->GetSGMRam(), memory->GetDisassembledSGMRamMemoryMap(), 0x10000);
+    save_map_gapfilled(file, "BIOS", memory->GetBios(), memory->GetDisassembledBiosMemoryMap(), memory->GetBiosSize());
+    if (emu_get_core()->GetSystemBus()) for (const auto& region : emu_get_core()->GetSystemBus()->GetRamRegions())
+    {
+        auto** records = region.role == RamRole::Internal
+            ? memory->GetDisassembledInternalRamMemoryMap()
+            : memory->GetDisassembledExternalRamMemoryMap();
+        save_map_gapfilled(file, region.key, region.data,
+                          records ? records + region.backingOffset : nullptr, region.size);
+    }
     save_map_gapfilled(file, "ROM", cartridge->GetROM(), memory->GetDisassembledRomMemoryMap(),
                         (u32)cartridge->GetROMSize());
 }

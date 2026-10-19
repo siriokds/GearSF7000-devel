@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -25,6 +26,8 @@
 
 #define RENDERER_IMPORT
 #include "renderer.h"
+#include "../../src/IVideoDevice.h"
+#include "../../src/IVideoDebugProvider.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -33,28 +36,98 @@
 
 namespace
 {
-const config_VideoOutput& active_video_output()
+config_VideoOutput active_video_output()
 {
-    return config_video_output_for_mode(config_debug.debug);
+    return emu_get_effective_video_output(config_debug.debug);
 }
 
 SDL_GPUDevice* gpu_device = nullptr;
 SDL_Window* gpu_window = nullptr;
 SDL_GPUTexture* emu_texture = nullptr;
-SDL_GPUTexture* debug_background_texture = nullptr;
-SDL_GPUTexture* debug_tiles_texture = nullptr;
-SDL_GPUTexture* debug_sprite_textures[64] = {};
+// Frontend-owned, visible-size source for post-processing. The primary upload
+// texture remains capacity-sized and stable; this crop changes only when the
+// descriptor geometry changes. Keeping it exact makes one shader texel equal
+// one device pixel without baking a TMS-sized source into any shader.
+SDL_GPUTexture* emu_shader_source_texture = nullptr;
+int emu_shader_source_width = 0;
+int emu_shader_source_height = 0;
+SDL_GPUTexture* debug_sprite_atlas_texture = nullptr;
 SDL_GPUTexture* debug_rom_inspector_texture = nullptr;
 SDL_GPUTransferBuffer* emu_transfer = nullptr;
-SDL_GPUTransferBuffer* debug_background_transfer = nullptr;
-SDL_GPUTransferBuffer* debug_tiles_transfer = nullptr;
-SDL_GPUTransferBuffer* debug_sprite_transfers[64] = {};
+SDL_GPUTransferBuffer* debug_sprite_atlas_transfer = nullptr;
 SDL_GPUTransferBuffer* debug_rom_inspector_transfer = nullptr;
+int debug_sprite_atlas_width = 0;
+int debug_sprite_atlas_height = 0;
+u64 debug_sprite_atlas_device_generation = 0;
+u64 debug_sprite_atlas_surface_generation = 0;
+std::string debug_sprite_atlas_source;
+int debug_sprite_atlas_scanline = 0;
+bool debug_sprite_atlas_uploaded = false;
 SDL_GPUSampler* nearest_sampler = nullptr;
 GC_RuntimeInfo current_runtime = {};
 int emu_texture_width = 0;
 int emu_texture_height = 0;
+int emu_texture_capacity_width = 0;
+int emu_texture_capacity_height = 0;
+RendererTextureRegion emu_texture_region;
 std::vector<SDL_GPUTexture*> auxiliary_textures;
+
+// ImGui records raw SDL_GPUTexture pointers in its draw commands. A debug
+// surface may change size after those commands have been built but before
+// they are submitted (for example when a ROM switches between 256- and
+// 512-pixel modes). Keep replaced resources alive until that frame has
+// completed instead of leaving Metal to bind a pointer released mid-frame.
+struct RetiredTexture
+{
+    SDL_GPUTexture* texture = nullptr;
+    SDL_GPUTransferBuffer* transfer = nullptr;
+};
+
+std::vector<RetiredTexture> retired_textures;
+
+struct DebugLayerTexture
+{
+    u64 device_generation = 0;
+    std::string code;
+    SDL_GPUTexture* texture = nullptr;
+    SDL_GPUTransferBuffer* transfer = nullptr;
+    int width = 0;
+    int height = 0;
+    u64 uploaded_surface_generation = 0;
+    bool has_uploaded_surface = false;
+    u64 last_upload_epoch = 0;
+};
+
+std::vector<DebugLayerTexture> debug_layer_textures;
+u64 debug_layer_upload_epoch = 0;
+
+struct DebugLayerRequest
+{
+    u64 device_generation = 0;
+    std::string code;
+    u64 option_mask = 0;
+};
+
+std::vector<DebugLayerRequest> requested_debug_layers;
+
+struct DebugPreviewRequest
+{
+    u64 device_generation = 0;
+    u64 visible_part_mask = 0;
+    u64 option_mask = 0;
+};
+
+DebugPreviewRequest requested_debug_preview;
+bool has_requested_debug_preview = false;
+
+const char* debug_preview_texture_code()
+{
+    // One cache entry per video-device generation. When the requested mask
+    // changes, keep presenting the last complete upload until its replacement
+    // arrives on the following GPU pass; separate per-mask entries caused a
+    // one-frame black flash.
+    return "GC.DEBUG.PREVIEW";
+}
 
 // Second, GPU-side video output: a render target fed by a custom pipeline
 // sampling emu_texture, instead of CPU upload like every texture above.
@@ -185,6 +258,87 @@ void release_texture(SDL_GPUTexture*& texture, SDL_GPUTransferBuffer*& transfer)
     texture = nullptr;
 }
 
+void retire_texture(SDL_GPUTexture*& texture, SDL_GPUTransferBuffer*& transfer)
+{
+    if (texture || transfer)
+        retired_textures.push_back({texture, transfer});
+    texture = nullptr;
+    transfer = nullptr;
+}
+
+void release_retired_textures()
+{
+    for (RetiredTexture& resource : retired_textures)
+        release_texture(resource.texture, resource.transfer);
+    retired_textures.clear();
+}
+
+DebugLayerTexture* find_debug_layer_texture(u64 deviceGeneration, const char* code)
+{
+    if (!code)
+        return nullptr;
+    for (DebugLayerTexture& entry : debug_layer_textures)
+        if (entry.device_generation == deviceGeneration && entry.code == code)
+            return &entry;
+    return nullptr;
+}
+
+bool ensure_debug_layer_texture(DebugLayerTexture& entry, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return false;
+    if (entry.texture && entry.transfer && entry.width == width && entry.height == height)
+        return true;
+
+    SDL_GPUTexture* replacementTexture = create_texture(width, height);
+    SDL_GPUTransferBuffer* replacementTransfer = create_transfer(width, height);
+    if (!replacementTexture || !replacementTransfer)
+    {
+        release_texture(replacementTexture, replacementTransfer);
+        return false;
+    }
+    retire_texture(entry.texture, entry.transfer);
+    entry.texture = replacementTexture;
+    entry.transfer = replacementTransfer;
+    entry.width = width;
+    entry.height = height;
+    entry.has_uploaded_surface = false;
+    return true;
+}
+
+bool ensure_debug_sprite_atlas_texture(int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return false;
+    if (debug_sprite_atlas_texture && debug_sprite_atlas_transfer &&
+        debug_sprite_atlas_width == width && debug_sprite_atlas_height == height)
+        return true;
+
+    SDL_GPUTexture* replacementTexture = create_texture(width, height);
+    SDL_GPUTransferBuffer* replacementTransfer = create_transfer(width, height);
+    if (!replacementTexture || !replacementTransfer)
+    {
+        release_texture(replacementTexture, replacementTransfer);
+        return false;
+    }
+    retire_texture(debug_sprite_atlas_texture, debug_sprite_atlas_transfer);
+    debug_sprite_atlas_texture = replacementTexture;
+    debug_sprite_atlas_transfer = replacementTransfer;
+    debug_sprite_atlas_width = width;
+    debug_sprite_atlas_height = height;
+    debug_sprite_atlas_uploaded = false;
+    renderer_emu_debug_sprite_atlas = static_cast<ImTextureID>(
+        reinterpret_cast<uintptr_t>(debug_sprite_atlas_texture));
+    return true;
+}
+
+void release_debug_layer_textures()
+{
+    for (DebugLayerTexture& entry : debug_layer_textures)
+        release_texture(entry.texture, entry.transfer);
+    debug_layer_textures.clear();
+}
+
 // Unlike create_texture (CPU-upload only), this can be bound as a render
 // pass colour target as well as sampled afterwards - it never gets a
 // transfer buffer, only a GPU pipeline ever writes into it.
@@ -200,6 +354,16 @@ SDL_GPUTexture* create_render_target(int width, int height)
     info.num_levels = 1;
     info.sample_count = SDL_GPU_SAMPLECOUNT_1;
     return SDL_CreateGPUTexture(gpu_device, &info);
+}
+
+void set_current_picture_viewport(SDL_GPURenderPass* pass, int scale)
+{
+    SDL_GPUViewport viewport = {};
+    viewport.w = static_cast<float>(emu_texture_width * scale);
+    viewport.h = static_cast<float>(emu_texture_height * scale);
+    viewport.min_depth = 0.0f;
+    viewport.max_depth = 1.0f;
+    SDL_SetGPUViewport(pass, &viewport);
 }
 
 SDL_GPUShader* create_crt_pass_shader(SDL_GPUShaderStage stage,
@@ -347,8 +511,8 @@ bool ensure_crt_consumer_pipeline()
     return crt_consumer_pipeline != nullptr;
 }
 
-// Runs the display-stage test pass into crt_consumer_texture, reading
-// emu_texture directly - this operates on whatever RGB the signal stage
+// Runs the display-stage test pass into crt_consumer_texture, reading the
+// exact visible crop - this operates on whatever RGB the signal stage
 // (today: the default static palette, tomorrow: Composite/S-Video/RGB)
 // already produced, matching the real gameplay resolution and geometry.
 void render_crt_consumer_pass(SDL_GPUCommandBuffer* command)
@@ -362,9 +526,10 @@ void render_crt_consumer_pass(SDL_GPUCommandBuffer* command)
     target.store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(command, &target, 1, nullptr);
+    set_current_picture_viewport(pass, crt_consumer_debug_upscale);
     SDL_BindGPUGraphicsPipeline(pass, crt_consumer_pipeline);
 
-    SDL_GPUTextureSamplerBinding sourceBinding = {emu_texture, linear_sampler};
+    SDL_GPUTextureSamplerBinding sourceBinding = {emu_shader_source_texture, linear_sampler};
     SDL_BindGPUFragmentSamplers(pass, 0, &sourceBinding, 1);
 
     const float w = static_cast<float>(emu_texture_width);
@@ -405,7 +570,7 @@ bool ensure_crt_lottes_pipeline()
 }
 
 // Runs the second display-stage test pass into crt_lottes_texture, reading
-// emu_texture directly - same role as render_crt_consumer_pass, a second
+// the exact visible crop - same role as render_crt_consumer_pass, a second
 // candidate for the same stage rather than a replacement.
 void render_crt_lottes_pass(SDL_GPUCommandBuffer* command)
 {
@@ -418,6 +583,7 @@ void render_crt_lottes_pass(SDL_GPUCommandBuffer* command)
     target.store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(command, &target, 1, nullptr);
+    set_current_picture_viewport(pass, crt_lottes_debug_upscale);
     SDL_BindGPUGraphicsPipeline(pass, crt_lottes_pipeline);
 
     // Nearest, not linear: the shader computes exact texel-center UVs by
@@ -425,7 +591,7 @@ void render_crt_lottes_pass(SDL_GPUCommandBuffer* command)
     // LOD 0 for the same reason (COMPAT_TEXTURE(..., -16.0)), we have no
     // mips to force away from, but nearest keeps every fetch an exact texel
     // read regardless, matching the reference's intent precisely.
-    SDL_GPUTextureSamplerBinding sourceBinding = {emu_texture, nearest_sampler};
+    SDL_GPUTextureSamplerBinding sourceBinding = {emu_shader_source_texture, nearest_sampler};
     SDL_BindGPUFragmentSamplers(pass, 0, &sourceBinding, 1);
 
     const float w = static_cast<float>(emu_texture_width);
@@ -484,7 +650,7 @@ void render_crt_lottes_live_pass(SDL_GPUCommandBuffer* command)
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(command, &target, 1, nullptr);
     SDL_BindGPUGraphicsPipeline(pass, crt_lottes_pipeline);
 
-    SDL_GPUTextureSamplerBinding sourceBinding = {emu_texture, nearest_sampler};
+    SDL_GPUTextureSamplerBinding sourceBinding = {emu_shader_source_texture, nearest_sampler};
     SDL_BindGPUFragmentSamplers(pass, 0, &sourceBinding, 1);
 
     const float w = static_cast<float>(emu_texture_width);
@@ -560,7 +726,7 @@ void render_advanced_scaling_live_pass(SDL_GPUCommandBuffer* command)
     // top of that. The bold-dark-edges search samples arbitrary nearby UVs
     // instead, where nearest is still the right choice (cheap, and exact
     // enough for a same-or-adjacent-texel darkness check).
-    SDL_GPUTextureSamplerBinding sourceBinding = {emu_texture, nearest_sampler};
+    SDL_GPUTextureSamplerBinding sourceBinding = {emu_shader_source_texture, nearest_sampler};
     SDL_BindGPUFragmentSamplers(pass, 0, &sourceBinding, 1);
 
     const float w = static_cast<float>(emu_texture_width);
@@ -595,10 +761,11 @@ void render_crt_test_pass(SDL_GPUCommandBuffer* command)
     target.store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(command, &target, 1, nullptr);
+    set_current_picture_viewport(pass, 1);
     SDL_BindGPUGraphicsPipeline(pass, crt_blur_pipeline);
 
     SDL_GPUTextureSamplerBinding sourceBinding = {};
-    sourceBinding.texture = emu_texture;
+    sourceBinding.texture = emu_shader_source_texture;
     sourceBinding.sampler = linear_sampler;
     SDL_BindGPUFragmentSamplers(pass, 0, &sourceBinding, 1);
 
@@ -719,8 +886,8 @@ void recreate_crt_consumer_texture()
     SDL_WaitForGPUIdle(gpu_device);
     if (crt_consumer_texture) SDL_ReleaseGPUTexture(gpu_device, crt_consumer_texture);
     crt_consumer_texture = create_render_target(
-        emu_texture_width * crt_consumer_debug_upscale,
-        emu_texture_height * crt_consumer_debug_upscale);
+        emu_texture_capacity_width * crt_consumer_debug_upscale,
+        emu_texture_capacity_height * crt_consumer_debug_upscale);
     renderer_crt_consumer_texture = crt_consumer_texture
         ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(crt_consumer_texture))
         : ImTextureID_Invalid;
@@ -733,8 +900,8 @@ void recreate_crt_lottes_texture()
     SDL_WaitForGPUIdle(gpu_device);
     if (crt_lottes_texture) SDL_ReleaseGPUTexture(gpu_device, crt_lottes_texture);
     crt_lottes_texture = create_render_target(
-        emu_texture_width * crt_lottes_debug_upscale,
-        emu_texture_height * crt_lottes_debug_upscale);
+        emu_texture_capacity_width * crt_lottes_debug_upscale,
+        emu_texture_capacity_height * crt_lottes_debug_upscale);
     renderer_crt_lottes_texture = crt_lottes_texture
         ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(crt_lottes_texture))
         : ImTextureID_Invalid;
@@ -745,18 +912,44 @@ bool ensure_emulator_texture()
     const GC_VideoFrameDescriptor descriptor = emu_get_video_frame_descriptor();
     if (!descriptor.IsValid())
         return false;
-    if (emu_texture && emu_transfer &&
-        emu_texture_width == descriptor.frame_width &&
-        emu_texture_height == descriptor.frame_height)
+
+    const GC_VideoRect visible = descriptor.visible_area;
+    emu_texture_width = visible.width;
+    emu_texture_height = visible.height;
+    emu_texture_region.width = visible.width;
+    emu_texture_region.height = visible.height;
+
+    if (emu_texture_capacity_width > 0 && emu_texture_capacity_height > 0)
+    {
+        emu_texture_region.uv0 = ImVec2(
+            static_cast<float>(visible.x) / emu_texture_capacity_width,
+            static_cast<float>(visible.y) / emu_texture_capacity_height);
+        emu_texture_region.uv1 = ImVec2(
+            static_cast<float>(visible.x + visible.width) / emu_texture_capacity_width,
+            static_cast<float>(visible.y + visible.height) / emu_texture_capacity_height);
+    }
+
+    const bool mainTextureMatches = emu_texture && emu_transfer &&
+        emu_texture_capacity_width == descriptor.buffer_width &&
+        emu_texture_capacity_height == descriptor.buffer_height;
+    const bool shaderSourceMatches = emu_shader_source_texture &&
+        emu_shader_source_width == visible.width &&
+        emu_shader_source_height == visible.height;
+    if (mainTextureMatches && shaderSourceMatches)
         return true;
 
-    SDL_GPUTexture* replacementTexture = create_texture(
-        descriptor.frame_width, descriptor.frame_height);
-    SDL_GPUTransferBuffer* replacementTransfer = create_transfer(
-        descriptor.frame_width, descriptor.frame_height);
-    if (!replacementTexture || !replacementTransfer)
+    SDL_GPUTexture* replacementTexture = mainTextureMatches ? nullptr :
+        create_texture(descriptor.buffer_width, descriptor.buffer_height);
+    SDL_GPUTransferBuffer* replacementTransfer = mainTextureMatches ? nullptr :
+        create_transfer(descriptor.buffer_width, descriptor.buffer_height);
+    SDL_GPUTexture* replacementShaderSource = shaderSourceMatches ? nullptr :
+        create_render_target(visible.width, visible.height);
+    if ((!mainTextureMatches && (!replacementTexture || !replacementTransfer)) ||
+        (!shaderSourceMatches && !replacementShaderSource))
     {
         release_texture(replacementTexture, replacementTransfer);
+        if (replacementShaderSource)
+            SDL_ReleaseGPUTexture(gpu_device, replacementShaderSource);
         Log("SDL_GPU emulator texture allocation failed: %s\n", SDL_GetError());
         return false;
     }
@@ -764,39 +957,92 @@ bool ensure_emulator_texture()
     // Geometry changes are rare (region/device/output-mode changes).  Waiting
     // here makes releasing the previous texture unambiguous on every backend.
     SDL_WaitForGPUIdle(gpu_device);
-    release_texture(emu_texture, emu_transfer);
-    emu_texture = replacementTexture;
-    emu_transfer = replacementTransfer;
-    emu_texture_width = descriptor.frame_width;
-    emu_texture_height = descriptor.frame_height;
+    if (!mainTextureMatches)
+    {
+        release_texture(emu_texture, emu_transfer);
+        emu_texture = replacementTexture;
+        emu_transfer = replacementTransfer;
+        emu_texture_capacity_width = descriptor.buffer_width;
+        emu_texture_capacity_height = descriptor.buffer_height;
+    }
+    if (!shaderSourceMatches)
+    {
+        if (emu_shader_source_texture)
+            SDL_ReleaseGPUTexture(gpu_device, emu_shader_source_texture);
+        emu_shader_source_texture = replacementShaderSource;
+        emu_shader_source_width = visible.width;
+        emu_shader_source_height = visible.height;
+    }
+    emu_texture_region.uv0 = ImVec2(
+        static_cast<float>(visible.x) / emu_texture_capacity_width,
+        static_cast<float>(visible.y) / emu_texture_capacity_height);
+    emu_texture_region.uv1 = ImVec2(
+        static_cast<float>(visible.x + visible.width) / emu_texture_capacity_width,
+        static_cast<float>(visible.y + visible.height) / emu_texture_capacity_height);
     renderer_emu_texture = static_cast<ImTextureID>(
         reinterpret_cast<uintptr_t>(emu_texture));
 
-    if (crt_test_texture) SDL_ReleaseGPUTexture(gpu_device, crt_test_texture);
-    crt_test_texture = create_render_target(descriptor.frame_width, descriptor.frame_height);
-    renderer_crt_test_texture = crt_test_texture
-        ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(crt_test_texture))
-        : ImTextureID_Invalid;
+    if (!mainTextureMatches)
+    {
+        if (crt_test_texture) SDL_ReleaseGPUTexture(gpu_device, crt_test_texture);
+        crt_test_texture = create_render_target(descriptor.buffer_width, descriptor.buffer_height);
+        renderer_crt_test_texture = crt_test_texture
+            ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(crt_test_texture))
+            : ImTextureID_Invalid;
 
-    recreate_crt_consumer_texture();
-    recreate_crt_lottes_texture();
+        recreate_crt_consumer_texture();
+        recreate_crt_lottes_texture();
+    }
     return true;
 }
 
 bool upload_rgb(SDL_GPUCommandBuffer* command, SDL_GPUTexture* texture, SDL_GPUTransferBuffer* transfer,
-                const u8* source, int width, int height)
+                const u8* source, int width, int height, int sourceRowBytes = 0)
 {
     u8* destination = static_cast<u8*>(SDL_MapGPUTransferBuffer(gpu_device, transfer, true));
     if (!destination)
         return false;
-    const int pixels = width * height;
-    for (int pixel = 0; pixel < pixels; ++pixel)
+    if (sourceRowBytes <= 0)
+        sourceRowBytes = width * 3;
+    for (int y = 0; y < height; ++y)
     {
-        destination[pixel * 4 + 0] = source[pixel * 3 + 0];
-        destination[pixel * 4 + 1] = source[pixel * 3 + 1];
-        destination[pixel * 4 + 2] = source[pixel * 3 + 2];
-        destination[pixel * 4 + 3] = 0xff;
+        const u8* sourceRow = source + static_cast<std::size_t>(y) * sourceRowBytes;
+        u8* destinationRow = destination + static_cast<std::size_t>(y) * width * 4u;
+        for (int x = 0; x < width; ++x)
+        {
+            destinationRow[x * 4 + 0] = sourceRow[x * 3 + 0];
+            destinationRow[x * 4 + 1] = sourceRow[x * 3 + 1];
+            destinationRow[x * 4 + 2] = sourceRow[x * 3 + 2];
+            destinationRow[x * 4 + 3] = 0xff;
+        }
     }
+    SDL_UnmapGPUTransferBuffer(gpu_device, transfer);
+
+    SDL_GPUTextureTransferInfo from = {};
+    from.transfer_buffer = transfer;
+    from.pixels_per_row = width;
+    from.rows_per_layer = height;
+    SDL_GPUTextureRegion to = {};
+    to.texture = texture;
+    to.w = width;
+    to.h = height;
+    to.d = 1;
+    SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(command);
+    SDL_UploadToGPUTexture(pass, &from, &to, false);
+    SDL_EndGPUCopyPass(pass);
+    return true;
+}
+
+bool upload_rgba(SDL_GPUCommandBuffer* command, SDL_GPUTexture* texture,
+                 SDL_GPUTransferBuffer* transfer, const u8* source,
+                 int width, int height, int rowPitch)
+{
+    u8* destination = static_cast<u8*>(SDL_MapGPUTransferBuffer(gpu_device, transfer, true));
+    if (!destination)
+        return false;
+    for (int row = 0; row < height; ++row)
+        std::memcpy(destination + row * width * kBytesPerPixel,
+                    source + row * rowPitch, width * kBytesPerPixel);
     SDL_UnmapGPUTransferBuffer(gpu_device, transfer);
 
     SDL_GPUTextureTransferInfo from = {};
@@ -852,8 +1098,8 @@ bool upload_rgb(SDL_GPUCommandBuffer* command, SDL_GPUTexture* texture, SDL_GPUT
 // program in three compiled forms, and the Metal toolchain is a separate
 // several-hundred-megabyte Xcode component that is not installed here.
 //
-// emu_frame_buffer itself is never touched, which is the important part: the
-// screenshot tools, the full raster view and the recorder read it, and a
+// The device-owned frame itself is never touched, which is the important
+// part: screenshot tools, debug views and the recorder may read it, and a
 // frame they capture has to be the one the VDP drew, not an average of two.
 u8* ghost_previous = nullptr;
 u8* ghost_blended = nullptr;
@@ -967,30 +1213,203 @@ const u8* ghost_apply(const u8* current, int width, int height)
 
 void upload_images(SDL_GPUCommandBuffer* command)
 {
-    const GC_VideoFrameDescriptor descriptor = emu_get_video_frame_descriptor();
-    current_runtime.screen_width = descriptor.frame_width;
-    current_runtime.screen_height = descriptor.frame_height;
-    current_runtime.region = descriptor.region;
-    if (descriptor.frame_width != emu_texture_width ||
-        descriptor.frame_height != emu_texture_height)
+    const GC_VideoFrameView frame = emu_get_video_frame_view();
+    if (!frame.IsValid() || frame.pixel_format != GC_PIXEL_RGB888)
         return;
-    upload_rgb(command, emu_texture, emu_transfer,
-               ghost_apply(emu_frame_buffer, descriptor.frame_width,
-                           descriptor.frame_height),
-               descriptor.frame_width, descriptor.frame_height);
+    const GC_VideoFrameDescriptor& descriptor = frame.descriptor;
+    current_runtime.screen_width = descriptor.visible_area.width;
+    current_runtime.screen_height = descriptor.visible_area.height;
+    current_runtime.region = descriptor.region;
+    if (descriptor.buffer_width != emu_texture_capacity_width ||
+        descriptor.buffer_height != emu_texture_capacity_height ||
+        descriptor.visible_area.width != emu_texture_width ||
+        descriptor.visible_area.height != emu_texture_height)
+        return;
+    const int tightRowBytes = descriptor.frame_width * 3;
+    const bool tightFrame = frame.row_stride_bytes == tightRowBytes;
+    const u8* uploadSource = tightFrame
+        ? ghost_apply(frame.pixels, descriptor.frame_width,
+                      descriptor.frame_height)
+        : frame.pixels;
+    upload_rgb(command, emu_texture, emu_transfer, uploadSource,
+               descriptor.frame_width, descriptor.frame_height,
+               tightFrame ? tightRowBytes : frame.row_stride_bytes);
+
+    const bool spatialSupported = descriptor.SupportsPostProcessing(
+        GC_VIDEO_POSTPROCESSING_CAPABILITY_SPATIAL_SCALING);
+    const bool scanlineSupported = descriptor.SupportsPostProcessing(
+        GC_VIDEO_POSTPROCESSING_CAPABILITY_SCANLINE_CRT);
+    const bool needsShaderSource =
+        (crt_test_enabled && spatialSupported) ||
+        ((crt_consumer_enabled || crt_lottes_enabled ||
+          active_video_output().postprocessing == POSTPROCESSING_CRT_LOTTES) &&
+         scanlineSupported) ||
+        (active_video_output().postprocessing == POSTPROCESSING_ADVANCED_SCALING &&
+         spatialSupported);
+    if (needsShaderSource && emu_shader_source_texture)
+    {
+        const GC_VideoRect visible = descriptor.visible_area;
+        SDL_GPUBlitInfo blit = {};
+        blit.source.texture = emu_texture;
+        blit.source.x = static_cast<Uint32>(visible.x);
+        blit.source.y = static_cast<Uint32>(visible.y);
+        blit.source.w = static_cast<Uint32>(visible.width);
+        blit.source.h = static_cast<Uint32>(visible.height);
+        blit.destination.texture = emu_shader_source_texture;
+        blit.destination.w = static_cast<Uint32>(emu_shader_source_width);
+        blit.destination.h = static_cast<Uint32>(emu_shader_source_height);
+        blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        blit.flip_mode = SDL_FLIP_NONE;
+        blit.filter = SDL_GPU_FILTER_NEAREST;
+        blit.cycle = true;
+        SDL_BlitGPUTexture(command, &blit);
+    }
     if (!config_debug.debug)
         return;
 
-    if (config_debug.show_video)
+    // Debug panels request their device-owned surfaces while building the UI.
+    // Consume every request on the following upload pass so independent
+    // panels (for example Name Table and Pattern Table) can remain visible
+    // together without replacing one another's request.
+    std::vector<DebugLayerRequest> debugLayerRequests;
+    debugLayerRequests.swap(requested_debug_layers);
+    const DebugPreviewRequest debugPreviewRequest = requested_debug_preview;
+    const bool hasDebugPreviewRequest = has_requested_debug_preview;
+    has_requested_debug_preview = false;
+    const u64 upload_epoch = ++debug_layer_upload_epoch;
+    if (!debugLayerRequests.empty() || hasDebugPreviewRequest)
     {
-        // The machine can be paused after VRAM changed but before
-        // emu_run_frame() refreshed the debug cache. Decode at presentation
-        // time so Live SAT really means live.
-        emu_refresh_debug_sprite_buffers();
-        upload_rgb(command, debug_background_texture, debug_background_transfer, emu_debug_background_buffer, 256, 256);
-        upload_rgb(command, debug_tiles_texture, debug_tiles_transfer, emu_debug_tile_buffer, 256, 256);
-        for (int sprite = 0; sprite < 64; ++sprite)
-            upload_rgb(command, debug_sprite_textures[sprite], debug_sprite_transfers[sprite], emu_debug_sprite_buffers[sprite], 16, 16);
+        GearSF7000Core* core = emu_get_core();
+        const VideoDeviceHandle handle = core->AcquireVideoDevice();
+        IVideoDebugProvider* debug = core->IsVideoDeviceHandleCurrent(handle)
+            ? handle.device->GetDebugProvider() : nullptr;
+        if (debug)
+        {
+            const std::size_t layer_count = debug->GetDebugLayerCount();
+            for (std::size_t index = 0; index < layer_count; ++index)
+            {
+                GC_VideoDebugLayerDescriptor layer;
+                GC_VideoDebugLayerSurface surface;
+                if (!debug->DescribeDebugLayer(index, layer) || !layer.code)
+                    continue;
+                const auto request = std::find_if(debugLayerRequests.begin(),
+                    debugLayerRequests.end(), [&](const DebugLayerRequest& candidate)
+                    {
+                        return candidate.device_generation == handle.generation &&
+                               candidate.code == layer.code;
+                    });
+                if (request == debugLayerRequests.end() ||
+                    !debug->ReadDebugLayerSurfaceWithOptions(index,
+                        request->option_mask, surface) || !surface.rgba)
+                    continue;
+
+                DebugLayerTexture* entry = find_debug_layer_texture(handle.generation,
+                                                                      layer.code);
+                if (!entry)
+                {
+                    debug_layer_textures.push_back({});
+                    entry = &debug_layer_textures.back();
+                    entry->device_generation = handle.generation;
+                    entry->code = layer.code;
+                }
+                if (!ensure_debug_layer_texture(*entry, static_cast<int>(surface.width),
+                                                static_cast<int>(surface.height)))
+                    continue;
+                if (!entry->has_uploaded_surface ||
+                    entry->uploaded_surface_generation != surface.generation)
+                {
+                    upload_rgba(command, entry->texture, entry->transfer, surface.rgba,
+                                static_cast<int>(surface.width), static_cast<int>(surface.height),
+                                static_cast<int>(surface.row_pitch));
+                    entry->uploaded_surface_generation = surface.generation;
+                    entry->has_uploaded_surface = true;
+                }
+                entry->last_upload_epoch = upload_epoch;
+            }
+
+            if (hasDebugPreviewRequest)
+            {
+                const DebugPreviewRequest& request = debugPreviewRequest;
+                if (request.device_generation == handle.generation)
+                {
+                    GC_VideoDebugLayerSurface surface;
+                    if (debug->ReadDebugPreviewSurface(request.visible_part_mask,
+                            request.option_mask, surface) && surface.rgba)
+                    {
+                        const char* code = debug_preview_texture_code();
+                        DebugLayerTexture* entry = find_debug_layer_texture(
+                            handle.generation, code);
+                        if (!entry)
+                        {
+                            debug_layer_textures.push_back({});
+                            entry = &debug_layer_textures.back();
+                            entry->device_generation = handle.generation;
+                            entry->code = code;
+                        }
+                        if (ensure_debug_layer_texture(*entry,
+                                static_cast<int>(surface.width),
+                                static_cast<int>(surface.height)))
+                        {
+                            if (!entry->has_uploaded_surface ||
+                                entry->uploaded_surface_generation != surface.generation)
+                            {
+                                upload_rgba(command, entry->texture, entry->transfer,
+                                    surface.rgba, static_cast<int>(surface.width),
+                                    static_cast<int>(surface.height),
+                                    static_cast<int>(surface.row_pitch));
+                                entry->uploaded_surface_generation = surface.generation;
+                                entry->has_uploaded_surface = true;
+                            }
+                            entry->last_upload_epoch = upload_epoch;
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    for (auto it = debug_layer_textures.begin(); it != debug_layer_textures.end();)
+    {
+        if (it->last_upload_epoch == upload_epoch)
+        {
+            ++it;
+            continue;
+        }
+        release_texture(it->texture, it->transfer);
+        it = debug_layer_textures.erase(it);
+    }
+
+    if (config_debug.show_sprites)
+    {
+        GearSF7000Core* core = emu_get_core();
+        const VideoDeviceHandle handle = core->AcquireVideoDevice();
+        IVideoDebugProvider* provider = core->IsVideoDeviceHandleCurrent(handle)
+            ? handle.device->GetDebugProvider() : nullptr;
+        GC_VideoDebugSpriteAtlasSurface atlas;
+        if (provider && provider->ReadDebugSpriteAtlas(
+                config_debug.vram_sprites_source_code.c_str(),
+                config_debug.vram_sprites_scanline, atlas) && atlas.rgba &&
+            ensure_debug_sprite_atlas_texture(static_cast<int>(atlas.width),
+                static_cast<int>(atlas.height)))
+        {
+            const bool requestChanged = debug_sprite_atlas_device_generation != handle.generation ||
+                debug_sprite_atlas_source != config_debug.vram_sprites_source_code ||
+                debug_sprite_atlas_scanline != config_debug.vram_sprites_scanline;
+            if (!debug_sprite_atlas_uploaded || requestChanged ||
+                debug_sprite_atlas_surface_generation != atlas.generation)
+            {
+                upload_rgba(command, debug_sprite_atlas_texture,
+                    debug_sprite_atlas_transfer, atlas.rgba,
+                    static_cast<int>(atlas.width), static_cast<int>(atlas.height),
+                    static_cast<int>(atlas.row_pitch));
+                debug_sprite_atlas_device_generation = handle.generation;
+                debug_sprite_atlas_surface_generation = atlas.generation;
+                debug_sprite_atlas_source = config_debug.vram_sprites_source_code;
+                debug_sprite_atlas_scanline = config_debug.vram_sprites_scanline;
+                debug_sprite_atlas_uploaded = true;
+            }
+        }
     }
 
     if (config_debug.show_rom_inspector)
@@ -1009,7 +1428,9 @@ void set_emulator_sampler_callback(const ImDrawList*, const ImDrawCmd*)
         // draws renderer_crt_lottes_live_texture instead of emu_texture
         // (see gui.cpp), already rendered at the real output resolution, so
         // this sampler choice has no visible effect on that path either way.
-        state->SamplerCurrent = active_video_output().postprocessing == POSTPROCESSING_BILINEAR
+        state->SamplerCurrent =
+            active_video_output().postprocessing == POSTPROCESSING_BILINEAR &&
+            renderer_postprocessing_supported(POSTPROCESSING_BILINEAR)
             ? state->SamplerDefault : nearest_sampler;
 }
 
@@ -1042,26 +1463,15 @@ bool renderer_init(SDL_GPUDevice* device, SDL_Window* window)
 
     if (!ensure_emulator_texture())
         return false;
-    debug_background_texture = create_texture(256, 256);
-    debug_background_transfer = create_transfer(256, 256);
-    debug_tiles_texture = create_texture(256, 256);
-    debug_tiles_transfer = create_transfer(256, 256);
-    for (int sprite = 0; sprite < 64; ++sprite)
-    {
-        debug_sprite_textures[sprite] = create_texture(16, 16);
-        debug_sprite_transfers[sprite] = create_transfer(16, 16);
-    }
     debug_rom_inspector_texture = create_texture(ROM_INSPECTOR_TEXTURE_SIZE, ROM_INSPECTOR_TEXTURE_SIZE);
     debug_rom_inspector_transfer = create_transfer(ROM_INSPECTOR_TEXTURE_SIZE, ROM_INSPECTOR_TEXTURE_SIZE);
-    if (!nearest_sampler || !emu_texture || !emu_transfer || !debug_background_texture || !debug_background_transfer || !debug_tiles_texture || !debug_tiles_transfer || !debug_rom_inspector_texture || !debug_rom_inspector_transfer)
+    if (!nearest_sampler || !emu_texture || !emu_transfer ||
+        !debug_rom_inspector_texture || !debug_rom_inspector_transfer)
     {
         Log("SDL_GPU texture allocation failed: %s\n", SDL_GetError());
         return false;
     }
-    renderer_emu_debug_vram_background = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(debug_background_texture));
-    renderer_emu_debug_vram_tiles = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(debug_tiles_texture));
-    for (int sprite = 0; sprite < 64; ++sprite)
-        renderer_emu_debug_vram_sprites[sprite] = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(debug_sprite_textures[sprite]));
+    renderer_emu_debug_sprite_atlas = static_cast<ImTextureID>(0);
     renderer_emu_debug_rom_inspector = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(debug_rom_inspector_texture));
 
     ImGui_ImplSDLGPU3_InitInfo info = {};
@@ -1081,12 +1491,20 @@ void renderer_destroy(void)
 
     if (!gpu_device) return;
     SDL_WaitForGPUIdle(gpu_device);
+    release_retired_textures();
     ImGui_ImplSDLGPU3_Shutdown();
     release_texture(emu_texture, emu_transfer);
-    release_texture(debug_background_texture, debug_background_transfer);
-    release_texture(debug_tiles_texture, debug_tiles_transfer);
-    for (int sprite = 0; sprite < 64; ++sprite)
-        release_texture(debug_sprite_textures[sprite], debug_sprite_transfers[sprite]);
+    if (emu_shader_source_texture)
+        SDL_ReleaseGPUTexture(gpu_device, emu_shader_source_texture);
+    emu_shader_source_texture = nullptr;
+    emu_shader_source_width = 0;
+    emu_shader_source_height = 0;
+    release_debug_layer_textures();
+    release_texture(debug_sprite_atlas_texture, debug_sprite_atlas_transfer);
+    renderer_emu_debug_sprite_atlas = static_cast<ImTextureID>(0);
+    debug_sprite_atlas_width = 0;
+    debug_sprite_atlas_height = 0;
+    debug_sprite_atlas_uploaded = false;
     release_texture(debug_rom_inspector_texture, debug_rom_inspector_transfer);
     if (nearest_sampler) SDL_ReleaseGPUSampler(gpu_device, nearest_sampler);
     nearest_sampler = nullptr;
@@ -1125,8 +1543,6 @@ void renderer_destroy(void)
     advanced_scaling_live_width = 0;
     advanced_scaling_live_height = 0;
     renderer_emu_texture = ImTextureID_Invalid;
-    renderer_emu_debug_vram_background = ImTextureID_Invalid;
-    renderer_emu_debug_vram_tiles = ImTextureID_Invalid;
     renderer_emu_debug_rom_inspector = ImTextureID_Invalid;
     renderer_crt_test_texture = ImTextureID_Invalid;
     renderer_composite_decode_texture = ImTextureID_Invalid;
@@ -1139,6 +1555,9 @@ void renderer_destroy(void)
     auxiliary_textures.clear();
     emu_texture_width = 0;
     emu_texture_height = 0;
+    emu_texture_capacity_width = 0;
+    emu_texture_capacity_height = 0;
+    emu_texture_region = {};
     gpu_device = nullptr;
     gpu_window = nullptr;
 }
@@ -1269,17 +1688,19 @@ void renderer_render(void)
     SDL_GPUCommandBuffer* command = SDL_AcquireGPUCommandBuffer(gpu_device);
     if (!command) return;
     upload_images(command);
-    if (crt_test_enabled)
+    if (crt_test_enabled && renderer_postprocessing_supported(POSTPROCESSING_BILINEAR))
         render_crt_test_pass(command);
     if (composite_decode_enabled && composite_decode_ready)
         render_composite_decode_passes(command);
-    if (crt_consumer_enabled)
+    if (crt_consumer_enabled && renderer_postprocessing_supported(POSTPROCESSING_CRT_LOTTES))
         render_crt_consumer_pass(command);
-    if (crt_lottes_enabled)
+    if (crt_lottes_enabled && renderer_postprocessing_supported(POSTPROCESSING_CRT_LOTTES))
         render_crt_lottes_pass(command);
-    if (active_video_output().postprocessing == POSTPROCESSING_CRT_LOTTES)
+    if (active_video_output().postprocessing == POSTPROCESSING_CRT_LOTTES &&
+        renderer_postprocessing_supported(POSTPROCESSING_CRT_LOTTES))
         render_crt_lottes_live_pass(command);
-    if (active_video_output().postprocessing == POSTPROCESSING_ADVANCED_SCALING)
+    if (active_video_output().postprocessing == POSTPROCESSING_ADVANCED_SCALING &&
+        renderer_postprocessing_supported(POSTPROCESSING_ADVANCED_SCALING))
         render_advanced_scaling_live_pass(command);
     ImDrawData* draw_data = ImGui::GetDrawData();
     SDL_GPUTexture* swapchain = nullptr;
@@ -1301,6 +1722,15 @@ void renderer_render(void)
         SDL_EndGPURenderPass(pass);
     }
     SDL_SubmitGPUCommandBuffer(command);
+    if (!retired_textures.empty())
+    {
+        // Replacement is rare and tied to a mode/device geometry change.
+        // Waiting here keeps the ordinary frame path allocation- and
+        // synchronization-free while making the raw ImGui texture lifetime
+        // unambiguous on Metal, Vulkan and D3D12.
+        SDL_WaitForGPUIdle(gpu_device);
+        release_retired_textures();
+    }
 }
 
 void renderer_end_render(void) {}
@@ -1322,6 +1752,48 @@ void renderer_set_vsync(bool enabled)
 bool renderer_get_vsync(void)
 {
     return vsync_enabled;
+}
+
+RendererTextureRegion renderer_get_emulator_texture_region(void)
+{
+    return emu_texture_region;
+}
+
+RendererTextureRegion renderer_get_emulator_output_texture_region(void)
+{
+    RendererTextureRegion region;
+    region.width = emu_texture_width;
+    region.height = emu_texture_height;
+    if (emu_texture_capacity_width > 0 && emu_texture_capacity_height > 0)
+    {
+        region.uv1 = ImVec2(
+            static_cast<float>(emu_texture_width) / emu_texture_capacity_width,
+            static_cast<float>(emu_texture_height) / emu_texture_capacity_height);
+    }
+    return region;
+}
+
+bool renderer_postprocessing_supported(int postprocessing)
+{
+    const GC_VideoFrameDescriptor descriptor =
+        emu_get_video_frame_descriptor();
+    if (!descriptor.IsValid())
+        return postprocessing == POSTPROCESSING_NONE;
+
+    switch (postprocessing)
+    {
+        case POSTPROCESSING_NONE:
+            return true;
+        case POSTPROCESSING_BILINEAR:
+        case POSTPROCESSING_ADVANCED_SCALING:
+            return descriptor.SupportsPostProcessing(
+                GC_VIDEO_POSTPROCESSING_CAPABILITY_SPATIAL_SCALING);
+        case POSTPROCESSING_CRT_LOTTES:
+            return descriptor.SupportsPostProcessing(
+                GC_VIDEO_POSTPROCESSING_CAPABILITY_SCANLINE_CRT);
+        default:
+            return false;
+    }
 }
 
 RendererConversionStats renderer_get_conversion_stats(void)
@@ -1542,6 +2014,45 @@ void renderer_set_advanced_scaling_output_size(int width, int height)
 bool renderer_ensure_advanced_scaling_pipeline(void)
 {
     return ensure_advanced_scaling_pipeline();
+}
+
+ImTextureID renderer_get_debug_layer_texture(std::uint64_t device_generation,
+                                             const char* layer_code,
+                                             std::uint64_t option_mask,
+                                             std::uint64_t /*surface_generation*/)
+{
+    const std::string code = layer_code ? layer_code : "";
+    const auto request = std::find_if(requested_debug_layers.begin(),
+        requested_debug_layers.end(), [&](const DebugLayerRequest& request)
+        {
+            return request.device_generation == device_generation && request.code == code;
+        });
+    if (request == requested_debug_layers.end())
+        requested_debug_layers.push_back({ device_generation, code, option_mask });
+    else
+        request->option_mask = option_mask;
+    DebugLayerTexture* entry = find_debug_layer_texture(device_generation, layer_code);
+    // The CPU-owned surface can advance after this frame's GPU upload pass.
+    // Keep presenting the last complete texture while the newer generation
+    // is queued for the next pass; hiding it here caused a one-frame flash
+    // every time active VRAM changed.
+    if (!entry || !entry->texture || !entry->has_uploaded_surface)
+        return ImTextureID_Invalid;
+    return static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(entry->texture));
+}
+
+ImTextureID renderer_get_debug_preview_texture(std::uint64_t device_generation,
+                                               std::uint64_t visible_part_mask,
+                                               std::uint64_t option_mask,
+                                               std::uint64_t /*surface_generation*/)
+{
+    requested_debug_preview = { device_generation, visible_part_mask, option_mask };
+    has_requested_debug_preview = true;
+    DebugLayerTexture* entry = find_debug_layer_texture(device_generation,
+        debug_preview_texture_code());
+    if (!entry || !entry->texture || !entry->has_uploaded_surface)
+        return ImTextureID_Invalid;
+    return static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(entry->texture));
 }
 
 void renderer_begin_emulator_image(void)

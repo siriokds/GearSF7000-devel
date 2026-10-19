@@ -46,7 +46,7 @@ void CrtSignalDumpSink::AppendRecord(RecordType type, int dots)
 }
 
 void CrtSignalDumpSink::ConfigureSignal(bool isPAL,
-    TMS9918RasterTiming::SignalOutput signalOutput)
+    GC_CrtSignalOutput signalOutput)
 {
     AppendRecord(RecordConfigure, 0);
     m_Buffer.push_back(isPAL ? 1 : 0);

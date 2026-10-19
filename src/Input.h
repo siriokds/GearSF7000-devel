@@ -37,6 +37,8 @@ public:
     Input(CpuInterruptLines* interruptLines);
     void Init();
     void Reset();
+    // Everything the host holds, released (a return to live play after a load).
+    void ReleaseAll();
     void KeyPressed(GC_Controllers controller, GC_Keys key);
     void KeyReleased(GC_Controllers controller, GC_Keys key);
     void Spinner1(int movement);

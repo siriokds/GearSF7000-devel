@@ -58,6 +58,9 @@ struct GearSF7000StateAccess
 
     static bool Save(const ProcessorStorage& storage, std::ostream& stream);
     static bool Load(ProcessorStorage& storage, std::istream& stream);
+    // Whole-machine reset: discard sampled/latched interrupts from the old
+    // devices. Deasserting an NMI line alone cannot clear its pending edge.
+    static void ClearMachineInterruptRequests(ProcessorStorage& storage);
 };
 
 }

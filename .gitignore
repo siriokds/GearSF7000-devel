@@ -67,6 +67,7 @@ xcuserdata/
 platforms/**/gearsf7000
 platforms/**/gearsc3000
 platforms/**/.gearsf7000-build-config
+platforms/**/build/
 
 #Switch
 *.a
@@ -77,6 +78,8 @@ platforms/libretro/libs/
 
 #JetBrains
 .idea
+/src/NEC765.cpp
+
 # Built binary, not a deliverable: make writes it in the source tree.
 platforms/macos/gearsf7000
 
@@ -86,3 +89,11 @@ platforms/macos/gearsf7000
 
 # Local screenshots kept next to the repo, not project sources.
 /screens/
+__pycache__/
+# Web player generated files
+/platforms/web/dist/
+/platforms/web/dist-local/
+/platforms/web/build/
+/platforms/web/.emcache/
+/platforms/web/local-games/
+/platforms/libretro/gearsc3000_libretro_emscripten.bc

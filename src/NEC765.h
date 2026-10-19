@@ -30,8 +30,10 @@
 
 #include <stdint.h>
 #include <iosfwd>
+#include <string>
 //#include "MsxTypes.h"
 #include "Audio.h"
+#include "IDebugEventProvider.h"
 
 
 typedef struct NEC765 NEC765;
@@ -94,6 +96,35 @@ void nec765GetDebugInfo(NEC765* fdc, NEC765DebugInfo* info);
 // surface down to the fractional raw bit.
 void nec765SaveState(NEC765* fdc, std::ostream& stream);
 bool nec765LoadState(NEC765* fdc, std::istream& stream);
+
+struct NEC765DebugConfiguration
+{
+    std::string key;
+    std::string parentKey;
+    std::string name;
+    std::uint16_t ioPortBase = 0xE0;
+};
+
+// Owns the opaque blueMSX controller and gives that concrete instance the
+// common device-provider interface used during machine composition. The C API
+// remains available while the rest of the FDC implementation is modernised.
+class NEC765Device : public IDebugEventProvider
+{
+public:
+    explicit NEC765Device(NEC765DebugConfiguration debug = {});
+    ~NEC765Device();
+    NEC765Device(const NEC765Device&) = delete;
+    NEC765Device& operator=(const NEC765Device&) = delete;
+
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+    operator NEC765*() { return m_fdc; }
+    operator NEC765*() const { return m_fdc; }
+    explicit operator bool() const { return m_fdc != nullptr; }
+
+private:
+    NEC765* m_fdc = nullptr;
+    NEC765DebugConfiguration m_debug;
+};
 
 /* =========================================================
  * FDC diagnostic log

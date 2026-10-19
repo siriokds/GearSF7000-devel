@@ -34,6 +34,7 @@ public:
 
     void WritePSG(u8 data);
     void WriteAY8910(u8 reg, u8 data);
+    void WriteYM2413(u8 reg, u8 data);
     void UpdateTiming(int elapsed_samples);
 
 private:
@@ -53,6 +54,7 @@ private:
     bool m_bPAL;
     bool m_bPSGUsed;
     bool m_bAY8910Used;
+    bool m_bYM2413Used;
 };
 
 #endif /* VGM_RECORDER_H */

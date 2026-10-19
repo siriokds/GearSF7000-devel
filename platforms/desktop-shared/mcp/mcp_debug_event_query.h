@@ -25,7 +25,10 @@ struct McpDebugEventQuery
     std::string space;
 };
 
-inline bool McpDebugEventMatches(const DebugEvent& event, const McpDebugEventQuery& query)
+inline bool McpDebugEventMatches(const DebugEvent& event,
+                                 const McpDebugEventQuery& query,
+                                 const DebugDeviceRegistry& registry =
+                                     GetGearDebugDeviceRegistry())
 {
     if (query.hasSequenceFrom && event.sequence < query.sequenceFrom) return false;
     if (query.hasSequenceTo && event.sequence > query.sequenceTo) return false;
@@ -38,18 +41,20 @@ inline bool McpDebugEventMatches(const DebugEvent& event, const McpDebugEventQue
     if (query.hasTargetEnd && target > query.targetEnd) return false;
     if (query.category >= 0 && event.category != static_cast<u8>(query.category)) return false;
     if (query.accessMask != DebugEventAccess_None && (event.access & query.accessMask) == 0) return false;
-    if (!query.device.empty() && query.device != GetDebugDeviceName(event.device)) return false;
-    if (!query.space.empty() && query.space != GetDebugSpaceName(event.space)) return false;
+    if (!query.device.empty() && query.device != GetDebugDeviceName(registry, event.device)) return false;
+    if (!query.space.empty() && query.space != GetDebugSpaceName(registry, event.device, event.space)) return false;
     return true;
 }
 
 inline size_t McpFilterDebugEvents(const std::vector<DebugEvent>& source,
                                    const McpDebugEventQuery& query,
-                                   std::vector<DebugEvent>& output)
+                                   std::vector<DebugEvent>& output,
+                                   const DebugDeviceRegistry& registry =
+                                       GetGearDebugDeviceRegistry())
 {
     output.clear();
     for (const DebugEvent& event : source)
-        if (McpDebugEventMatches(event, query))
+        if (McpDebugEventMatches(event, query, registry))
             output.push_back(event);
 
     const size_t matched = output.size();
