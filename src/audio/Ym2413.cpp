@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "../definitions.h"
+#if GEARSF7000_ENABLE_YM2413
 #include "Ym2413.h"
 
 #include <algorithm>
@@ -333,3 +335,5 @@ DebugDeviceDefinition Ym2413::DescribeDebugDevice() const
     device.spaces.push_back(std::move(registers));
     return device;
 }
+
+#endif /* GEARSF7000_ENABLE_YM2413 */

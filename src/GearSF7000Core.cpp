@@ -55,8 +55,12 @@
 #include "MachineIOPorts.h"
 #include "SystemBusSC3000.h"
 #include "SystemBusSG1000.h"
+#if GEARSF7000_ENABLE_SMS
 #include "SystemBusSMS.h"
+#endif
+#if GEARSF7000_ENABLE_GAMEGEAR
 #include "SystemBusGG.h"
+#endif
 #if GEARSF7000_ENABLE_PICO9918
 #include "Pico9918.h"
 #endif
@@ -320,14 +324,18 @@ bool GearSF7000Core::ApplySystemModelAtReset(SystemModel model)
         if (type == MachineType::SG1000)
             replacement = std::make_unique<SystemBusSG1000>(
                 *m_pMemory, *m_pMachineIOPorts, HasSK1100(model));
+#if GEARSF7000_ENABLE_SMS
         else if (type == MachineType::SMS)
             replacement = std::make_unique<SystemBusSMS>(
                 *m_pMemory, *m_pMachineIOPorts,
                 model == SystemModel::SMSPAL);
+#endif
+#if GEARSF7000_ENABLE_GAMEGEAR
         else if (type == MachineType::GameGear)
             replacement = std::make_unique<SystemBusGG>(
                 *m_pMemory, *m_pMachineIOPorts, *m_pKeyboard, *m_pAudio,
                 model == SystemModel::GameGearExport);
+#endif
         else if (type == MachineType::SordM5)
             replacement = std::make_unique<SystemBusM5>(SystemBusM5::ProvisionalPsgWaitTStates, &m_debugEvents);
         else if (type == MachineType::MSX)
@@ -536,14 +544,18 @@ void GearSF7000Core::Init(GC_Color_Format pixelFormat)
     if (m_machineType == MachineType::SG1000)
         m_systemBus = std::make_unique<SystemBusSG1000>(
             *m_pMemory, *m_pMachineIOPorts, HasSK1100(m_systemModel));
+#if GEARSF7000_ENABLE_SMS
     else if (m_machineType == MachineType::SMS)
         m_systemBus = std::make_unique<SystemBusSMS>(
             *m_pMemory, *m_pMachineIOPorts,
             m_systemModel == SystemModel::SMSPAL);
+#endif
+#if GEARSF7000_ENABLE_GAMEGEAR
     else if (m_machineType == MachineType::GameGear)
         m_systemBus = std::make_unique<SystemBusGG>(
             *m_pMemory, *m_pMachineIOPorts, *m_pKeyboard, *m_pAudio,
             m_systemModel == SystemModel::GameGearExport);
+#endif
     else if (m_machineType == MachineType::SordM5)
         m_systemBus = std::make_unique<SystemBusM5>(SystemBusM5::ProvisionalPsgWaitTStates, &m_debugEvents);
     else if (m_machineType == MachineType::MSX)
@@ -1542,9 +1554,11 @@ u8 MegaDriveButton(GC_Keys key)
 void GearSF7000Core::JoystickPressed(GC_Controllers controller, GC_Keys key)
 {
     if (key == Key_GG_Start) {
+#if GEARSF7000_ENABLE_GAMEGEAR
         if (controller == Controller_1)
             if (auto* bus = dynamic_cast<SystemBusGG*>(m_systemBus.get()))
                 bus->SetStartPressed(true);
+#endif
         return;
     }
     if (auto* bus = GetM5Bus()) {
@@ -1568,9 +1582,11 @@ void GearSF7000Core::JoystickPressed(GC_Controllers controller, GC_Keys key)
 void GearSF7000Core::JoystickReleased(GC_Controllers controller, GC_Keys key)
 {
     if (key == Key_GG_Start) {
+#if GEARSF7000_ENABLE_GAMEGEAR
         if (controller == Controller_1)
             if (auto* bus = dynamic_cast<SystemBusGG*>(m_systemBus.get()))
                 bus->SetStartPressed(false);
+#endif
         return;
     }
     if (auto* bus = GetM5Bus()) {
@@ -1592,8 +1608,10 @@ void GearSF7000Core::JoystickReleased(GC_Controllers controller, GC_Keys key)
 
 void GearSF7000Core::ReleaseHostInput()
 {
+#if GEARSF7000_ENABLE_GAMEGEAR
     if (auto* bus = dynamic_cast<SystemBusGG*>(m_systemBus.get()))
         bus->SetStartPressed(false);
+#endif
     if (auto* bus = GetM5Bus()) {
         bus->Input().Release(M5Input::Source::Host, bus->CpuClock());
         bus->Input().Release(M5Input::Source::Synthetic, bus->CpuClock());
@@ -2071,10 +2089,12 @@ bool GearSF7000Core::SaveState(std::ostream& stream, size_t& size)
     if (m_machineType == MachineType::MSX)
         section(kSectionMSX, static_cast<SystemBusMSX*>(m_systemBus.get())->StateVersion(), [&](std::ostream& out) { static_cast<SystemBusMSX*>(m_systemBus.get())->SaveState(out); });
     if (auto* bus = GetM5Bus()) section(kSectionM5, 2, [&](std::ostream& out) { bus->SaveState(out); });
+#if GEARSF7000_ENABLE_GAMEGEAR
     if (m_machineType == MachineType::GameGear)
         section(kSectionGameGear, 1, [&](std::ostream& out) {
             static_cast<SystemBusGG*>(m_systemBus.get())->SaveState(out);
         });
+#endif
     section(kSectionMemory, 2,
             [&](std::ostream& out) { m_pMemory->SaveState(out); });
     section(kSectionCpu, 1, [&](std::ostream& out)
@@ -2557,12 +2577,16 @@ bool GearSF7000Core::LoadState(std::istream& stream)
                 apply(bytes, [&](std::istream& in) { if (!GetM5Bus()->LoadState(in)) in.setstate(std::ios::failbit); });
                 break;
             case kSectionGameGear:
+#if GEARSF7000_ENABLE_GAMEGEAR
                 if (m_machineType != MachineType::GameGear || section.version != 1) return false;
                 apply(bytes, [&](std::istream& in) {
                     if (!static_cast<SystemBusGG*>(m_systemBus.get())->LoadState(in))
                         in.setstate(std::ios::failbit);
                 });
                 break;
+#else
+                return false;
+#endif
             case kSectionMSX:
                 if (m_machineType != MachineType::MSX || (section.version < 1 || section.version > 4)) return false;
                 apply(bytes, [&](std::istream& in) {
@@ -2755,8 +2779,10 @@ void GearSF7000Core::Reset(bool pauseAtResetVector)
     RefreshM5Connections();
     m_pMemory->Reset();
     if (auto* bus = GetM5Bus()) bus->Reset();
+#if GEARSF7000_ENABLE_GAMEGEAR
     if (m_machineType == MachineType::GameGear)
         static_cast<SystemBusGG*>(m_systemBus.get())->Reset();
+#endif
     if (m_machineType == MachineType::MSX) static_cast<SystemBusMSX*>(m_systemBus.get())->Reset();
     m_sgm.Reset();
     m_pVdpInterruptLines->Reset();

@@ -1,5 +1,7 @@
-#include "SystemRamRegions.h"
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "definitions.h"
+#if GEARSF7000_ENABLE_SMS
+#include "SystemRamRegions.h"
 #include "SystemBusSMS.h"
 
 #include "MachineIOPorts.h"
@@ -59,3 +61,5 @@ DebugDeviceDefinition SystemBusSMS::DescribeDebugDevice() const
 
 RamRegions SystemBusSMS::GetRamRegions() const
 { return DescribeSystemRam(m_memory, GetMachineType()); }
+
+#endif /* GEARSF7000_ENABLE_SMS */

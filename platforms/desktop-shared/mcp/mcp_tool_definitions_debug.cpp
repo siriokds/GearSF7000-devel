@@ -164,6 +164,7 @@ static void AddMcpToolDefinitionsDebug_ChipStatus(json& tools)
         }}
     });
 
+#if GEARSF7000_ENABLE_YM2413
     tools.push_back({
         {"name", "get_ym2413_status"},
         {"title", "Get YM2413 Status"},
@@ -206,6 +207,7 @@ static void AddMcpToolDefinitionsDebug_ChipStatus(json& tools)
             {"additionalProperties", false}
         }}
     });
+#endif
 
     tools.push_back({
         {"name", "start_vgm_recording"},
@@ -285,6 +287,7 @@ static void AddMcpToolDefinitionsDebug_ChipStatus(json& tools)
         }}
     });
 
+#if GEARSF7000_ENABLE_YM2413
     tools.push_back({
         {"name", "get_ym2413_loudness"},
         {"title", "Get YM2413 Loudness"},
@@ -295,6 +298,7 @@ static void AddMcpToolDefinitionsDebug_ChipStatus(json& tools)
             {"additionalProperties", false}
         }}
     });
+#endif
 
     tools.push_back({
         {"name", "get_screenshot"},

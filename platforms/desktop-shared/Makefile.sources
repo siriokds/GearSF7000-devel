@@ -48,9 +48,6 @@ SOURCES_CXX := \
     $(SRC_DIR)/SystemBusColeco.cpp \
     $(SRC_DIR)/SystemBusSC3000.cpp \
     $(SRC_DIR)/SystemBusSG1000.cpp \
-    $(SRC_DIR)/SystemBusSMS.cpp \
-    $(SRC_DIR)/SystemBusGG.cpp \
-    $(SRC_DIR)/GameGearInternalBusHandler.cpp \
     $(SRC_DIR)/TMS99xxDebugEvents.cpp \
     $(SRC_DIR)/SN76489DebugEvents.cpp \
     $(SRC_DIR)/cpu/clk/CLKZ80Processor.cpp \
@@ -149,6 +146,19 @@ ifeq ($(USE_PICOSMSVDP_CORE),1)
 endif
 endif
 
+# Master System / Mark III and Game Gear. Their VDP lives in picoSMSvdp-core,
+# so they default to on only when that core is built in; definitions.h applies
+# the same rule to IDE builds.
+SEGA_VDP_AVAILABLE := $(if $(filter 1,$(ENABLE_PICO9918)),$(if $(filter 1,$(USE_PICOSMSVDP_CORE)),1,0),0)
+ENABLE_SMS ?= $(SEGA_VDP_AVAILABLE)
+ENABLE_GAMEGEAR ?= $(SEGA_VDP_AVAILABLE)
+ifeq ($(ENABLE_SMS),1)
+    SOURCES_CXX += $(SRC_DIR)/SystemBusSMS.cpp
+endif
+ifeq ($(ENABLE_GAMEGEAR),1)
+    SOURCES_CXX += $(SRC_DIR)/SystemBusGG.cpp $(SRC_DIR)/GameGearInternalBusHandler.cpp
+endif
+
 # The AY expansion is optional. Defined here rather than in Makefile.common
 # because that file is included after this one, and the source list has to know.
 # Makefile.common turns the same variable into -DGEARSF7000_ENABLE_AY. Keeping
@@ -161,7 +171,11 @@ endif
 
 # YM2413 FM Sound Unit. emu2413 is the MIT-licensed synthesis core vendored
 # from the same libgme checkout as the existing audio components.
+# It plugs into the Mark III / Master System only, so it goes with them.
 ENABLE_YM2413 ?= 1
+ifneq ($(ENABLE_SMS),1)
+    override ENABLE_YM2413 := 0
+endif
 ifeq ($(ENABLE_YM2413),1)
     SOURCES_C += $(SRC_DIR)/audio/emu2413.c
     SOURCES_CXX += $(SRC_DIR)/audio/Ym2413.cpp

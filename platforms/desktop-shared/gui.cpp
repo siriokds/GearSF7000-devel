@@ -1498,6 +1498,7 @@ static void main_menu(void)
                 ImGui::TextDisabled("Active: %s", GetMachineMenuGroup(running).label);
                 ImGui::Separator();
                 for (const auto& group : GetMachineMenuGroups()) {
+                    if (!MachineMenuGroupAvailable(group)) continue;
                     const auto target = config_machine_group_selection(group);
                     if (ImGui::MenuItem(group.label, "", MachineGroupContains(group, static_cast<SystemModel>(config_emulator.machine)),
                             MachineMenuModelAvailable(target))) {
@@ -1629,6 +1630,7 @@ static void main_menu(void)
                     {
                         if (IsMSXSystem(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::MSX_LINEAR) continue;
                         if (IsM5System(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::SORD_M5_LINEAR) continue;
+                        if (!Cartridge::IsTypeBuilt(entry.type)) continue;
                         const char* reason = NULL;
                         const bool fits = romSize == 0
                             || Cartridge::IsTypeCompatible(entry.type, romSize, &reason);
@@ -3392,11 +3394,19 @@ static void file_dialog_open_rom(void)
 {
     ScopedFileDialogAudioPause audioPause;
     nfdchar_t *outPath;
-#if GEARSF7000_PRODUCT_SC3000
-    nfdfilteritem_t filterItem[1] = { { "ROM Files", "sg,sc,sms,gg,rom,asc,asls,bin,zip" } };
-#else
-    nfdfilteritem_t filterItem[1] = { { "ROM Files", "sg,sc,sms,gg,col,cv,mx1,rom,asc,asls,bin,zip" } };
+    // Only the file types of machines this build has.
+    static const std::string kRomExtensions = std::string("sg,sc")
+#if GEARSF7000_ENABLE_SMS
+        + ",sms"
 #endif
+#if GEARSF7000_ENABLE_GAMEGEAR
+        + ",gg"
+#endif
+#if !GEARSF7000_PRODUCT_SC3000
+        + ",col,cv,mx1"
+#endif
+        + ",rom,asc,asls,bin,zip";
+    nfdfilteritem_t filterItem[1] = { { "ROM Files", kRomExtensions.c_str() } };
     nfdresult_t result = NFD_OpenDialogParented(
         &outPath, filterItem, 1, config_emulator.last_open_path.c_str());
     if (result == NFD_OKAY)

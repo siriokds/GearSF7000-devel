@@ -330,7 +330,9 @@ bool Cartridge::LoadFromZipFile(const u8* buffer, int size)
 
         bool supported_extension =
             (extension == "sg") || (extension == "sc") ||
+#if GEARSF7000_ENABLE_SMS
             (extension == "sms") ||
+#endif
             (extension == "asc") || (extension == "rom") ||
             (extension == "bin") || (extension == "asls");
 #if !GEARSF7000_PRODUCT_SC3000

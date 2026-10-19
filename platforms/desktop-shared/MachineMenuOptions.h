@@ -35,6 +35,7 @@ inline const MachineMenuGroup& GetMachineMenuGroup(SystemModel model)
 }
 inline bool MachineMenuModelAvailable(SystemModel model)
 {
+    if (!IsValidSystemModel(model)) return false;
 #if !GEARSF7000_ENABLE_AY
     if (IsMSXSystem(model) || HasSGM(model)) return false;
 #endif
@@ -42,6 +43,13 @@ inline bool MachineMenuModelAvailable(SystemModel model)
     if (IsSF7000System(model)) return false;
 #endif
     return GetDefaultMachineVideoOption(model) != nullptr;
+}
+// A group with no board in this build is not shown at all. The group list
+// itself stays whole: the configuration remembers every family.
+inline bool MachineMenuGroupAvailable(const MachineMenuGroup& group)
+{
+    for (auto model : group.models) if (MachineMenuModelAvailable(model)) return true;
+    return false;
 }
 inline SystemModel ChooseMachineMenuModel(const MachineMenuGroup& group, SystemModel current, SystemModel remembered)
 {

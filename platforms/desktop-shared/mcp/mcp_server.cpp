@@ -439,16 +439,31 @@ void McpServer::HandleInitialize(const json& request)
     // the registry so it cannot drift - and hands the detail to the help tool.
     EnsureToolRegistry();
     response["result"]["instructions"] =
-        "GearSF7000 emulates the Sega SC-3000 / SF-7000, SG-1000, the SMS family (Mark III, "
-        "Master System), MSX1 (PAL/NTSC) and the ColecoVision: Z80, TMS9918A or SMS VDP, SN76489 PSG, optional "
-        "AY-3-8910 and YM2413 FM. The ColecoVision board adds one wait state to every M1 cycle "
+        "GearSF7000 emulates the Sega SC-3000 / SF-7000, SG-1000, "
+#if GEARSF7000_ENABLE_SMS
+        "the SMS family (Mark III, Master System), "
+#endif
+#if GEARSF7000_ENABLE_GAMEGEAR
+        "the Game Gear, "
+#endif
+        "MSX1 (PAL/NTSC) and the ColecoVision: Z80, TMS9918A"
+#if GEARSF7000_ENABLE_SMS || GEARSF7000_ENABLE_GAMEGEAR
+        " or SMS VDP"
+#endif
+        ", SN76489 PSG, optional AY-3-8910"
+#if GEARSF7000_ENABLE_YM2413
+        " and YM2413 FM"
+#endif
+        ". The ColecoVision board adds one wait state to every M1 cycle "
         "and wires the VDP interrupt to NMI; get_system_info reports both. "
         "MSX1 has 32 KiB BIOS, 64 KiB RAM, linear 8/16/32 KiB cartridges and onboard AY; "
         "Sord M5 supports standard cartridges up to 20 KB, an external 8 KB BIOS, optional EM-5 32 KB RAM, active-high keyboard and two joysticks. Fire 1/2 share keyboard contacts 1/2 (P1) and 5/6 (P2). Tape transport and printer are not implemented. get_m5_status exposes CTC, memory decode, inputs and provisional PSG WAIT timing. "
         "MSX has an International keyboard through the PPI, PC7 click audio and WAV/MP3 cassette playback. Small BASIC cartridges are mapped in page 2 and need an external BIOS with BASIC (built-in C-BIOS has no BASIC). Joystick and banked cartridges are not implemented yet. Use get_msx_status for slots, PPI, keyboard, AY, click and cassette. "
+#if GEARSF7000_ENABLE_SMS
         "On the Master System and Mark III each controller port can hold a Mega Drive pad "
         "(3 or 6 buttons) instead of the SMS pad: set_controller_device switches it at any "
         "time, controller_button then takes a, b, c, start, x, y, z and mode. "
+#endif
         "get_system_options discovers machine and mapper choices; set_system_options stages "
         "them until debug_reset/load_rom. The AY card and specific VDP choice remain GUI settings. "
         "Projects can be resumed with open_rom_map_project; set_rom_map_projects_folder selects "
@@ -457,12 +472,20 @@ void McpServer::HandleInitialize(const json& request)
         m_toolRegistry.GetCategoryOverview() +
         "Call help_ai with a category name (e.g. topic=\"rewind\") to get its tools with "
         "descriptions, with any word to search all tools, with no topic for the full index. Start with get_system_info (which machine and what its board wires), debug_get_status, get_media_info and get_screenshot (264x224, borders "
-        "included; on a Game Gear only its 160x144 window - area \"frame\" shows the whole picture).\n"
+        "included"
+#if GEARSF7000_ENABLE_GAMEGEAR
+        "; on a Game Gear only its 160x144 window - area \"frame\" shows the whole picture"
+#endif
+        ").\n"
         "Pitfalls:\n"
         "- Addresses in arguments are hex strings (\"C000\").\n"
         "- controller_button rejects press_and_release: send press, step frames with "
         "debug_step_frame mode=sync, then release. Check frames_completed and breakpoint_hit.\n"
-        "- Settings the GUI marks \"reset required\" (such as set_ym2413_enabled) only stage the "
+        "- Settings the GUI marks \"reset required\""
+#if GEARSF7000_ENABLE_YM2413
+        " (such as set_ym2413_enabled)"
+#endif
+        " only stage the "
         "change: it takes effect after a ROM reset (debug_reset).\n"
         "- paused_by_core in debug_get_status can mean a person paused from the GUI: ask before "
         "resuming.\n"
@@ -1517,6 +1540,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         return m_debugAdapter.GetAY8910Status();
     }
+#if GEARSF7000_ENABLE_YM2413
     if (normalizedTool == "get_ym2413_status")
     {
         return m_debugAdapter.GetYM2413Status();
@@ -1539,6 +1563,7 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
     {
         return m_debugAdapter.GetYM2413Loudness();
     }
+#endif
     if (normalizedTool == "start_vgm_recording")
     {
         if (!arguments.contains("file_path") || !arguments["file_path"].is_string())
@@ -1760,11 +1785,13 @@ json McpServer::ExecuteCommand(const std::string& toolName, const json& argument
         std::string action = arguments["action"];
         return m_debugAdapter.ControllerButton(player, button, action);
     }
+#if GEARSF7000_ENABLE_SMS
     if (normalizedTool == "set_controller_device")
     {
         return m_debugAdapter.SetControllerDevice(arguments.value("player", 0),
                                                   arguments.value("device", ""));
     }
+#endif
     if (normalizedTool == "trigger_nmi")
     {
         return m_debugAdapter.TriggerNMI();

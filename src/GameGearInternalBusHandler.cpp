@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "definitions.h"
+#if GEARSF7000_ENABLE_GAMEGEAR
 #include "GameGearInternalBusHandler.h"
 
 #include "Audio.h"
@@ -90,3 +92,5 @@ void GameGearInternalBusHandler::Write(
     else if (port >= 0x07 && port < 0xC0)
         m_ports.SMSOut(tstates, port, value);
 }
+
+#endif /* GEARSF7000_ENABLE_GAMEGEAR */

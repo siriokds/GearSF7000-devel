@@ -90,11 +90,13 @@ constexpr bool IsValidSystemModel(SystemModel model)
            model == SystemModel::SC3000Export ||
            model == SystemModel::SC3000JapanSF7000 ||
            model == SystemModel::SC3000ExportSF7000 ||
-           model == SystemModel::SMSNTSC ||
-           model == SystemModel::SMSPAL ||
-           model == SystemModel::SegaMarkIII ||
            model == SystemModel::ColecoVision || model == SystemModel::ColecoVisionSGM || IsMSXSystem(model) || IsM5System(model)
-#if GEARSF7000_USE_PICOSMSVDP_CORE && GEARSF7000_ENABLE_PICO9918
+#if GEARSF7000_ENABLE_SMS
+           || model == SystemModel::SMSNTSC
+           || model == SystemModel::SMSPAL
+           || model == SystemModel::SegaMarkIII
+#endif
+#if GEARSF7000_ENABLE_GAMEGEAR
            || IsGameGearSystem(model)
 #endif
            ;

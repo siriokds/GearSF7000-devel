@@ -398,9 +398,8 @@ struct config_Debug
 #if GEARSF7000_ENABLE_AY
     bool show_ay = false;
 #endif
-#if GEARSF7000_ENABLE_YM2413
+    // Kept in every build so the configuration round-trips unchanged.
     bool show_ym2413 = false;
-#endif
     bool show_cassette = false;
     bool show_rewind = false;
     // Recorder capture is independent from whether its window is visible.

@@ -22,6 +22,7 @@
  */
 
 #include "mcp_tool_registry.h"
+#include "../../../src/definitions.h"
 #include <cctype>
 #include <sstream>
 
@@ -194,7 +195,11 @@ static const McpToolCategory kMcpToolCategories[] =
     {"disassembly", "Disassembly", "Disassembly of executed code, call stack, code coverage (what has actually run), the ROM map (per-ROM classification of every byte, coverage percent, persisted across sessions), bookmarks, save a listing to file."},
     {"symbols", "Symbols", "Add, remove, load, list, and look up debug symbols or labels."},
     {"hardware_video", "Video Hardware", "VDP registers, status and timing, video region, renderer source, framebuffer rows, slot history."},
+#if GEARSF7000_ENABLE_YM2413
     {"hardware_audio", "Audio Hardware", "SN76489 PSG, onboard/expansion AY-3-8910, one-bit click and YM2413 FM state; connect/disconnect the FM unit; perceived loudness (LUFS) of the FM bus and final mix."},
+#else
+    {"hardware_audio", "Audio Hardware", "SN76489 PSG, onboard/expansion AY-3-8910 and one-bit click state."},
+#endif
     {"hardware_m5", "Sord M5 Hardware", "M5 memory decode, CTC, keyboard and peripheral latches."},
     {"hardware_msx", "MSX Hardware", "MSX slot mapping, PPI, International keyboard, onboard AY and click audio."},
     {"hardware_sf7000", "SF-7000 Hardware", "Inspect SF-7000 expansion state: disk drive, FDC, serial port, and IPL ROM banking."},
@@ -202,8 +207,16 @@ static const McpToolCategory kMcpToolCategories[] =
     {"capture", "Capture", "Screenshots, sprite images and metadata, full-raster debug view, CRT signal dump, debug PNGs."},
     {"state", "Save States", "Save and load complete machine snapshots, in slots or files."},
     {"rewind", "Rewind", "Rewind recorder: recent frames are recorded continuously. See what it holds, seek back to any recorded frame, play/pause/step through the history, analyse a range. Also frame pacing settings."},
-    {"input", "Input", "Joypad (press, release, macros), SK-1100 and MSX International keyboard keys, type text into SC-3000 BASIC, keyboard mode, NMI, current input state; on the Master System and Mark III the controller type of each port (SMS pad, Mega Drive 3 or 6 buttons), changeable at any time."},
+    {"input", "Input", "Joypad (press, release, macros), SK-1100 and MSX International keyboard keys, type text into SC-3000 BASIC, keyboard mode, NMI, current input state"
+#if GEARSF7000_ENABLE_SMS
+        "; on the Master System and Mark III the controller type of each port (SMS pad, Mega Drive 3 or 6 buttons), changeable at any time"
+#endif
+        "."},
+#if GEARSF7000_ENABLE_YM2413
     {"trace", "Debug Events / Trace", "Debug Events: who touched what, and when. Devices form a tree (machine > device > space, e.g. event.sms > event.sms.fm > registers); list_debug_devices shows it with targets and presets, add_device_debug_rule attaches log-or-break rules to any node, set_trace_log records whole kinds unfiltered, get_debug_events reads the shared event ring."},
+#else
+    {"trace", "Debug Events / Trace", "Debug Events: who touched what, and when. Devices form a tree (machine > device > space, e.g. event.sc3000 > event.sc3000.ppi > event.sc3000.ppi.keyboard); list_debug_devices shows it with targets and presets, add_device_debug_rule attaches log-or-break rules to any node, set_trace_log records whole kinds unfiltered, get_debug_events reads the shared event ring."},
+#endif
     {"tools", "Other Tools", "Build identity, MCP transport status and this help."}
 };
 

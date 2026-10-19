@@ -66,6 +66,26 @@
 #ifndef GEARSF7000_USE_PICOSMSVDP_CORE
 #define GEARSF7000_USE_PICOSMSVDP_CORE 0
 #endif
+// The Master System family (Master System, Mark III) and the Game Gear. Their
+// VDP exists only in picoSMSvdp-core, so a build without it leaves them out
+// entirely: no machine entry, no file type, no code.
+#ifndef GEARSF7000_ENABLE_SMS
+#define GEARSF7000_ENABLE_SMS 1
+#endif
+#ifndef GEARSF7000_ENABLE_GAMEGEAR
+#define GEARSF7000_ENABLE_GAMEGEAR 1
+#endif
+#if !(GEARSF7000_USE_PICOSMSVDP_CORE && GEARSF7000_ENABLE_PICO9918)
+#undef GEARSF7000_ENABLE_SMS
+#define GEARSF7000_ENABLE_SMS 0
+#undef GEARSF7000_ENABLE_GAMEGEAR
+#define GEARSF7000_ENABLE_GAMEGEAR 0
+#endif
+// The YM2413 FM Sound Unit plugs into the Mark III / Master System only.
+#if !GEARSF7000_ENABLE_SMS
+#undef GEARSF7000_ENABLE_YM2413
+#define GEARSF7000_ENABLE_YM2413 0
+#endif
 // SDL is a desktop frontend detail. Existing IDE projects keep the legacy
 // adapter; non-SDL frontends explicitly compile it out and inject input via
 // the joystick and keyboard-matrix API.

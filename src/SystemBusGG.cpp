@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "definitions.h"
+#if GEARSF7000_ENABLE_GAMEGEAR
 #include "SystemBusGG.h"
 
 #include "Audio.h"
@@ -77,3 +79,5 @@ RamRegions SystemBusGG::GetRamRegions() const
 {
     return DescribeSystemRam(m_memory, GetMachineType());
 }
+
+#endif /* GEARSF7000_ENABLE_GAMEGEAR */

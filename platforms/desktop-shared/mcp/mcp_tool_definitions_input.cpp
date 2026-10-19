@@ -146,10 +146,20 @@ static void AddMcpToolDefinitionsInput_BasicAndKeyboard(json& tools)
 
 static void AddMcpToolDefinitionsInput_ControllerAndSprites(json& tools)
 {
+    json controller_buttons = json::array({"up", "down", "left", "right", "left_button", "right_button", "fire1", "fire2", "button1", "button2", "yellow", "red", "fire", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "keypad_0", "keypad_1", "keypad_2", "keypad_3", "keypad_4", "keypad_5", "keypad_6", "keypad_7", "keypad_8", "keypad_9", "keypad_asterisk", "keypad_hash"});
+    std::string controller_button_description = "Press/release one controller input for players 1-2: four directions and two fire buttons on every board; on the ColecoVision also the keypad keys 0-9, * and # (or keypad_0..keypad_9, keypad_asterisk, keypad_hash), which other boards refuse by name - get_system_info says whether the board has a keypad. See get_input_state for what can be read back.";
+#if GEARSF7000_ENABLE_SMS || GEARSF7000_ENABLE_GAMEGEAR
+    controller_buttons.push_back("start");
+#endif
+#if GEARSF7000_ENABLE_SMS
+    for (const char* button : {"a", "b", "c", "x", "y", "z", "mode"})
+        controller_buttons.push_back(button);
+    controller_button_description += " On a Master System or Mark III port holding a Mega Drive pad (set_controller_device) also a, b, c, start, x, y, z and mode (b and c are buttons 1 and 2).";
+#endif
     tools.push_back({
         {"name", "controller_button"},
         {"title", "Controller Button"},
-        {"description", "Press/release one controller input for players 1-2: four directions and two fire buttons on every board; on the ColecoVision also the keypad keys 0-9, * and # (or keypad_0..keypad_9, keypad_asterisk, keypad_hash), which other boards refuse by name - get_system_info says whether the board has a keypad. On a Master System or Mark III port holding a Mega Drive pad (set_controller_device) also a, b, c, start, x, y, z and mode (b and c are buttons 1 and 2). See get_input_state for what can be read back."},
+        {"description", controller_button_description},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", false}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -163,7 +173,7 @@ static void AddMcpToolDefinitionsInput_ControllerAndSprites(json& tools)
                 {"button", {
                     {"type", "string"},
                     {"description", "Direction, a fire button by any of its aliases, or a ColecoVision keypad key."},
-                    {"enum", json::array({"up", "down", "left", "right", "left_button", "right_button", "fire1", "fire2", "button1", "button2", "yellow", "red", "fire", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "keypad_0", "keypad_1", "keypad_2", "keypad_3", "keypad_4", "keypad_5", "keypad_6", "keypad_7", "keypad_8", "keypad_9", "keypad_asterisk", "keypad_hash", "a", "b", "c", "start", "x", "y", "z", "mode"})}
+                    {"enum", controller_buttons}
                 }},
                 {"action", {
                     {"type", "string"},
@@ -204,6 +214,7 @@ static void AddMcpToolDefinitionsInput_ControllerAndSprites(json& tools)
         {"inputSchema", {{"type", "object"}, {"properties", controller_macro_properties}, {"required", json::array({"commands"})}, {"additionalProperties", false}}}
     });
 
+#if GEARSF7000_ENABLE_SMS
     tools.push_back({
         {"name", "set_controller_device"},
         {"title", "Set Controller Device"},
@@ -219,6 +230,7 @@ static void AddMcpToolDefinitionsInput_ControllerAndSprites(json& tools)
             {"additionalProperties", false}
         }}
     });
+#endif
 
     tools.push_back({
         {"name", "get_input_state"},

@@ -1,5 +1,8 @@
 #include "../../../src/SystemBusM5.h"
+#include "../../../src/definitions.h"
+#if GEARSF7000_ENABLE_GAMEGEAR
 #include "../../../src/SystemBusGG.h"
+#endif
 #include "MSXKeyboard.h"
 #include "SystemBusMSX.h"
 #include "mcp_config.h"
@@ -2999,7 +3002,8 @@ json DebugAdapter::GetSystemOptions()
         }
     }
     for (int id = 0; id <= static_cast<int>(Cartridge::SORD_M5_LINEAR); ++id)
-        if (id != Cartridge::SF7000IPL && id != Cartridge::CartridgeNotSupported)
+        if (id != Cartridge::SF7000IPL && id != Cartridge::CartridgeNotSupported
+            && Cartridge::IsTypeBuilt(static_cast<Cartridge::CartridgeTypes>(id)))
             mappers.push_back({{"id", id}, {"name", emu_get_mapper_name(static_cast<Cartridge::CartridgeTypes>(id))}});
     return {{"models", models}, {"mappers", mappers}, {"current", GetSystemInfo()},
             {"note", "Manual mapper choices are development overrides, not a compatibility matrix. Changes are staged until reset/load; SF-7000 uses start_sf7000."}};
@@ -3019,7 +3023,8 @@ json DebugAdapter::SetSystemOptions(const json& arguments)
     if (arguments.contains("mapper_type_id") && mode != "manual")
         return {{"error", "mapper_type_id requires mapper_mode manual"}};
     if (mode == "manual" && (mapper < 0 || mapper > Cartridge::SORD_M5_LINEAR
-        || mapper == Cartridge::SF7000IPL || mapper == Cartridge::CartridgeNotSupported))
+        || mapper == Cartridge::SF7000IPL || mapper == Cartridge::CartridgeNotSupported
+        || !Cartridge::IsTypeBuilt(static_cast<Cartridge::CartridgeTypes>(mapper))))
         return {{"error", "Manual mode requires a mapper_type_id from get_system_options"}};
     if (mode == "manual" && IsM5System(static_cast<SystemModel>(modelId)) && mapper != Cartridge::SORD_M5_LINEAR)
         return {{"error", "Sord M5 requires the standard linear mapper"}};
@@ -4278,12 +4283,14 @@ json DebugAdapter::GetInputState()
         {"player1", player(0)},
         {"player2", player(6)}
     };
+#if GEARSF7000_ENABLE_GAMEGEAR
     if (m_core->GetMachineType() == MachineType::GameGear)
     {
         state.erase("player2");
         state["player1"]["start"] =
             static_cast<const SystemBusGG*>(m_core->GetSystemBus())->IsStartPressed();
     }
+#endif
     // A Master System port holds a device: which, and a Mega Drive pad's own
     // buttons and (six buttons) phase.
     if (m_core->GetMachineType() == MachineType::SMS)

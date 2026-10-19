@@ -84,6 +84,7 @@ static void select_rom_profile(const char* path)
             config_select_machine(SystemModel::SC3000);
         return;
     }
+#if GEARSF7000_ENABLE_GAMEGEAR
     if (path_has_extension(path, ".gg"))
     {
         // A Game Gear cartridge selects its own board. Keep an explicitly
@@ -93,6 +94,7 @@ static void select_rom_profile(const char* path)
                 config_emulator.last_model_by_family[config_MapperFamily_GameGear]));
         return;
     }
+#endif
     if (path_has_extension(path, ".mx1"))
     {
         if (!IsMSXSystem(current)) { config_select_machine(static_cast<SystemModel>(config_emulator.last_model_by_family[config_MapperFamily_MSX])); }
@@ -143,6 +145,7 @@ static void select_rom_profile(const char* path)
         config_select_machine(back);
     }
 
+#if GEARSF7000_ENABLE_SMS
     if (!path_has_extension(path, ".sms"))
         return;
 
@@ -158,6 +161,7 @@ static void select_rom_profile(const char* path)
     // The mapper choice follows the family: config_select_machine() brought
     // back the SMS one, so nothing retained from an SG-1000 session can
     // describe this cartridge, and the SG-1000 choice waits for its return.
+#endif
 }
 
 #ifdef __AVX2__
@@ -454,9 +458,11 @@ bool application_load_rom(const char* path)
 
     Log("application_load_rom %s", path);
 
-    if (path_has_extension(path, ".gg") && !IsValidSystemModel(SystemModel::GameGearExport))
+    // A machine left out of this build has no file type either.
+    if ((!GEARSF7000_ENABLE_SMS && path_has_extension(path, ".sms")) ||
+        (!GEARSF7000_ENABLE_GAMEGEAR && path_has_extension(path, ".gg")))
     {
-        Log("application_load_rom Game Gear is unavailable in this build: %s", path);
+        Log("application_load_rom unsupported file type: %s", path);
         return false;
     }
 

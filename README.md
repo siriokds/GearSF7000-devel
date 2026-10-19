@@ -152,7 +152,7 @@ incorrect rounded divisor.
 ### Audio quality and synchronisation
 
 Audio is generated from emulated clock events and mixed from separate PSG,
-AY, YM2413, floppy-drive and cassette-speaker paths.
+AY, floppy-drive and cassette-speaker paths.
 
 - SN76489 and AY/YM2149 writes retain their emulated timing in a coherent
   Blip_Buffer time domain. The AY divider and output level are calibrated
@@ -170,10 +170,6 @@ AY, YM2413, floppy-drive and cassette-speaker paths.
   the following frame rather than discarded.
 - The optional AY expansion is disconnected cleanly when absent, including
   its resting DC component, preventing an artificial startup click.
-- The optional YM2413 FM Sound Unit/interface is latched at reset. Mark III
-  switching keeps PSG and FM mutually exclusive; the prepared Japanese SMS
-  personality supports its four PSG/FM combinations. FM register writes are
-  available to Debug Events, the debugger, MCP and VGM capture.
 - Drift between the host audio device and emulated crystal is corrected in
   the resampler instead of by changing machine speed. The scheduler filters
   the device's block-drain ripple, targets a half-full queue and reports fill,
@@ -262,8 +258,7 @@ these configurations exactly as shown in the application:
 
 These profiles cover cartridge games as well as the memory arrangements used
 by the supported BASIC environments. "Console RAM" is the selected model's own
-work RAM: 1 KiB on the SG-1000, 2 KiB on the SC-3000, 8 KiB on the Mark III
-and Master System. Profiles that leave it out (32K, ASC16L, Survivors, Dahjee
+work RAM: 1 KiB on the SG-1000 and 2 KiB on the SC-3000. Profiles that leave it out (32K, ASC16L, Survivors, Dahjee
 B, Flat 64K) are those whose cartridge switches it off through slot pin B3.
 
 Games using the **ASC16L (ASCII 16 Lite)** mapper can be launched directly.
@@ -310,11 +305,8 @@ the console's own RAM, sized by the selected model, and the `$FFFF` page write
 also lands in it. The game clears and uses `$C000-$C3FF` with its stack at
 `$C3F0`, so it runs on 1, 2 and 8 KiB boards alike.
 GearSF7000 retains the TMS9918 video modes and palette and SN76489 audio for
-this profile. The known 128 KiB dump is selected by CRC and is accepted with
-either its `.sg` classification or its commonly used `.sms` extension; the
-filename never switches the emulator to SMS hardware. Manual mode makes the
-profile available for development images without forcing it on arbitrary SMS
-files.
+this profile. The known 128 KiB dump is selected by CRC. Manual mode makes
+the profile available for development images.
 
 ## Desktop emulator
 
@@ -524,13 +516,15 @@ builds do not reuse incompatible objects.
 
 ### Linux
 
-`USE_PICOSMSVDP_CORE=0` builds without the external Master System video
-core, which is not part of this repository. On Ubuntu or Debian:
+On Ubuntu or Debian:
 
 ```sh
 sudo apt install build-essential libsdl3-dev libgtk-3-dev
 make -C platforms/linux USE_PICOSMSVDP_CORE=0
 ```
+
+`USE_PICOSMSVDP_CORE=0` tells the makefile not to look for an external video
+core that is not part of this repository.
 
 The reduced SC-3000 cartridge-computer target is available with:
 

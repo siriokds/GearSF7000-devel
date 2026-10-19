@@ -174,6 +174,16 @@ public:
     // to say *why* an entry does not fit rather than just hiding it. `reason`
     // receives a short explanation when the result is false; may be NULL.
     static bool IsTypeCompatible(CartridgeTypes type, int romSize, const char** reason);
+    // Whether this build has a machine the type belongs to. A type whose
+    // machines are left out is not offered anywhere, as if it did not exist.
+    static constexpr bool IsTypeBuilt(CartridgeTypes type)
+    {
+#if !GEARSF7000_ENABLE_SMS && !GEARSF7000_ENABLE_GAMEGEAR
+        if (type == SMS_SEGA_MAPPER) return false;
+#endif
+        (void)type;
+        return true;
+    }
     // Default physical cartridge/RAM arrangement for an otherwise
     // unidentified image on the selected motherboard. Auto detection may
     // still replace it with a recognised special cartridge.
