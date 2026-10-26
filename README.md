@@ -71,7 +71,7 @@ from source using the instructions below.
 | Sound | SN76489 PSG, optional AY-3-8910 / YM2149 expansion, resampling, VGM/WAV capture and machine-speaker paths. |
 | Base systems | SG-1000 console mapping and SC-3000 computer memory map, PPI, keyboard, cartridge handling and Sega BASIC workflows. |
 | ColecoVision | 1 KiB console RAM, external 8 KiB BIOS, keypad controllers, the VDP interrupt on NMI and one wait state on every M1 cycle; Super Game Module RAM and AY; MegaCart banking. |
-| MSX1 | 64 KiB RAM, built-in C-BIOS or an external 32 KiB BIOS, linear 8/16/32 KiB cartridges, onboard AY, International keyboard, two joysticks on the AY ports, key click and WAV/MP3 cassette playback. Banked cartridges are not implemented yet. |
+| MSX1 | 64 KiB RAM, built-in C-BIOS or an external 32 KiB BIOS, linear 8/16/32 KiB cartridges, onboard AY, International keyboard, two joysticks on the AY ports, ASCII 16 MegaROM cartridges, key click and WAV/MP3 cassette playback. Other MegaROM mappers are not implemented yet. |
 | Sord M5 | 4 KiB console RAM, external 8 KiB BIOS, optional EM-5 32 KiB RAM, Z80 CTC, keyboard and two joysticks; cartridges up to 20 KB. Tape and printer are not implemented. |
 | Sega SF-7000 Super Control Station | Expansion with dedicated IPL cartridge, FDC765 floppy subsystem, drive control, disk timing, SegaDOS media and Intel 8251A serial interface. |
 | Sega SR-1000 Tape Recorder | Cassette motor, tape transport, tape speaker and WAV/Sega BASIC tape handling. |

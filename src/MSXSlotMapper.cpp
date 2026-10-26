@@ -52,6 +52,54 @@ void MSXLinearMemory::Write(u16 address, u8 value)
         m_writable[location.offset] = value;
 }
 
+MSXMemoryLocation MSXAscii16Rom::Resolve(u16 address) const
+{
+    const unsigned page = address >> 14;
+    const u32 banks = static_cast<u32>(m_rom.size() / 0x4000);
+    if ((page != 1 && page != 2) || !banks)
+        return {};
+    const u32 offset = (m_banks[page - 1] % banks) * 0x4000 + (address & 0x3FFF);
+    return {m_rom.data(), offset, false, static_cast<u32>(m_rom.size())};
+}
+
+u8 MSXAscii16Rom::Peek(u16 address) const
+{
+    const auto location = Resolve(address);
+    return location.data ? location.data[location.offset] : 0xFF;
+}
+
+void MSXAscii16Rom::Write(u16 address, u8 value)
+{
+    if (address < 0x6000 || address >= 0x7800 || (address & 0x0800))
+        return;
+    const unsigned window = (address >> 12) & 1;
+    const u8 before = m_banks[window];
+    m_banks[window] = value;
+    if (before != value && m_stateChange)
+        m_stateChange(window, before, value);
+}
+
+DebugDeviceDefinition MSXAscii16Rom::DescribeDebugDevice()
+{
+    DebugDeviceDefinition device;
+    device.key = "event.msx.cartridge_mapper";
+    device.parentKey = "event.msx";
+    device.typeKey = "msx.ascii16";
+    device.name = "MSX cartridge mapper (ASCII 16)";
+    DebugSpaceDefinition banks;
+    banks.id = DebugCommonSpace::State;
+    banks.key = "banks";
+    banks.name = "Bank registers";
+    banks.supportedAccesses = DebugEventAccess_Event;
+    banks.beforeValueAccesses = DebugEventAccess_Event;
+    banks.afterValueAccesses = DebugEventAccess_Event;
+    banks.capabilities = DebugDescriptorCapability_EventsPublished;
+    banks.targets = {{0, "Bank at $4000", 8}, {1, "Bank at $8000", 8}};
+    banks.targetMax = 1;
+    device.spaces.push_back(std::move(banks));
+    return device;
+}
+
 MSXSlotMapper::MSXSlotMapper(u8 expandedSlots) : m_expanded(expandedSlots)
 {
     if (expandedSlots & 0xF0)

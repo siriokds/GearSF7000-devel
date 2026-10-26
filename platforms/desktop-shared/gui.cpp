@@ -1609,6 +1609,7 @@ static void main_menu(void)
                     { Cartridge::SG1000_SEGA_315_5208_DAHJEE_B, "SG-1000 Sega 315-5208 + Dahjee B (8K)" },
                     { Cartridge::SMS_SEGA_MAPPER, "Master System Sega mapper" },
                     { Cartridge::MSX_LINEAR, "MSX linear (8/16/32K)" },
+                    { Cartridge::MSX_ASCII16, "MSX ASCII 16 MegaROM" },
                     { Cartridge::SORD_M5_LINEAR, "Sord M5 standard (up to 20 KB)" },
                     { Cartridge::COLECOVISION,   "ColecoVision standard (32K at 8000)" },
                     { Cartridge::COLECO_MEGACART, "Coleco MegaCart (128K-1MB)" },
@@ -1637,7 +1638,7 @@ static void main_menu(void)
 
                     for (const auto& entry : kTypes)
                     {
-                        if (IsMSXSystem(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::MSX_LINEAR) continue;
+                        if (IsMSXSystem(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::MSX_LINEAR && entry.type != Cartridge::MSX_ASCII16) continue;
                         if (IsM5System(static_cast<SystemModel>(config_emulator.machine)) && entry.type != Cartridge::SORD_M5_LINEAR) continue;
                         if (!Cartridge::IsTypeBuilt(entry.type)) continue;
                         const char* reason = NULL;
@@ -4946,6 +4947,7 @@ static const char* mapper_short_name(Cartridge::CartridgeTypes type)
         case Cartridge::SG1000_SEGA_315_5208_DAHJEE_B: return "5208+DJB";
         case Cartridge::SMS_SEGA_MAPPER:            return "SMS-SEGA";
         case Cartridge::MSX_LINEAR: return "MSX-LINEAR";
+        case Cartridge::MSX_ASCII16: return "MSX-ASCII16";
         case Cartridge::SORD_M5_LINEAR: return "M5-LINEAR";
         case Cartridge::COLECOVISION:               return "CV-STD";
         case Cartridge::COLECO_MEGACART:            return "CV-MEGA";

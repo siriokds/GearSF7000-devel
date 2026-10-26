@@ -2028,6 +2028,8 @@ const char* emu_get_mapper_name(Cartridge::CartridgeTypes type)
             return "Sord M5 standard cartridge (up to 20 KB)";
         case Cartridge::MSX_LINEAR:
             return "MSX linear cartridge (8/16/32KB)";
+        case Cartridge::MSX_ASCII16:
+            return "MSX ASCII 16 MegaROM (16KB banks)";
         case Cartridge::COLECOVISION:
             return "ColecoVision standard cartridge (up to 32KB at $8000)";
         case Cartridge::COLECO_MEGACART:

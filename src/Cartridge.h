@@ -111,6 +111,9 @@ public:
         // Mark III. A development target, and what an unidentified "TMR SEGA"
         // image gets on the libretro core, which expects the Mark III's 8 KiB.
         SG1000_SEGA_315_5208_DAHJEE_B,
+        // MSX ASCII 16 KiB MegaROM: two banked 16 KiB windows at $4000 and
+        // $8000 (see MSXAscii16Rom).
+        MSX_ASCII16,
         // Deliberately outside the sequential persisted mapper range.
         // ASC16LS packages are recognised by their file signature; the
         // desktop can also name this type in its manual mapper menu.
@@ -197,6 +200,11 @@ public:
     // unidentified image on the selected motherboard. Auto detection may
     // still replace it with a recognised special cartridge.
     static CartridgeTypes DefaultTypeForMachine(MachineType machine);
+    // An MSX image in auto mode: linear up to 32 KiB, otherwise the MegaROM
+    // mapper its bank-register writes point to, as openMSX guesses
+    // (RomFactory): CartridgeNotSupported, with the reason, for the mappers
+    // not emulated yet.
+    static CartridgeTypes GuessMSXType(const u8* data, int size, const char** reason);
     int GetROMSize() const;
     int GetROMBankCount() const;
     const char* GetFilePath() const;

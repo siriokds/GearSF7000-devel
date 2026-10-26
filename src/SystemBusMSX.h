@@ -62,6 +62,7 @@ public:
     const Intel8255& PPI() const { return m_ppi; }
     u8 KeyboardRow() const { return m_keyboardRow; }
     MSXSlotMapper& Slots() { return m_slots; }
+    const MSXAscii16Rom* Ascii16() const { return m_ascii16.get(); }
     MSXKeyboard& Keyboard() { return m_keyboard; }
     const MSXKeyboard& Keyboard() const { return m_keyboard; }
     MSXJoysticks& Joysticks() { return m_joysticks; }
@@ -75,7 +76,9 @@ public:
     std::vector<u8>& BasicROM() { return m_basicImage; }
     u32 LogoCRC() const;
     u32 BasicCRC() const;
+    // 5: an ASCII 16 cartridge, whose two bank registers follow the firmware.
     unsigned StateVersion() const {
+        if (m_ascii16) return 5;
 #if GEARSF7000_ENABLE_SR1000
         if (m_tape.HasMedia()) return 4;
 #endif
@@ -122,8 +125,9 @@ private:
     u8 m_keyboardRow = 0;
     bool m_keyboardClick = false;
     std::unique_ptr<MSXLinearMemory> m_bios, m_rom, m_ram;
+    std::unique_ptr<MSXAscii16Rom> m_ascii16;
     std::vector<u8> m_logoImage, m_basicImage;
     std::unique_ptr<MSXLinearMemory> m_logo, m_basic;
-    DebugDeviceId m_busId = 0, m_vdpId = 0, m_ayId = 0, m_ppiId = 0, m_slotsId = 0;
+    DebugDeviceId m_busId = 0, m_vdpId = 0, m_ayId = 0, m_ppiId = 0, m_slotsId = 0, m_mapperId = 0;
 };
 #endif

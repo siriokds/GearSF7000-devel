@@ -248,6 +248,7 @@ void Cartridge::ForceConfig(Cartridge::ForceConfiguration config)
             break;
         case Cartridge::SORD_M5_LINEAR:
         case Cartridge::MSX_LINEAR:
+        case Cartridge::MSX_ASCII16:
         case Cartridge::COLECO_MEGACART:
         case Cartridge::COLECOVISION:
             m_Type = config.type;
@@ -865,6 +866,9 @@ bool Cartridge::GatherMetadata(u32 crc)
         case Cartridge::MSX_LINEAR:
             Log("MSX linear cartridge selected");
             break;
+        case Cartridge::MSX_ASCII16:
+            Log("MSX ASCII 16 cartridge selected");
+            break;
         case Cartridge::COLECOVISION:
             Log("ColecoVision standard cartridge selected");
             break;
@@ -909,6 +913,39 @@ Cartridge::CartridgeTypes Cartridge::DefaultTypeForMachine(
     default:
         return SC3000_2K;
     }
+}
+
+Cartridge::CartridgeTypes Cartridge::GuessMSXType(const u8* data, int size, const char** reason)
+{
+    if (size <= 0x8000)
+        return MSX_LINEAR;
+    // Bank switching is done with ld (nnnn),a in the program; count them per
+    // register address, as openMSX does. Konami, Konami SCC and ASCII 8 are
+    // counted only to tell them apart: they are not emulated yet.
+    unsigned konami = 0, konamiScc = 0, ascii8 = 0, ascii16 = 0;
+    for (int i = 0; i + 2 < size; ++i)
+    {
+        if (data[i] != 0x32)
+            continue;
+        switch (data[i + 1] | (data[i + 2] << 8))
+        {
+        case 0x5000: case 0x9000: case 0xB000: konamiScc++; break;
+        case 0x4000: case 0x8000: case 0xA000: konami++; break;
+        case 0x6800: case 0x7800: ascii8++; break;
+        case 0x6000: konami++; ascii8++; ascii16++; break;
+        case 0x7000: konamiScc++; ascii8++; ascii16++; break;
+        case 0x77FF: ascii16++; break;
+        }
+    }
+    if (ascii8)
+        ascii8--;
+    if (ascii16 && ascii16 >= konami && ascii16 >= konamiScc && ascii16 >= ascii8)
+        return MSX_ASCII16;
+    if (reason)
+        *reason = konami || konamiScc || ascii8
+            ? "MegaROM with a Konami or ASCII 8 mapper, not emulated yet"
+            : "ROM over 32 KiB with no bank switching found";
+    return CartridgeNotSupported;
 }
 
 bool Cartridge::IsTypeCompatible(CartridgeTypes type, int romSize, const char** reason)
@@ -956,6 +993,11 @@ bool Cartridge::IsTypeCompatible(CartridgeTypes type, int romSize, const char** 
         case MSX_LINEAR:
             if (romSize != 0x2000 && romSize != 0x4000 && romSize != 0x8000)
             { ok = false; why = "MSX linear cartridges currently require 8, 16 or 32 KiB"; }
+            break;
+        case MSX_ASCII16:
+            // An 8-bit bank register: up to 256 banks of 16 KiB.
+            if (romSize < 0x8000 || romSize > 0x400000) { ok = false; why = "ASCII 16 images need 32 KiB to 4 MiB"; }
+            else if (romSize % 0x4000) { ok = false; why = "ASCII 16 ROM is not a whole number of 16 KiB banks"; }
             break;
         case COLECOVISION:
             // Four 8 KB chip selects from the console: nothing above $FFFF.
@@ -1079,6 +1121,9 @@ void Cartridge::GetMapperDescr(char *outstr)
         break;
     case Cartridge::MSX_LINEAR:
         strcpy(outstr, "MSX linear");
+        break;
+    case Cartridge::MSX_ASCII16:
+        strcpy(outstr, "MSX ASCII 16");
         break;
     case Cartridge::COLECOVISION:
         strcpy(outstr, "ColecoVision");

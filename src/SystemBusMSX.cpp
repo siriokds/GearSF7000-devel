@@ -89,7 +89,7 @@ void SystemBusMSX::RebindMemory()
 {
     for (unsigned slot = 0; slot < 4; ++slot)
         for (unsigned page = 0; page < 4; ++page) m_slots.Bind(slot, 0, page, nullptr);
-    m_bios.reset(); m_rom.reset(); m_ram.reset(); m_logo.reset(); m_basic.reset();
+    m_bios.reset(); m_rom.reset(); m_ram.reset(); m_logo.reset(); m_basic.reset(); m_ascii16.reset();
     if (m_memory.GetBiosSize() == GetBiosSize())
         m_bios = std::make_unique<MSXLinearMemory>(MSXLinearMemory::Rom(
             {m_memory.GetBios(), GetBiosSize()}, 0, 0x8000));
@@ -115,6 +115,16 @@ void SystemBusMSX::RebindMemory()
         m_rom = std::make_unique<MSXLinearMemory>(MSXLinearMemory::Rom(
             {data, size}, page2 ? 0x8000 : 0x4000, page2 ? 0x4000 : 0x8000, true));
     }
+    if (m_cart.IsReady() && m_cart.GetType() == Cartridge::MSX_ASCII16 &&
+        Cartridge::IsTypeCompatible(Cartridge::MSX_ASCII16, m_cart.GetROMSize(), nullptr))
+    {
+        m_ascii16 = std::make_unique<MSXAscii16Rom>(std::span<const u8>(
+            m_cart.GetROM(), static_cast<size_t>(m_cart.GetROMSize())));
+        m_ascii16->SetStateChangeCallback([this](u32 target, u8 before, u8 after) {
+            if (m_mapperId) m_memory.CheckDeviceStateChange(
+                {m_mapperId, DebugCommonSpace::State, target}, before, after);
+        });
+    }
     if (!m_logoImage.empty())
         m_logo = std::make_unique<MSXLinearMemory>(MSXLinearMemory::Rom(m_logoImage, 0x8000, 0x4000));
     if (!m_basicImage.empty())
@@ -122,7 +132,7 @@ void SystemBusMSX::RebindMemory()
     for (unsigned page = 0; page < 4; ++page)
     {
         m_slots.Bind(0, 0, page, m_bios.get());
-        m_slots.Bind(1, 0, page, m_rom.get());
+        m_slots.Bind(1, 0, page, m_ascii16 ? static_cast<MSXSlotDevice*>(m_ascii16.get()) : m_rom.get());
         m_slots.Bind(2, 0, page, m_basic.get());
         m_slots.Bind(3, 0, page, m_ram.get());
     }
@@ -230,6 +240,7 @@ void SystemBusMSX::BindDebugEvents(const DebugDeviceRegistry& registry)
     });
     m_busId = id("event.msx.bus"); m_vdpId = id("event.msx.vdp");
     m_ayId = id("event.msx.ay"); m_ppiId = id("event.msx.ppi"); m_slotsId = id("event.msx.slots");
+    m_mapperId = id("event.msx.cartridge_mapper");
 #if GEARSF7000_ENABLE_SR1000
     const DebugDeviceId tapeId = id("event.msx.tape");
     m_tape.SetEvents([this, tapeId](unsigned target, u8 value) {
@@ -263,19 +274,30 @@ void SystemBusMSX::SaveState(std::ostream& stream) const
         writer.U32(m_logoImage.size()); writer.U32(LogoCRC());
         writer.U32(m_basicImage.size()); writer.U32(BasicCRC());
     }
+    // Version 5 says whether the tape follows; in version 4 it always does.
+    bool tape = StateVersion() == 4;
+    if (StateVersion() >= 5) {
+        writer.U8(m_ascii16->GetBank(0)); writer.U8(m_ascii16->GetBank(1));
 #if GEARSF7000_ENABLE_SR1000
-    if (StateVersion() >= 4) m_tape.SaveState(stream);
+        tape = m_tape.HasMedia();
+#endif
+        writer.Bool(tape);
+    }
+#if GEARSF7000_ENABLE_SR1000
+    if (tape) m_tape.SaveState(stream);
 #endif
 }
 bool SystemBusMSX::LoadState(std::istream& stream, unsigned version)
 {
-    if (version < 1 || version > 4) return false;
+    if (version < 1 || version > 5) return false;
+    // Version 5 is the ASCII 16 cartridge's, and that cartridge needs it.
+    if ((version >= 5) != (m_ascii16 != nullptr)) return false;
     if (version < 3 && (!m_logoImage.empty() || !m_basicImage.empty())) return false;
 #if GEARSF7000_ENABLE_SR1000
     auto& tapeSource = m_tapeValidationSource ? *m_tapeValidationSource : m_tape;
     if (version < 4 && tapeSource.HasMedia()) return false;
 #else
-    if (version >= 4) return false;
+    if (version == 4) return false; // a tape, which this build cannot hold
 #endif
     MSXSlotMapper check;
     StateReader reader(stream);
@@ -289,17 +311,26 @@ bool SystemBusMSX::LoadState(std::istream& stream, unsigned version)
         if (!reader.Ok() || logoSize != m_logoImage.size() || logoCRC != LogoCRC() ||
             basicSize != m_basicImage.size() || basicCRC != BasicCRC()) return false;
     }
+    u8 banks[2] = {0, 0};
+    bool tape = version == 4;
+    if (version >= 5) {
+        banks[0] = reader.U8(); banks[1] = reader.U8(); tape = reader.Bool();
+        if (!reader.Ok()) return false;
+    }
     const auto state = candidate.m_ppi.GetSnapshot();
     if ((state.drivenValue[0] & state.drivenMask[0]) != check.GetPrimarySlots()) return false;
 #if GEARSF7000_ENABLE_SR1000
     std::string tapeBytes;
-    if (version >= 4) {
+    if (version >= 5 && tape != tapeSource.HasMedia()) return false;
+    if (tape) {
         tapeBytes.assign(std::istreambuf_iterator<char>(stream), {});
         std::istringstream checkTape(tapeBytes);
         if (!tapeSource.LoadState(checkTape, false) || checkTape.peek() != std::char_traits<char>::eof()) return false;
     }
     struct RestoreGuard { bool& flag; ~RestoreGuard() { flag = false; } } guard{m_restoringTape};
     m_restoringTape = true;
+#else
+    if (tape) return false;
 #endif
     std::ostringstream saved;
     candidate.m_ppi.SaveState(saved);
@@ -315,8 +346,9 @@ bool SystemBusMSX::LoadState(std::istream& stream, unsigned version)
     std::istringstream selectorInput(selectors.str());
     StateReader selectorReader(selectorInput);
     if (!m_slots.LoadState(selectorReader)) return false;
+    if (m_ascii16) m_ascii16->SetBanks(banks[0], banks[1]);
 #if GEARSF7000_ENABLE_SR1000
-    if (version >= 4 && !m_tapeValidationSource) {
+    if (tape && !m_tapeValidationSource) {
         std::istringstream tapeState(tapeBytes);
         if (!m_tape.LoadState(tapeState)) return false;
     }

@@ -57,6 +57,33 @@ private:
     bool m_mirror;
 };
 
+// ASCII 16 KiB MegaROM cartridge, after openMSX RomAscii16kB (revision in
+// DOCS/MSX_SLOT_MAPPER.md): two 16 KiB windows, $4000-$7FFF and $8000-$BFFF,
+// each showing the bank last written to $6000-$67FF and $7000-$77FF; both
+// start at bank 0 and pages 0 and 3 are not decoded. A bank past the image
+// wraps modulo the bank count. The ROM must be whole 16 KiB banks.
+class MSXAscii16Rom final : public MSXSlotDevice
+{
+public:
+    explicit MSXAscii16Rom(std::span<const u8> rom) : m_rom(rom) {}
+    u8 Peek(u16 address) const override;
+    void Write(u16 address, u8 value) override;
+    MSXMemoryLocation Resolve(u16 address) const override;
+    void Reset() { m_banks = {}; }
+    u8 GetBank(unsigned window) const { return m_banks[window & 1]; }
+    void SetBanks(u8 first, u8 second) { m_banks = {first, second}; } // silent: state restore
+    // Targets 0 and 1: the bank registers of $4000 and $8000.
+    using StateChange = std::function<void(u32 target, u8 before, u8 after)>;
+    void SetStateChangeCallback(StateChange callback) { m_stateChange = std::move(callback); }
+    // The board registers it whatever cartridge is fitted, so it is static.
+    static DebugDeviceDefinition DescribeDebugDevice();
+
+private:
+    std::span<const u8> m_rom;
+    std::array<u8, 2> m_banks{};
+    StateChange m_stateChange;
+};
+
 // Motherboard slot selection, distinct from cartridge bank switching and
 // the optional RAM mapper at ports FC-FF. Hardware behavior checked against
 // openMSX MSXCPUInterface (reference revision recorded in DOCS/MSX_SLOT_MAPPER.md).

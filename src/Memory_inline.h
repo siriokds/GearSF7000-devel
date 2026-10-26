@@ -347,6 +347,7 @@ inline void Memory::Write(u16 address, u8 value)
     {
         case Cartridge::SORD_M5_LINEAR:
         case Cartridge::MSX_LINEAR: // decoded by the attached MSX slot selector
+        case Cartridge::MSX_ASCII16:
             break;
         case Cartridge::CartridgeTypes::SMS_SEGA_MAPPER:
         {

@@ -3010,6 +3010,7 @@ json DebugAdapter::GetSystemOptions()
         if (id != Cartridge::SF7000IPL && id != Cartridge::CartridgeNotSupported
             && Cartridge::IsTypeBuilt(static_cast<Cartridge::CartridgeTypes>(id)))
             mappers.push_back({{"id", id}, {"name", emu_get_mapper_name(static_cast<Cartridge::CartridgeTypes>(id))}});
+    mappers.push_back({{"id", Cartridge::MSX_ASCII16}, {"name", emu_get_mapper_name(Cartridge::MSX_ASCII16)}});
     return {{"models", models}, {"mappers", mappers}, {"current", GetSystemInfo()},
             {"note", "Manual mapper choices are development overrides, not a compatibility matrix. Changes are staged until reset/load; SF-7000 uses start_sf7000."}};
 }
@@ -3027,14 +3028,15 @@ json DebugAdapter::SetSystemOptions(const json& arguments)
     const int mapper = arguments.value("mapper_type_id", -1);
     if (arguments.contains("mapper_type_id") && mode != "manual")
         return {{"error", "mapper_type_id requires mapper_mode manual"}};
-    if (mode == "manual" && (mapper < 0 || mapper > Cartridge::SORD_M5_LINEAR
+    if (mode == "manual" && mapper != Cartridge::MSX_ASCII16 && (mapper < 0 || mapper > Cartridge::SORD_M5_LINEAR
         || mapper == Cartridge::SF7000IPL || mapper == Cartridge::CartridgeNotSupported
         || !Cartridge::IsTypeBuilt(static_cast<Cartridge::CartridgeTypes>(mapper))))
         return {{"error", "Manual mode requires a mapper_type_id from get_system_options"}};
     if (mode == "manual" && IsM5System(static_cast<SystemModel>(modelId)) && mapper != Cartridge::SORD_M5_LINEAR)
         return {{"error", "Sord M5 requires the standard linear mapper"}};
-    if (mode == "manual" && IsMSXSystem(static_cast<SystemModel>(modelId)) && mapper != Cartridge::MSX_LINEAR)
-        return {{"error", "MSX1 currently supports the MSX linear mapper only"}};
+    if (mode == "manual" && IsMSXSystem(static_cast<SystemModel>(modelId)) &&
+        mapper != Cartridge::MSX_LINEAR && mapper != Cartridge::MSX_ASCII16)
+        return {{"error", "MSX1 supports the MSX linear and ASCII 16 mappers"}};
     if (arguments.contains("m5_em5") &&
         (!IsM5System(static_cast<SystemModel>(modelId)) || !arguments["m5_em5"].is_boolean()))
         return {{"error", "m5_em5 must be a boolean with a Sord M5 model"}};

@@ -721,6 +721,7 @@ void GearSF7000Core::RebuildDebugEventCatalog()
                 space.capabilities = DebugDescriptorCapability_EventsPublished;
         if (!catalog->AddDefinition(std::move(video), error) ||
             !catalog->Add(bus->Keyboard(), error) || !catalog->Add(bus->Slots(), error) ||
+            !catalog->AddDefinition(MSXAscii16Rom::DescribeDebugDevice(), error) ||
             !catalog->AddDefinition(std::move(ppi), error))
             throw std::logic_error(error);
 #if GEARSF7000_ENABLE_AY
@@ -1073,6 +1074,29 @@ static void ApplySg16HeaderRam(Cartridge* cartridge, const Memory* memory)
         needed, static_cast<unsigned>(memory->GetBoardRamSize()));
 }
 
+namespace
+{
+// The MSX cartridge type: a manual choice of an MSX mapper as it is; in auto
+// mode (no choice) from the image. Anything else, or a size the type cannot
+// take, gives CartridgeNotSupported and the reason.
+Cartridge::CartridgeTypes MSXCartridgeType(const Cartridge& cart,
+    const Cartridge::ForceConfiguration* config, const char** reason)
+{
+    Cartridge::CartridgeTypes type = config ? config->type : Cartridge::CartridgeNotSupported;
+    if (type == Cartridge::CartridgeNotSupported)
+        type = Cartridge::GuessMSXType(cart.GetROM(), cart.GetROMSize(), reason);
+    else if (type != Cartridge::MSX_LINEAR && type != Cartridge::MSX_ASCII16)
+    {
+        if (reason) *reason = "not an MSX cartridge mapper";
+        return Cartridge::CartridgeNotSupported;
+    }
+    if (type == Cartridge::CartridgeNotSupported ||
+        !Cartridge::IsTypeCompatible(type, cart.GetROMSize(), reason))
+        return Cartridge::CartridgeNotSupported;
+    return type;
+}
+}
+
 bool GearSF7000Core::LoadROM(const char* szFilePath, Cartridge::ForceConfiguration* config, bool pauseAtResetVector)
 {
     const bool loaded = m_pCartridge->LoadFromFile(szFilePath);
@@ -1093,8 +1117,8 @@ bool GearSF7000Core::LoadROM(const char* szFilePath, Cartridge::ForceConfigurati
         else if (m_machineType == MachineType::MSX)
         {
             const char* reason = nullptr;
-            if ((config && config->type != Cartridge::CartridgeNotSupported && config->type != Cartridge::MSX_LINEAR) ||
-                !Cartridge::IsTypeCompatible(Cartridge::MSX_LINEAR, m_pCartridge->GetROMSize(), &reason))
+            const Cartridge::CartridgeTypes type = MSXCartridgeType(*m_pCartridge, config, &reason);
+            if (type == Cartridge::CartridgeNotSupported)
             {
                 Log("MSX cartridge rejected: %s", reason ? reason : "incompatible mapper");
                 m_pCartridge->Reset();
@@ -1103,7 +1127,7 @@ bool GearSF7000Core::LoadROM(const char* szFilePath, Cartridge::ForceConfigurati
             }
             Cartridge::ForceConfiguration msx;
             if (config) msx = *config;
-            msx.type = Cartridge::MSX_LINEAR;
+            msx.type = type;
             m_pCartridge->ForceConfig(msx);
         }
         else if (IsValidPointer(config))
@@ -1175,8 +1199,8 @@ bool GearSF7000Core::LoadROMFromBuffer(const u8* buffer, int size, Cartridge::Fo
         else if (m_machineType == MachineType::MSX)
         {
             const char* reason = nullptr;
-            if ((config && config->type != Cartridge::CartridgeNotSupported && config->type != Cartridge::MSX_LINEAR) ||
-                !Cartridge::IsTypeCompatible(Cartridge::MSX_LINEAR, m_pCartridge->GetROMSize(), &reason))
+            const Cartridge::CartridgeTypes type = MSXCartridgeType(*m_pCartridge, config, &reason);
+            if (type == Cartridge::CartridgeNotSupported)
             {
                 Log("MSX cartridge rejected: %s", reason ? reason : "incompatible mapper");
                 m_pCartridge->Reset();
@@ -1185,7 +1209,7 @@ bool GearSF7000Core::LoadROMFromBuffer(const u8* buffer, int size, Cartridge::Fo
             }
             Cartridge::ForceConfiguration msx;
             if (config) msx = *config;
-            msx.type = Cartridge::MSX_LINEAR;
+            msx.type = type;
             m_pCartridge->ForceConfig(msx);
         }
         else if (IsValidPointer(config))
@@ -1768,7 +1792,10 @@ void GearSF7000Core::ResetROM(Cartridge::ForceConfiguration* config, bool pauseA
         {
             auto selected = *config;
             if (m_machineType == MachineType::SordM5) selected.type = Cartridge::SORD_M5_LINEAR;
-            if (m_machineType == MachineType::MSX) selected.type = Cartridge::MSX_LINEAR;
+            if (m_machineType == MachineType::MSX) {
+                const Cartridge::CartridgeTypes type = MSXCartridgeType(*m_pCartridge, &selected, nullptr);
+                selected.type = type != Cartridge::CartridgeNotSupported ? type : m_pCartridge->GetType();
+            }
             m_pCartridge->ForceConfig(selected);
             ApplySg16HeaderRam(m_pCartridge, m_pMemory);
             m_pMemory->SetupMapper();
@@ -2556,7 +2583,7 @@ bool GearSF7000Core::LoadState(std::istream& stream)
                 candidate.SetTapeValidationSource(static_cast<SystemBusMSX*>(m_systemBus.get())->Cassette());
 #endif
                 std::istringstream bytes(section.bytes);
-                if ((section.version < 1 || section.version > 4) || !candidate.LoadState(bytes, section.version) || bytes.peek() != std::char_traits<char>::eof())
+                if ((section.version < 1 || section.version > 5) || !candidate.LoadState(bytes, section.version) || bytes.peek() != std::char_traits<char>::eof())
                 { m_LastStateError = "Invalid MSX board state, different firmware, or missing/different mounted tape"; return false; }
             }
         }
@@ -2628,7 +2655,7 @@ bool GearSF7000Core::LoadState(std::istream& stream)
                 return false;
 #endif
             case kSectionMSX:
-                if (m_machineType != MachineType::MSX || (section.version < 1 || section.version > 4)) return false;
+                if (m_machineType != MachineType::MSX || (section.version < 1 || section.version > 5)) return false;
                 apply(bytes, [&](std::istream& in) {
                     if (!static_cast<SystemBusMSX*>(m_systemBus.get())->LoadState(in, section.version)) in.setstate(std::ios::failbit);
                 });
