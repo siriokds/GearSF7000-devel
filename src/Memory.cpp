@@ -191,9 +191,14 @@ void Memory::OnCpuInstructionBoundary(u16 nextProgramCounter,
     {
         stDisassembleRecord* currentRecord =
             GetDisassembleRecord(nextProgramCounter, false);
+        // On the MSX a breakpoint is often set before the slot it is meant
+        // for is selected - a cartridge address right after a reset still
+        // shows the BIOS - so its record belongs to another device. There the
+        // logical address the record was created for matches too.
         for (stDisassembleRecord* breakpoint : m_BreakpointsCPU)
         {
-            if (breakpoint == currentRecord)
+            if (breakpoint == currentRecord ||
+                (m_msxSlots && breakpoint && breakpoint->address == nextProgramCounter))
             {
                 legacyHit = true;
                 break;

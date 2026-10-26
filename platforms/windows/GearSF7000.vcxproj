@@ -288,6 +288,7 @@
     <ClInclude Include="..\..\src\SimpleLowPassFilter.h" />
     <ClInclude Include="..\..\src\SixteenBitRegister.h" />
     <ClInclude Include="..\..\src\SegaKeyboard.h" />
+    <ClInclude Include="..\..\src\MSXJoysticks.h" />
     <ClInclude Include="..\..\src\MSXKeyboard.h" />
     <ClInclude Include="..\..\src\SC3000SerialPrinterPort.h" />
     <ClInclude Include="..\..\src\SegaCassettePort.h" />

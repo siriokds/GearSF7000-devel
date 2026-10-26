@@ -2283,8 +2283,6 @@ static void main_menu(void)
 #endif
                     ImGui::EndMenu();
                 }
-                if (emu_get_core()->GetMachineType() == MachineType::MSX)
-                    ImGui::TextDisabled("MSX joysticks are not implemented yet.");
                 if (emu_get_core()->GetMachineType() != MachineType::MSX && emu_get_core()->GetMachineType() != MachineType::SordM5)
                     ImGui::MenuItem("SC-3000 Keyboard...", NULL,
                                 &show_sk1100_keyboard_config);

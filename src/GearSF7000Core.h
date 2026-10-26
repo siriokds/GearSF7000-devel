@@ -61,6 +61,7 @@ class IVideoDevice;
 class ICrtSignalSink;
 class SegaKeyboard;
 class MSXKeyboard;
+class MSXJoysticks;
 class SystemBusM5;
 class Input;
 class SR1000;
@@ -193,6 +194,7 @@ public:
     // SegaKeyboard::PressMatrixKeyByLabel for accepted labels.
     bool KeyboardKey(const std::string& label, bool pressed);
     MSXKeyboard* GetMSXKeyboard() const;
+    MSXJoysticks* GetMSXJoysticks() const;
     SystemBusM5* GetM5Bus() const;
     void RefreshM5Connections();
     void KeyboardMatrixKey(int row, int mask, bool pressed);

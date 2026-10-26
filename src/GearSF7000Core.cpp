@@ -733,7 +733,8 @@ void GearSF7000Core::RebuildDebugEventCatalog()
                 space.targetMax = 0xA2;
                 if (space.targets.size() == 4) space.targets.pop_back();
             }
-        if (!catalog->AddDefinition(std::move(ay), error)) throw std::logic_error(error);
+        if (!catalog->AddDefinition(std::move(ay), error) || !catalog->Add(bus->Joysticks(), error))
+            throw std::logic_error(error);
 #endif
     }
     else if (m_machineType == MachineType::SG1000 ||
@@ -1558,6 +1559,21 @@ u8 MegaDriveButton(GC_Keys key)
     default: return 0;
     }
 }
+
+// The MSX joystick line a host joystick key stands for, or 0.
+u8 MSXJoystickLine(GC_Keys key)
+{
+    switch (key)
+    {
+    case Key_Up: return MSXJoysticks::Up;
+    case Key_Down: return MSXJoysticks::Down;
+    case Key_Left: return MSXJoysticks::Left;
+    case Key_Right: return MSXJoysticks::Right;
+    case Key_Left_Button: return MSXJoysticks::TriggerA;
+    case Key_Right_Button: return MSXJoysticks::TriggerB;
+    default: return 0;
+    }
+}
 }
 
 void GearSF7000Core::JoystickPressed(GC_Controllers controller, GC_Keys key)
@@ -1577,6 +1593,10 @@ void GearSF7000Core::JoystickPressed(GC_Controllers controller, GC_Keys key)
         else if (key == Key_Left_Button || key == Key_Right_Button)
             bus->Input().SetJoystickFire(M5Input::Source::Controller, unsigned(controller),
                 key == Key_Left_Button ? 0 : 1, true, bus->CpuClock());
+        return;
+    }
+    if (auto* joysticks = GetMSXJoysticks()) {
+        if (const u8 line = MSXJoystickLine(key)) joysticks->Set(unsigned(controller), line, true);
         return;
     }
     // The same host action reaches whichever controller the board has.
@@ -1607,6 +1627,10 @@ void GearSF7000Core::JoystickReleased(GC_Controllers controller, GC_Keys key)
                 key == Key_Left_Button ? 0 : 1, false, bus->CpuClock());
         return;
     }
+    if (auto* joysticks = GetMSXJoysticks()) {
+        if (const u8 line = MSXJoystickLine(key)) joysticks->Set(unsigned(controller), line, false);
+        return;
+    }
     if (m_machineType == MachineType::Coleco)
         m_pColecoInput->KeyReleased(controller, key);
     else if (const u8 button = MegaDriveButton(key))
@@ -1627,6 +1651,7 @@ void GearSF7000Core::ReleaseHostInput()
         bus->Input().Release(M5Input::Source::Controller, bus->CpuClock());
     }
     if (auto* keyboard = GetMSXKeyboard()) keyboard->ReleaseHeldKeys();
+    if (auto* joysticks = GetMSXJoysticks()) joysticks->ReleaseAll();
     m_pKeyboard->ReleaseHeldKeys();
     m_pColecoInput->ReleaseAll();
     for (unsigned player = 0; player < 2; ++player)
@@ -1696,6 +1721,12 @@ MSXKeyboard* GearSF7000Core::GetMSXKeyboard() const
 {
     return m_machineType == MachineType::MSX && m_systemBus
         ? &static_cast<SystemBusMSX*>(m_systemBus.get())->Keyboard() : nullptr;
+}
+
+MSXJoysticks* GearSF7000Core::GetMSXJoysticks() const
+{
+    return m_machineType == MachineType::MSX && m_systemBus
+        ? &static_cast<SystemBusMSX*>(m_systemBus.get())->Joysticks() : nullptr;
 }
 
 void GearSF7000Core::KeyboardMatrixKey(int row, int mask, bool pressed)

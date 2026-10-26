@@ -4149,8 +4149,6 @@ json DebugAdapter::SetControllerDevice(int player, const std::string& device)
 
 json DebugAdapter::ControllerButton(int player, const std::string& button, const std::string& action)
 {
-    if (IsMSXSystem(m_core->GetSystemModel()))
-        return {{"error", "MSX controller input is not implemented yet"}};
     // The SC-3000 reads either the keyboard matrix or the joystick depending on
     // the machine mode, so keyboard_text cannot start a cartridge game while the
     // machine is in joystick mode. This drives the joystick directly.

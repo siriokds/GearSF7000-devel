@@ -4,6 +4,7 @@
 #define SYSTEM_BUS_MSX_H
 #include "ISystemBus.h"
 #include "Intel8255.h"
+#include "MSXJoysticks.h"
 #include "MSXKeyboard.h"
 #include "MSXSlotMapper.h"
 #if GEARSF7000_ENABLE_SR1000
@@ -40,7 +41,7 @@ public:
     VdpLineType GetVdpLineType() const override { return VdpLineType::VDP_INT; }
     PsgPortDecode GetPsgPorts() const override { return {0xFF, 0xA1}; }
     FirmwareRange GetFirmwareRange() const override { return {0, 0x8000}; }
-    SystemInputDescriptor DescribeInput() const override { return {0, false, true, "", ""}; }
+    SystemInputDescriptor DescribeInput() const override { return {2, false, true, "Trigger A", "Trigger B"}; }
     u8 AcknowledgeInterrupt(u64) override { return 0xFF; }
     u8 ReadMemory(u16 address) override;
     void WriteMemory(u16 address, u8 value) override;
@@ -63,6 +64,8 @@ public:
     MSXSlotMapper& Slots() { return m_slots; }
     MSXKeyboard& Keyboard() { return m_keyboard; }
     const MSXKeyboard& Keyboard() const { return m_keyboard; }
+    MSXJoysticks& Joysticks() { return m_joysticks; }
+    const MSXJoysticks& Joysticks() const { return m_joysticks; }
     Intel8255& PPI() { return m_ppi; }
     bool LoadOptionalFirmware(const std::string& logoPath, const std::string& basicPath, std::string& error);
     bool LoadOptionalFirmwareFromBuffers(std::vector<u8> logo, std::vector<u8> basic, std::string& error);
@@ -115,6 +118,7 @@ private:
 #endif
     Intel8255 m_ppi;
     MSXKeyboard m_keyboard;
+    MSXJoysticks m_joysticks;
     u8 m_keyboardRow = 0;
     bool m_keyboardClick = false;
     std::unique_ptr<MSXLinearMemory> m_bios, m_rom, m_ram;

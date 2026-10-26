@@ -23,19 +23,24 @@ SystemBusMSX::SystemBusMSX(Memory& memory, Cartridge& cart, Audio& audio, Machin
 
 SystemBusMSX::~SystemBusMSX()
 {
-#if GEARSF7000_ENABLE_SR1000 && GEARSF7000_ENABLE_AY
-    if (m_audio.GetAyApu()->GetPorts() == &m_tape)
+#if GEARSF7000_ENABLE_AY
+    if (m_audio.GetAyApu()->GetPorts() == &m_joysticks)
         m_audio.GetAyApu()->SetPorts(nullptr);
 #endif
 }
 
+// The AY's pins carry the joysticks, and port A bit 7 the cassette, which the
+// joystick device passes through.
 void SystemBusMSX::ConnectPeripherals()
 {
 #if GEARSF7000_ENABLE_SR1000 && GEARSF7000_ENABLE_AY
-    m_audio.GetAyApu()->SetPorts(&m_tape);
+    m_joysticks.SetCassette(&m_tape);
     m_tape.SetMonitor([this](float sample, bool synthesized, float frequency) {
         m_audio.SR1000SpeakerWrite(sample, synthesized, frequency);
     });
+#endif
+#if GEARSF7000_ENABLE_AY
+    m_audio.GetAyApu()->SetPorts(&m_joysticks);
 #endif
 }
 
@@ -152,6 +157,7 @@ void SystemBusMSX::Reset()
 #endif
     RebindMemory();
     m_keyboard.Reset();
+    m_joysticks.Reset();
     m_ppi.Reset();
     m_slots.Reset();
 }
@@ -216,6 +222,11 @@ void SystemBusMSX::BindDebugEvents(const DebugDeviceRegistry& registry)
     m_keyboard.SetRowChangeCallback([this, keyboardId](unsigned row, u8 before, u8 after) {
         if (keyboardId) m_memory.CheckDeviceStateChange(
             {keyboardId, DebugCommonSpace::CustomFirst, row}, before, after);
+    });
+    const DebugDeviceId joysticksId = id("event.msx.joysticks");
+    m_joysticks.SetChangeCallback([this, joysticksId](unsigned player, u8 before, u8 after) {
+        if (joysticksId) m_memory.CheckDeviceStateChange(
+            {joysticksId, DebugCommonSpace::State, player}, before, after);
     });
     m_busId = id("event.msx.bus"); m_vdpId = id("event.msx.vdp");
     m_ayId = id("event.msx.ay"); m_ppiId = id("event.msx.ppi"); m_slotsId = id("event.msx.slots");
