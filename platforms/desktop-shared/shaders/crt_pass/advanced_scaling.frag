@@ -1,4 +1,6 @@
 #version 450 core
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 // Video > Postprocessing > Advanced Scaling - a sharper alternative to
 // plain 2D Bilinear, not a horizontal-only fix (that was this pass'
 // original, narrower brief - see the git history on this file's earlier

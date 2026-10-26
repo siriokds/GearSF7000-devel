@@ -1,4 +1,6 @@
 #version 450 core
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 
 // Proof-of-infrastructure pass, not a real composite decode: a horizontal
 // Gaussian blur, radius (sigma) tunable continuously at runtime. The point

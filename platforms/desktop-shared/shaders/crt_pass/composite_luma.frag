@@ -1,4 +1,6 @@
 #version 450 core
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 
 // Pass 2 of 2: reads pass 1's band-limited chroma (already at dot
 // resolution, one Pb/Pr pair per output dot) plus the raw index texture,

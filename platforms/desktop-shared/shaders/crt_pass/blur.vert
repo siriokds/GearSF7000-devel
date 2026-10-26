@@ -1,4 +1,6 @@
 #version 450 core
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 
 // Full-screen triangle from the vertex index alone - no vertex buffer, no
 // CPU-side geometry at all. Vertex 0/1/2 land at (0,0)/(2,0)/(0,2) in UV

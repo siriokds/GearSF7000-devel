@@ -4,8 +4,9 @@ Directory and FAT logic for SF-7000 `.sf7` disc images: list, read, extract,
 insert and delete files. Compiled into the emulator.
 
 Derived from the `sfdisc` command-line tool
-(<https://github.com/siriokds/sfdisc>) — same author, same licence
-(GPLv3), so this is a fork rather than a third-party import. It started as a
+(<https://github.com/siriokds/sfdisc>) — same author, so this is a fork
+rather than a third-party import, and like the rest of GearSF7000's own code
+it is licensed AGPL-3.0-or-later here (sfdisc itself is GPLv3). It started as a
 verbatim copy of `SF7Disc.cpp`/`.h` at commit `381cc32`, then diverged: see
 below.
 

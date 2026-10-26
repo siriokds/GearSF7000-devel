@@ -565,7 +565,11 @@ GearSF7000 is based on a version of
 [GearColeco](https://github.com/drhelius/Gearcoleco) by
 [Ignacio Sánchez Gines (drhelius)](https://github.com/drhelius), adapted for
 the Sega SG-1000 and SC-3000 systems, their supported peripherals and the
-other machines described above.
+other machines described above. Further parts come from
+[Gearsystem](https://github.com/drhelius/Gearsystem) by the same author.
+Ignacio Sánchez's code stays under the GNU General Public License v3.0 or
+later; GearSF7000's own code is licensed under the GNU Affero General Public
+License v3.0 or later. The header of each source file says which applies.
 
 The Z80 processor integration uses an imported subset of
 [Clock Signal (CLK)](https://github.com/TomHarte/CLK) by
@@ -582,7 +586,8 @@ licence files and notices remain applicable to the corresponding components.
 
 | Project | Author or maintainers | Use in GearSF7000 |
 | --- | --- | --- |
-| [GearColeco](https://github.com/drhelius/Gearcoleco) | Ignacio Sánchez Gines (drhelius) | Original project foundation and Gear desktop architecture. |
+| [GearColeco](https://github.com/drhelius/Gearcoleco) | Ignacio Sánchez Gines (drhelius) | Original project foundation and Gear desktop architecture (GPL-3.0). |
+| [Gearsystem](https://github.com/drhelius/Gearsystem) | Ignacio Sánchez Gines (drhelius) | Memory rules, Z80 opcode tables, disassembler and MCP server code (GPL-3.0). |
 | [Clock Signal (CLK)](https://github.com/TomHarte/CLK) | Tom Harte | Imported Z80 subset, adapted to the machine and stack requirements (MIT). |
 | [blueMSX](http://www.bluemsx.com/) | Daniel Vik and Tomas Karlsson | Original basis of the extensively modified FDC765 and SF-7000 modules. |
 | [Game Music Emu](https://bitbucket.org/mpyne/game-music-emu/) and [Blip_Buffer](https://www.slack.net/~ant/) | Shay Green | Sound generation and resampling components. |
@@ -615,5 +620,8 @@ short reproducible sequence when reporting a hardware issue.
 
 ## License
 
-GearSF7000-devel is licensed under the GNU Affero General Public License v3.0.
-See [LICENSE](LICENSE) for the complete terms.
+GearSF7000-devel is licensed under the GNU Affero General Public License v3.0
+or later. The code derived from Gearcoleco and Gearsystem keeps Ignacio
+Sanchez's parts under the GNU General Public License v3.0 or later; each
+source file's header says which applies. See [LICENSE](LICENSE) and
+[LICENSE.GPL-3.0](LICENSE.GPL-3.0) for the complete terms.

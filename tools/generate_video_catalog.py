@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026  Saverio Russo
 """Embed validated JSON catalogues for portable, cwd-independent builds."""
 import argparse
 import json

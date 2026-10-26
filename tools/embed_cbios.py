@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026  Saverio Russo
 """Generate the embedded firmware header from the licensed C-BIOS images."""
 from pathlib import Path
 root = Path(__file__).resolve().parents[1]
