@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #include "WavRecorder.h"
 
 WavRecorder::WavRecorder() : m_DataSize(0), m_SampleRate(48000), m_Channels(1) {}

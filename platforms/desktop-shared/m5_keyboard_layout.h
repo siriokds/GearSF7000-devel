@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #ifndef M5_KEYBOARD_LAYOUT_H
 #define M5_KEYBOARD_LAYOUT_H
 #include <SDL3/SDL_scancode.h>

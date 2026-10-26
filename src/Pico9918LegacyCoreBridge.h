@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #ifndef PICO9918_LEGACY_CORE_BRIDGE_H
 #define PICO9918_LEGACY_CORE_BRIDGE_H
 

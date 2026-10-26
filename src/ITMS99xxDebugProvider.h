@@ -1,7 +1,8 @@
 /*
  * GearSF7000 - TMS99xx-specific debugger extension
- * Copyright (C) 2026 Saverio Russo
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef ITMS99XX_DEBUG_PROVIDER_H

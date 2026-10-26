@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* GearSF7000 configuration ownership and historical value conversion.
- * GPL-3.0-or-later. This module never changes running hardware. */
+ * This module never changes running hardware. */
 #pragma once
 #include "ConfigRepository.h"
 #include "../../src/ISystemBus.h"

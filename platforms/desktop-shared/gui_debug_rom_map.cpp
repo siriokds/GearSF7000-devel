@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - Live Disassembler window (the ROM map, classified while the game runs)
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "gui_debug_rom_map.h"

@@ -1,9 +1,11 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
  * Generic sprite debugger. The active video device supplies the available
  * views, atlas, state, screen rectangles and descriptive fields.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include <algorithm>

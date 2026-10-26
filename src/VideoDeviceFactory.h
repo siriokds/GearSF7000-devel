@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* Production video-device composition boundary. */
 #ifndef VIDEO_DEVICE_FACTORY_H
 #define VIDEO_DEVICE_FACTORY_H

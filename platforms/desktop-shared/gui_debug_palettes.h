@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - the Palettes panel
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GUI_DEBUG_PALETTES_H

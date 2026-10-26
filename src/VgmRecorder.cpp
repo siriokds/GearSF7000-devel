@@ -1,8 +1,14 @@
 /*
  * GearSF7000 - VGM export
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * Adapted from GearSF7000's VgmRecorder (Copyright (C) 2021 Ignacio Sanchez).
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+ *
+ * Adapted from Gearcoleco's VgmRecorder.
  * See VgmRecorder.h for why this one was ported instead of SC3K-System's.
  */
 

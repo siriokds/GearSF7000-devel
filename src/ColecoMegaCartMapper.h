@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* GearSF7000 - Coleco MegaCart cartridge, independent of the SGM expansion. */
 #ifndef COLECO_MEGACART_MAPPER_H
 #define COLECO_MEGACART_MAPPER_H

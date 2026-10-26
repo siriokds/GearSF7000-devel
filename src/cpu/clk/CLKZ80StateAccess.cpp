@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - CLK Z80 internal state serialization
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "cpu/clk/CLKZ80StateAccess.h"

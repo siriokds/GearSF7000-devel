@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* Pico9918 has a 64 KiB backing map while its legacy CPU port retains the
  * original 14-bit window and wrapping implemented by the upstream core. */
 #define VR_EMU_TMS9918_STATIC

@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #ifndef TMS99XX_DEBUG_EVENTS_H
 #define TMS99XX_DEBUG_EVENTS_H
 #include "IDebugEventProvider.h"

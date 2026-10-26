@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - default implementation for optional video debug capabilities
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef VIDEO_DEBUG_PROVIDER_BASE_H

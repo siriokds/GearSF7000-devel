@@ -1,7 +1,9 @@
 /*
  * GearSF7000 - TMS99xx table address generator
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * One address generator for every display mode, including the undocumented
  * ones. On the chip M3 drives a single banking circuit shared by Graphics II,

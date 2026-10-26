@@ -1,6 +1,8 @@
 /*
  * GearSC3000 - no-debug desktop compatibility shim
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * The regular desktop shell historically calls a few debugger lifecycle and
  * shortcut hooks unconditionally. A computer-only product has no debugger;

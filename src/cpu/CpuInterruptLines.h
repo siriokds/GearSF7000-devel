@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - CPU-independent interrupt lines
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GEARSF7000_CPU_INTERRUPT_LINES_H

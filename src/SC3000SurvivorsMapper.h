@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - SC-3000 Survivors Multicart and Megacart mappers
  * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef SC3000_SURVIVORS_MAPPER_H

@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - standard Sega Master System cartridge mapper
  * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef SEGA_SMS_MAPPER_H

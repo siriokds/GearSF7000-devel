@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #include "VideoCatalog.h"
 #include "VideoCatalogData.h"
 #include "../third_party/nlohmann/json.hpp"

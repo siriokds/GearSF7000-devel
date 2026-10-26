@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 // Component descriptions are produced during machine composition, never per cycle.
 #ifndef I_DEBUG_EVENT_PROVIDER_H
 #define I_DEBUG_EVENT_PROVIDER_H

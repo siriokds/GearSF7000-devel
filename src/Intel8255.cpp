@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - Intel 8255A Programmable Peripheral Interface
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Behaviour was checked against the Intel programming model and the mature
  * MAME/openMSX implementations. This is a native GearSF7000 implementation:

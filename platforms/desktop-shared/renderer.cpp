@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
 /* SDL3/SDL_GPU renderer.  The desktop UI and emulator images share the same
  * GPU command buffer; no OpenGL objects or compatibility path remain. */
 

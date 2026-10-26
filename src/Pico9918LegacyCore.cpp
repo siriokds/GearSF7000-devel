@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* GearSF7000 - scanline backend selection for Pico replacement VDPs */
 #include "Pico9918LegacyCore.h"
 

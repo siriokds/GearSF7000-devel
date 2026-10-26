@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* Internal scanline-backend contract shared by Pico9918 and PicoSMSvdp. */
 #ifndef PICO_VDP_CORE_BACKEND_H
 #define PICO_VDP_CORE_BACKEND_H

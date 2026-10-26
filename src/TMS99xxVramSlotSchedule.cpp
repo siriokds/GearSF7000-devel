@@ -1,7 +1,9 @@
 /*
  * GearSF7000 - TMS99xx internal VRAM slot schedule
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "TMS99xxVramSlotSchedule.h"

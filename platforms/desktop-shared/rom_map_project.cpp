@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - automatic per-ROM project holding the ROM map
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "../../src/DeepSearch.h"

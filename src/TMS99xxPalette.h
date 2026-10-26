@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* TMS99xx fixed palette tables.
  * Kept separate from the device class so TMS-specific offline decoders do
  * not acquire the complete emulated chip API.

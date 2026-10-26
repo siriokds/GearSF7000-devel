@@ -1,6 +1,6 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
  * Disassembly-to-text export. Two modes: "visible" dumps the disassembler's
  * current live view (whatever GetDisassembleRecord() resolves right now,
@@ -15,6 +15,8 @@
  * Deliberately has no ImGui/NFD dependency: the GUI menu (gui_debug.cpp)
  * and the MCP tool (mcp_debug_adapter.cpp) both call straight into this,
  * each supplying its own file path.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GUI_DEBUG_DISASSEMBLER_EXPORT_H

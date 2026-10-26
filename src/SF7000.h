@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
 // SEGA SC-3000 Keyboard Routines
 
 #ifndef _SF7000_H_

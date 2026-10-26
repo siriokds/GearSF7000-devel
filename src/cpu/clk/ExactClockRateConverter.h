@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - exact rational clock-rate conversion
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GEARSF7000_EXACT_CLOCK_RATE_CONVERTER_H

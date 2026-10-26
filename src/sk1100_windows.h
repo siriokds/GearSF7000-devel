@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 // SC-3000 host keyboard mapping for Windows and non-macOS desktop builds.
 // Included by SegaKeyboard.cpp after t_sk1100_key has been declared.
 

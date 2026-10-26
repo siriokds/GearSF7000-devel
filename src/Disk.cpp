@@ -11,6 +11,15 @@
 **   - On HFE load, a .ds7 sidecar is saved automatically.
 **   - On eject/disk-change with dirty==1, the model is auto-saved as .ds7.
 **   - diskGetTrack / diskGetRotationConstants exposed for NEC765.
+**
+** Copyright (C) 2003-2006 Daniel Vik, Tomas Karlsson
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik and Tomas Karlsson (GPL-2.0-or-later,
+** used here under version 3); the changes and additions by Saverio Russo
+** are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
 */
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS   /* suppress MSVC deprecated CRT warnings */

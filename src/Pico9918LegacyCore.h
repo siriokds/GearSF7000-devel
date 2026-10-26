@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - replaceable vrEmuTms9918 adapter for Pico9918
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef PICO9918_LEGACY_CORE_H

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #ifndef MCP_DEBUG_EVENT_QUERY_H
 #define MCP_DEBUG_EVENT_QUERY_H
 

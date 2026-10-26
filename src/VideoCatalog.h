@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /* Immutable video selection and output catalogue. JSON is decoded once. */
 #pragma once
 #include <map>

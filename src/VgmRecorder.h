@@ -1,8 +1,14 @@
 /*
  * GearSF7000 - VGM export
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * Adapted from GearSF7000's VgmRecorder (Copyright (C) 2021 Ignacio Sanchez),
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+ *
+ * Adapted from Gearcoleco's VgmRecorder,
  * itself the reason this was ported here instead of SC3K-System's older
  * vgm.cpp: VGM 1.70, a std::vector<u8> command buffer instead of a raw
  * FILE*, sample-accurate timing rather than one record per host frame, and -

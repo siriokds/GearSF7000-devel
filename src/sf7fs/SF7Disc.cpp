@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /*
 ** SF7Disc.cpp — Sega Disk BASIC filesystem for SF-7000 disc images
 ** See SF7Disc.h for the contract.

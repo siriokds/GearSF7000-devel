@@ -1,6 +1,6 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
  * ROM Inspector: point 4 of DOCS/ROM_INSPECTOR_PLAN.md. Loads an arbitrary
  * external file (not the live cartridge, no bank-switching/mapper applied)
@@ -14,6 +14,8 @@
  * tools (mcp_debug_adapter.cpp) drive the same state to let a remote
  * caller "see" what's loaded without a human at the keyboard, the same way
  * get_screenshot doesn't need any particular window open either.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GUI_DEBUG_ROM_INSPECTOR_H

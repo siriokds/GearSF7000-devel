@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 // Standard mapping checked against MAME sord/m5.cpp and bus/m5/rom.cpp.
 #include "M5MemoryMapper.h"
 

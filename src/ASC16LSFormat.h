@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #ifndef ASC16LSFORMAT_H
 #define ASC16LSFORMAT_H
 

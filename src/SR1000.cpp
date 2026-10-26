@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
 #include "SR1000.h"
 #include "Memory.h"
 #include "Audio.h"

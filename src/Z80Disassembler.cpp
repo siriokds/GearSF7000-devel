@@ -1,8 +1,12 @@
 /*
  * GearSF7000 - CPU-independent Z80 disassembler service
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2013  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Derived from Gearsystem by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include "Z80Disassembler.h"

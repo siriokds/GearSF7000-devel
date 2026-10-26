@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 #ifndef GEARSF7000_NFD_PARENTED_H
 #define GEARSF7000_NFD_PARENTED_H
 

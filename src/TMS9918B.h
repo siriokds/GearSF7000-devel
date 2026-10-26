@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - TMS9918B video device
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef TMS9918B_H

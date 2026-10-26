@@ -4,6 +4,15 @@
 ** Extended from the original blueMSX Disk.h to support the Physical Track
 ** Model (DiskTrack / DiskSector) and four disk image formats:
 **   SF7 (flat raw), EDSK (Amstrad/CPC), HFE (HxC v1), DS7 (native model).
+**
+** Copyright (C) 2003-2006 Daniel Vik, Tomas Karlsson
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik and Tomas Karlsson (GPL-2.0-or-later,
+** used here under version 3); the changes and additions by Saverio Russo
+** are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
 ******************************************************************************
 */
 #ifndef DISK_H

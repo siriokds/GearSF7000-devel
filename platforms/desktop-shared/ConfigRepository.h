@@ -1,4 +1,6 @@
-/* GearSF7000 desktop configuration storage. GPL-3.0-or-later.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
+/* GearSF7000 desktop configuration storage.
  * Header-only so all desktop project manifests use the same implementation.
  * No SDL, GUI or core dependency; tests always supply a temporary root.
  */

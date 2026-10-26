@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - Sega 315-5208 cartridge mapper in SG-1000 compatibility mode
  * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef SEGA_315_5208_SG1000_MAPPER_H

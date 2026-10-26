@@ -1,7 +1,9 @@
 /*
  * GearSF7000 - GCRT capture loader for the GPU composite decode test
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef CRT_SIGNAL_CAPTURE_LOADER_H
