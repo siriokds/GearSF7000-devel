@@ -4724,8 +4724,9 @@ static void popup_modal_about(void)
         
         ImGui::Separator();
         
-        ImGui::Text("By Saverio Russo");
-        ImGui::Text("%s is licensed under the GPL-3.0 License, see LICENSE for more information.", GEARSF7000_TITLE);
+        ImGui::Text("By Saverio Russo, based on Gearcoleco by Ignacio Sanchez");
+        ImGui::Text("%s is licensed under the AGPL-3.0 License, see LICENSE for more information.\n"
+                    "The parts from Gearcoleco and Gearsystem remain under the GPL-3.0 License.", GEARSF7000_TITLE);
         
         ImGui::Separator();
 
@@ -4748,6 +4749,13 @@ static void popup_modal_about(void)
             if (ImGui::BeginTabItem("LICENSE"))
             {
                 ImGui::BeginChild("license", ImVec2(0, 100), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                ImGui::TextUnformatted(AGPL_LICENSE_STR);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("GPL-3.0"))
+            {
+                ImGui::BeginChild("gpl_license", ImVec2(0, 100), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
                 ImGui::TextUnformatted(GPL_LICENSE_STR);
                 ImGui::EndChild();
                 ImGui::EndTabItem();
