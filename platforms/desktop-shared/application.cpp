@@ -1149,15 +1149,15 @@ static void keyboard_event_to_machine(SDL_Scancode scancode, bool pressed)
         }
         return;
     }
-    if (emu_get_core()->GetMachineType() == MachineType::MSX)
+    // MSX in keyboard mode: the International matrix. With keyboard mode off
+    // the keys drive the joysticks through the profiles below, as on Sega.
+    if (emu_get_core()->GetMachineType() == MachineType::MSX && emu_get_keyboard_mode())
     {
-        if (emu_get_keyboard_mode()) {
-            if (const auto* key = MSXHostBinding(scancode)) {
-                int count = 0;
-                const bool* held = SDL_GetKeyboardState(&count);
-                emu_keyboard_matrix_key(key->row, key->mask,
-                    pressed || MSXHostContactHeld(key->row, key->mask, held, count));
-            }
+        if (const auto* key = MSXHostBinding(scancode)) {
+            int count = 0;
+            const bool* held = SDL_GetKeyboardState(&count);
+            emu_keyboard_matrix_key(key->row, key->mask,
+                pressed || MSXHostContactHeld(key->row, key->mask, held, count));
         }
         return;
     }
