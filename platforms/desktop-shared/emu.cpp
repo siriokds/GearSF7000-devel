@@ -1776,6 +1776,7 @@ bool is_z80_call_or_rst(Memory* memory, u16 pc)
 
 void emu_debug_step_over(void)
 {
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
     GearSF7000Core* core = emu_get_core();
     const u16 pc = core->GetCpuStateAccess()->GetCpuStateSnapshot().pc;
     Memory* memory = core->GetMemory();
@@ -1790,7 +1791,8 @@ void emu_debug_step_over(void)
         emu_debug_continue();
         return;
     }
-
+#endif
+    // Without the disassembler there is no instruction size to step over.
     emu_debug_step_into();
 }
 

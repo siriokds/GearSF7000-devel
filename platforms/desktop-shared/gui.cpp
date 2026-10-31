@@ -4723,9 +4723,9 @@ static void popup_modal_about(void)
         
         ImGui::Separator();
         
-        ImGui::Text("By Saverio Russo, based on Gearcoleco by Ignacio Sanchez");
+        ImGui::Text("By Saverio Russo");
         ImGui::Text("%s is licensed under the AGPL-3.0 License, see LICENSE for more information.\n"
-                    "The parts from Gearcoleco and Gearsystem remain under the GPL-3.0 License.", GEARSF7000_TITLE);
+                    "The code it uses from other projects keeps its own licence: see the README.", GEARSF7000_TITLE);
         
         ImGui::Separator();
 

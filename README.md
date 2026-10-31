@@ -541,6 +541,15 @@ builds do not reuse incompatible objects.
    `platforms/windows/dependencies/SDL3/`.
 3. Open `platforms/windows/GearSF7000.sln` and build the desired target.
 
+The build includes the debugger. For the emulator alone, without the debugger
+and the MCP server, build from a Developer Command Prompt with:
+
+```bat
+msbuild platforms\windows\GearSF7000.sln /p:Configuration=Release /p:Platform=x64 /p:GearProfile=emulator
+```
+
+The result goes to `platforms\windows\release-emulator\`.
+
 ### Linux
 
 On Ubuntu or Debian:
@@ -553,6 +562,13 @@ make -C platforms/linux USE_PICOSMSVDP_CORE=0
 `USE_PICOSMSVDP_CORE=0` tells the makefile not to look for an external video
 core that is not part of this repository.
 
+The build includes the debugger. For the emulator alone, without the debugger
+and the MCP server:
+
+```sh
+make -C platforms/linux emulator
+```
+
 The reduced SC-3000 cartridge-computer target is available with:
 
 ```sh
@@ -561,35 +577,18 @@ make -C platforms/linux computer USE_PICOSMSVDP_CORE=0
 
 ## Technical foundations and credits
 
-GearSF7000 is based on a version of
-[GearColeco](https://github.com/drhelius/Gearcoleco) by
-[Ignacio Sánchez Gines (drhelius)](https://github.com/drhelius), adapted for
-the Sega SG-1000 and SC-3000 systems, their supported peripherals and the
-other machines described above. Further parts come from
-[Gearsystem](https://github.com/drhelius/Gearsystem) by the same author.
-Ignacio Sánchez's code stays under the GNU General Public License v3.0 or
-later; GearSF7000's own code is licensed under the GNU Affero General Public
-License v3.0 or later. The header of each source file says which applies.
-
-The Z80 processor integration uses an imported subset of
-[Clock Signal (CLK)](https://github.com/TomHarte/CLK) by
-[Tom Harte](https://github.com/TomHarte), adapted to this project's timing and
-machine requirements. The imported revision and its MIT licence are recorded
-in [`third_party/clk/README-GearSF7000.md`](third_party/clk/README-GearSF7000.md).
-
-The FDC765 and SF-7000 modules originate from
-[blueMSX](http://www.bluemsx.com/) by Daniel Vik and Tomas Karlsson and have
-been extensively modified for this project.
-
-GearSF7000 also incorporates or builds against the following projects. Their
+GearSF7000 is a project by Saverio Russo. It uses code from the projects
+below. Each source file's header says who wrote it and under which licence:
+GearSF7000's own code is licensed under the GNU Affero General Public License
+v3.0 or later, and the code from the other projects keeps its own licence. Their
 licence files and notices remain applicable to the corresponding components.
 
 | Project | Author or maintainers | Use in GearSF7000 |
 | --- | --- | --- |
-| [GearColeco](https://github.com/drhelius/Gearcoleco) | Ignacio Sánchez Gines (drhelius) | Original project foundation and Gear desktop architecture (GPL-3.0). |
+| [GearColeco](https://github.com/drhelius/Gearcoleco) | Ignacio Sánchez Gines (drhelius) | Parts of the core frame and of the desktop application (GPL-3.0). |
 | [Gearsystem](https://github.com/drhelius/Gearsystem) | Ignacio Sánchez Gines (drhelius) | Memory rules, Z80 opcode tables, disassembler and MCP server code (GPL-3.0). |
-| [Clock Signal (CLK)](https://github.com/TomHarte/CLK) | Tom Harte | Imported Z80 subset, adapted to the machine and stack requirements (MIT). |
-| [blueMSX](http://www.bluemsx.com/) | Daniel Vik and Tomas Karlsson | Original basis of the extensively modified FDC765 and SF-7000 modules. |
+| [Clock Signal (CLK)](https://github.com/TomHarte/CLK) | Tom Harte | The Z80 processor: imported subset, adapted to the machines' timing (MIT; revision and changes in [`third_party/clk/README-GearSF7000.md`](third_party/clk/README-GearSF7000.md)). |
+| [blueMSX](http://www.bluemsx.com/) | Daniel Vik and Tomas Karlsson | Original basis of the extensively modified FDC765 and SF-7000 disk modules (GPL-2.0-or-later). |
 | [Game Music Emu](https://bitbucket.org/mpyne/game-music-emu/) and [Blip_Buffer](https://www.slack.net/~ant/) | Shay Green | Sound generation and resampling components. |
 | [vrEmuTms9918](https://github.com/visrealm/vrEmuTms9918) | Troy Schrapel | TMS9918 core behind the PICO9918 device (MIT). |
 | [C-BIOS](https://cbios.sourceforge.net/) | C-BIOS team | Built-in MSX1 BIOS. |
@@ -603,6 +602,7 @@ licence files and notices remain applicable to the corresponding components.
 | [dr_libs](https://github.com/mackron/dr_libs) | David Reid | MP3 decoding through `dr_mp3`. |
 | [stb](https://github.com/nothings/stb) | Sean Barrett and contributors | Image loading and writing. |
 | [SDL_GameControllerDB](https://github.com/gabomdq/SDL_GameControllerDB) | Community contributors | Bundled controller mapping database. |
+| [Libretro](https://www.libretro.com/) | Libretro contributors | Libretro front-end interface. |
 | [MAME](https://github.com/mamedev/mame) | MAME contributors | Reference implementation and software-list metadata used to verify Taiwanese RAM adapters and SC-3000 Survivors cartridge decoding. |
 | [BizHawk](https://github.com/TASEmulators/BizHawk) and [SMS Power! preservation research](https://www.smspower.org/forums/13579-Taiwan8KBRAMAdapterForPlayingMSXPortsOnSG1000II) | BizHawk contributors and SMS Power! community | Cross-reference for the two Taiwanese SG-1000 II pass-through RAM layouts. |
 | [SMS Power! Loretta research](https://www.smspower.org/forums/18914-LorettaNoShouzou) and [mapper documentation](https://www.smspower.org/Development/MapperPinouts#x3155208) | SMS Power! community | Cartridge PCB and Sega 315-5208 identification for Loretta no Shouzou. |
@@ -621,7 +621,7 @@ short reproducible sequence when reporting a hardware issue.
 ## License
 
 GearSF7000-devel is licensed under the GNU Affero General Public License v3.0
-or later. The code derived from Gearcoleco and Gearsystem keeps Ignacio
-Sanchez's parts under the GNU General Public License v3.0 or later; each
-source file's header says which applies. See [LICENSE](LICENSE) and
-[LICENSE.GPL-3.0](LICENSE.GPL-3.0) for the complete terms.
+or later. The code from the projects credited above keeps its own licence;
+each source file's header says which applies. See [LICENSE](LICENSE),
+[LICENSE.GPL-3.0](LICENSE.GPL-3.0) and the licence files of the
+third-party components for the complete terms.

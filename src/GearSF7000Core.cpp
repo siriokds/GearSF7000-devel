@@ -186,11 +186,13 @@ GearSF7000Core::~GearSF7000Core()
     SafeDelete(m_pVdpInterruptLines);
     SafeDelete(m_pCpuInterruptRouter);
     SafeDelete(m_pCLKProcessor);
+#ifndef GEARSF7000_DISABLE_DISASSEMBLER
     SafeDelete(m_pCpuInstructionObservers);
     if (m_pMemory)
         m_pMemory->SetRomMap(nullptr);
     SafeDelete(m_pRomMap);
     SafeDelete(m_pDisassembler);
+#endif
     SafeDelete(m_pMemory);
 
 #if GEARSF7000_ENABLE_SF7000

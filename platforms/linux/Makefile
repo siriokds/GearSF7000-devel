@@ -10,6 +10,16 @@ LDFLAGS += `pkg-config --libs gtk+-3.0`
 
 include ../desktop-shared/Makefile.common
 
+# The complete emulator without the debugger and the MCP server, for people who
+# only want to play: `make emulator`. Same machines and devices as the regular
+# build; BUILD_PROFILE keeps its objects apart, as for `computer` below.
+.PHONY: emulator
+emulator:
+	$(MAKE) all \
+		BUILD_PROFILE=emulator \
+		ENABLE_DEBUG_TOOLS=0 \
+		ENABLE_MCP=0
+
 # Cartridge-computer build. This is deliberately a separate opt-in target:
 # the regular Linux build remains the complete GearSF7000 application.
 # BUILD_PROFILE selects a separate object tree, so alternating this target

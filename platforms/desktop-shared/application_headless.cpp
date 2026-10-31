@@ -36,7 +36,9 @@ int application_headless_init(const char* rom_file, const char* symbol_file,
     config_init_headless();
     config_read();
     // Projects are the user's: the headless instance reads them, never writes.
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
     rom_map_project_set_read_only(true);
+#endif
 
     if (DiagnosticLogOpen(config_root_path, "gearsf7000.log"))
     {

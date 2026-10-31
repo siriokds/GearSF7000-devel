@@ -14,9 +14,9 @@ Runtime resources include SDL3, the controller database, fonts, keyboard
 image, debugger port descriptions and optional firmware symbols. C-BIOS is
 embedded in the desktop build and does not include MSX BASIC.
 
-GearSF7000 is based on Gearcoleco by Ignacio Sanchez Gines (drhelius).
-Preserve upstream copyright notices and third-party licenses when distributing.
-The emulator is distributed under AGPL-3.0-or-later. Code derived from
-Gearcoleco and Gearsystem keeps Ignacio Sanchez's parts under GPL-3.0-or-later;
-each file's header says which applies. See the root LICENSE, LICENSE.GPL-3.0
+GearSF7000 is a project by Saverio Russo. It uses code from other projects,
+credited in the root README. Preserve upstream copyright notices and
+third-party licenses when distributing.
+The emulator is distributed under AGPL-3.0-or-later; the code from other
+projects keeps its own licence, and each file's header says which applies. See the root LICENSE, LICENSE.GPL-3.0
 and individual dependency licenses for their respective terms.

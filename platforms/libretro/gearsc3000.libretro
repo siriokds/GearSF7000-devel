@@ -1,6 +1,6 @@
 [Libretro]
 Type=Emulator
-Version=2.1.0
+Version=2.2.0
 Name=GearSC3000
 Module=gearsc3000_libretro.so
 LibretroVersion=1

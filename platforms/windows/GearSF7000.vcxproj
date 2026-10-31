@@ -100,16 +100,36 @@
     <ClCompile Include="..\..\src\WavSample.cpp" />
     <ClCompile Include="..\..\src\WavSampleManager.cpp" />
     <ClCompile Include="..\..\src\WAVUtils.cpp" />
-    <ClCompile Include="..\..\src\Z80Disassembler.cpp" />
-    <ClCompile Include="..\..\src\RomMap.cpp" />
-    <ClCompile Include="..\..\src\SourceListing.cpp" />
-    <ClCompile Include="..\..\src\JumpTables.cpp" />
-    <ClCompile Include="..\..\src\DeepSearch.cpp" />
-    <ClCompile Include="..\desktop-shared\rom_map_project.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_rom_map.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_disassembler_view.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_deep_search.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_palettes.cpp" />
+    <ClCompile Include="..\..\src\Z80Disassembler.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\..\src\RomMap.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\..\src\SourceListing.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\..\src\JumpTables.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\..\src\DeepSearch.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\rom_map_project.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_rom_map.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_disassembler_view.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_deep_search.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_palettes.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="..\desktop-shared\application.cpp" />
     <ClCompile Include="..\desktop-shared\application_headless.cpp" />
     <ClCompile Include="..\desktop-shared\config.cpp" />
@@ -117,28 +137,70 @@
     <ClCompile Include="..\desktop-shared\crt_signal_dump.cpp" />
     <ClCompile Include="..\desktop-shared\emu.cpp" />
     <ClCompile Include="..\desktop-shared\gui.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_events.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_nametable.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_pattern_table.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_sprites.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_video_registers.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_audio.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_basic_typer.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_disc_explorer.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_disassembler_export.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_mem_import.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_memory.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_rewind.cpp" />
-    <ClCompile Include="..\desktop-shared\gui_debug_rom_inspector.cpp" />
-    <ClCompile Include="..\desktop-shared\mcp\mcp_debug_adapter.cpp" />
-    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_registry.cpp" />
+    <ClCompile Include="..\desktop-shared\gui_debug_stub.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' != 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_events.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_nametable.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_pattern_table.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_sprites.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_video_registers.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_audio.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_basic_typer.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_disc_explorer.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_disassembler_export.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_mem_import.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_memory.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_rewind.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\gui_debug_rom_inspector.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\mcp\mcp_debug_adapter.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_registry.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="..\desktop-shared\mcp\mcp_server.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Disabled</Optimization>
     </ClCompile>
-    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_core.cpp" />
-    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_debug.cpp" />
-    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_input.cpp" />
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_core.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_debug.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\desktop-shared\mcp\mcp_tool_definitions_input.cpp">
+      <ExcludedFromBuild Condition="'$(GearProfile)' == 'emulator'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="..\desktop-shared\imgui\imgui.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui_draw.cpp" />
     <ClCompile Include="..\desktop-shared\imgui\imgui_impl_sdl3.cpp" />
@@ -353,7 +415,6 @@
     <ClInclude Include="..\desktop-shared\gui_debug_rom_inspector.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_sprites.h" />
     <ClInclude Include="..\desktop-shared\gui_debug_video_registers.h" />
-    <ClInclude Include="..\desktop-shared\imgui\fonts\ModernDOS9x16.h" />
     <ClInclude Include="..\desktop-shared\imgui\fonts\Roboto-Light.h" />
     <ClInclude Include="..\desktop-shared\imgui\fonts\RobotoMedium.h" />
     <ClInclude Include="..\desktop-shared\imgui\fonts\SC3000Basic.h" />
@@ -411,9 +472,18 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <!-- Product profile, as in the makefiles. The default is the complete
+       application with the debugger and the MCP server; /p:GearProfile=emulator
+       builds the same emulator without them, into release-emulator\. -->
   <PropertyGroup>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">release\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)\</IntDir>
+    <GearProfile Condition="'$(GearProfile)' == ''">debugger</GearProfile>
+    <GearProfileDefines Condition="'$(GearProfile)' == 'emulator'">GEARSF7000_ENABLE_MCP=0;GEARSF7000_ENABLE_DEBUG_TOOLS=0;GEARSF7000_DISABLE_DISASSEMBLER</GearProfileDefines>
+    <GearProfileDefines Condition="'$(GearProfile)' != 'emulator'">GEARSF7000_ENABLE_MCP=1</GearProfileDefines>
+    <GearProfileDir Condition="'$(GearProfile)' == 'emulator'">-emulator</GearProfileDir>
+  </PropertyGroup>
+  <PropertyGroup>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">release$(GearProfileDir)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)$(GearProfileDir)\</IntDir>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">GearSF7000</TargetName>
     <IgnoreImportLibrary Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</IgnoreImportLibrary>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
@@ -433,7 +503,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <Optimization>MaxSpeed</Optimization>
-      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;NDEBUG;NOMINMAX;GEARSF7000_ENABLE_MCP=1;SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;GEARSF7000_ENABLE_PICO9918=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>UNICODE;WIN32;WIN64;NDEBUG;NOMINMAX;$(GearProfileDefines);SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;GEARSF7000_ENABLE_PICO9918=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessToFile>false</PreprocessToFile>
       <ProgramDataBaseFileName>$(IntDir)vc$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
@@ -482,7 +552,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>DEBUG;UNICODE;WIN32;WIN64;NOMINMAX;GEARSF7000_ENABLE_MCP=1;SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;GEARSF7000_ENABLE_PICO9918=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DEBUG;UNICODE;WIN32;WIN64;NOMINMAX;$(GearProfileDefines);SPRITE_EXPANDER;GEARSF7000_ENABLE_AY=1;GEARSF7000_ENABLE_PICO9918=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessToFile>false</PreprocessToFile>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>

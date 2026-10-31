@@ -27,18 +27,23 @@ jobs:
           curl -sL "https://github.com/libsdl-org/SDL/releases/download/${SDL3_TAG}/SDL3-devel-${SDL3_VERSION}-VC.zip" -o SDL3-devel.zip
           7z x SDL3-devel.zip -oplatforms/windows/dependencies
           mv "platforms/windows/dependencies/SDL3-${SDL3_VERSION}" platforms/windows/dependencies/SDL3
-      - name: Build
+      - name: Build the emulator with the debugger
         run: msbuild GearSF7000.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64
+        working-directory: platforms/windows
+      - name: Build the emulator alone
+        run: msbuild GearSF7000.sln /t:Build /p:Configuration=Release /p:Platform=x64 /p:GearProfile=emulator
         working-directory: platforms/windows
       - name: Package
         shell: bash
         run: |
-          mkdir artifact
-          cp platforms/windows/release/GearSF7000.exe artifact/
-          cp platforms/windows/dependencies/SDL3/lib/x64/SDL3.dll artifact/
-          cp platforms/gamecontrollerdb.txt artifact/
-          cd artifact
-          7z a "../GearSF7000-${GITHUB_REF_NAME}-desktop-windows-x64.zip" *
+          for package in emulator-debugger:release emulator:release-emulator; do
+            name=${package%%:*}; dir=${package#*:}
+            mkdir "$name"
+            cp "platforms/windows/$dir/GearSF7000.exe" "$name/"
+            cp platforms/windows/dependencies/SDL3/lib/x64/SDL3.dll "$name/"
+            cp platforms/gamecontrollerdb.txt "$name/"
+            (cd "$name" && 7z a "../GearSF7000-${GITHUB_REF_NAME}-$name-windows-x64.zip" *)
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: GearSF7000-windows-x64
@@ -57,16 +62,19 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Build
+      - name: Build and package
+        # Both builds write platforms/linux/gearsf7000: each is packaged
+        # before the next one replaces it.
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          make -C platforms/linux -j"$(nproc)" USE_PICOSMSVDP_CORE=0
-      - name: Package
-        run: |
-          mkdir artifact
-          cp platforms/linux/gearsf7000 artifact/
-          cp platforms/gamecontrollerdb.txt artifact/
-          tar -C artifact -czf "GearSF7000-${GITHUB_REF_NAME}-desktop-linux-x64.tar.gz" .
+          for package in emulator-debugger:all emulator:emulator; do
+            name=${package%%:*}; target=${package#*:}
+            make -C platforms/linux -j"$(nproc)" "$target" USE_PICOSMSVDP_CORE=0
+            mkdir "$name"
+            cp platforms/linux/gearsf7000 "$name/"
+            cp platforms/gamecontrollerdb.txt "$name/"
+            tar -C "$name" -czf "GearSF7000-${GITHUB_REF_NAME}-$name-linux-x64.tar.gz" .
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: GearSF7000-linux-x64
