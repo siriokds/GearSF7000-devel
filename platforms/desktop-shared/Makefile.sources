@@ -61,7 +61,6 @@ SOURCES_CXX := \
     $(SRC_DIR)/VideoDeviceFactory.cpp \
     $(SRC_DIR)/VideoCatalog.cpp \
     $(SRC_DIR)/Input.cpp \
-    $(SRC_DIR)/Led.cpp \
     $(SRC_DIR)/Memory.cpp \
     $(SRC_DIR)/SystemClock.cpp \
     $(SRC_DIR)/TMS99xxCpuAccessTiming.cpp \

@@ -8,6 +8,15 @@
 ** More info: http://www.bluemsx.com
 **
 ** Copyright (C) 2003-2006 Daniel Vik
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik (GPL-2.0-or-later, used here under
+** version 3) and largely extended for GearSF7000; the changes and additions
+** by Saverio Russo are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
+**
+** The original notice of blueMSX follows.
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by

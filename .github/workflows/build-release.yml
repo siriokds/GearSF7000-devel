@@ -44,9 +44,37 @@ jobs:
           name: GearSF7000-windows-x64
           path: GearSF7000-*.zip
 
+  linux:
+    name: Linux (x64)
+    runs-on: ubuntu-latest
+    # Ubuntu 25.04 has SDL3 as a package; the runner's Ubuntu does not yet.
+    container: ubuntu:25.04
+    steps:
+      - name: Install the build tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config python3 git libsdl3-dev libgtk-3-dev
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make -C platforms/linux -j"$(nproc)" USE_PICOSMSVDP_CORE=0
+      - name: Package
+        run: |
+          mkdir artifact
+          cp platforms/linux/gearsf7000 artifact/
+          cp platforms/gamecontrollerdb.txt artifact/
+          tar -C artifact -czf "GearSF7000-${GITHUB_REF_NAME}-desktop-linux-x64.tar.gz" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: GearSF7000-linux-x64
+          path: GearSF7000-*.tar.gz
+
   release:
     name: Release
-    needs: [windows]
+    needs: [windows, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:

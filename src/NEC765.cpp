@@ -8,6 +8,15 @@
 ** More info: http://www.bluemsx.com
 **
 ** Copyright (C) 2003-2006 Daniel Vik
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik (GPL-2.0-or-later, used here under
+** version 3) and largely extended for GearSF7000; the changes and additions
+** by Saverio Russo are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
+**
+** The original notice of blueMSX follows.
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
@@ -26,11 +35,9 @@
 ******************************************************************************
 */
 #include "NEC765.h"
-//#include "Board.h"
 //#include "SaveState.h"
 #include "Disk.h"
 #include "FdcRotationClock.h"
-#include "Led.h"
 //#include "FdcAudio.h"
 #include "Audio.h"
 #include <algorithm>
@@ -1531,9 +1538,6 @@ void nec765Reset(NEC765* fdc) {
     fdc->mainStatus = STM_NDM | STM_RQM;
     fdc->interrupt  = 0;
 
-    ledSetFdd1(0);
-    ledSetFdd2(0);
-
     // A controller reset cancels protocol operations but does not reset the
     // spindle phase or the machine timebase. SF7000::Reset performs the
     // stronger power-reset operation explicitly through nec765ResetTimebase.
@@ -1648,9 +1652,6 @@ uint8_t nec765PeekStatus(NEC765* fdc)
 
 void nec765Write(NEC765* fdc, uint8_t value)
 {
-    //ledSetFdd1((value & 0x10) && diskEnabled(0)); /* 10:10 2004/10/09 FDD LED PATCH */
-    //ledSetFdd2((value & 0x20) && diskEnabled(1)); /* 10:10 2004/10/09 FDD LED PATCH */
-
     /* Ignore writes while a FORMAT revolution is in progress.
      * The real NEC765 does not accept new commands until the revolution
      * completes and INT is raised. */

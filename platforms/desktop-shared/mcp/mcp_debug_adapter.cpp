@@ -752,7 +752,9 @@ void DebugAdapter::SetBreakpointRange(u32 a, u32 b, int t, bool r, bool w, bool 
             if (address == b)
                 break;
         }
-        return;
+        // Read and write go in the memory list, beside the execution ones.
+        if (!r && !w)
+            return;
     }
     if (t == MCP_BP_VRAM)
     {
@@ -784,14 +786,15 @@ void DebugAdapter::ClearBreakpointByAddress(u32 a, int t, u32 b)
     Memory* memory = m_core->GetMemory();
     if (t == MCP_BP_ROMRAM)
     {
+        // Execution over the whole range; read and write below.
+        const u32 last = b ? b : a;
         std::vector<Memory::stDisassembleRecord*>* breakpoints =
             memory->GetBreakpointsCPU();
         breakpoints->erase(std::remove_if(breakpoints->begin(), breakpoints->end(),
-            [a](Memory::stDisassembleRecord* record)
+            [a, last](Memory::stDisassembleRecord* record)
             {
-                return record && record->address == a;
+                return record && record->address >= a && record->address <= last;
             }), breakpoints->end());
-        return;
     }
     if (t == MCP_BP_VRAM)
     {

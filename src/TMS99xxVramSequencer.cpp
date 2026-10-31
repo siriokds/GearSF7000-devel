@@ -8,6 +8,7 @@
 
 #include "TMS99xxVramSequencer.h"
 
+#include <algorithm>
 #include <istream>
 #include <ostream>
 

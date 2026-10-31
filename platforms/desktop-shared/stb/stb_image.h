@@ -1,5 +1,7 @@
 /* stb_image - v2.30 - public domain image loader - http://nothings.org/stb
                                   no warranty implied; use at your own risk
+   Changes for GearSF7000 Copyright (C) 2026  Saverio Russo, under the
+   same licence as the rest of this file (public domain or MIT).
 
    Do this:
       #define STB_IMAGE_IMPLEMENTATION

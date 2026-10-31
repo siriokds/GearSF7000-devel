@@ -1,4 +1,6 @@
 // AY-3-8910 sound chip emulator
+// Changes for GearSF7000 Copyright (C) 2026  Saverio Russo, under the
+// same licence as the rest of this file (LGPL-2.1-or-later).
 
 // Game_Music_Emu https://bitbucket.org/mpyne/game-music-emu/
 //

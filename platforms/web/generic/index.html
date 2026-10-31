@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Copyright (C) 2026  Saverio Russo -->
+<!-- The generic page of the web player: it runs a cartridge chosen from the
+     disk, nothing more. Build it with platforms/web/build-player.sh. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GearSC3000 player</title>
+<style>
+  body { font-family: sans-serif; background: #222; color: #ddd; margin: 16px; }
+  canvas { display: block; margin-top: 12px; image-rendering: pixelated;
+           width: min(100%, 768px); background: #000; }
+</style>
+</head>
+<body>
+<p>
+  <input type="file" id="rom" accept=".sg,.sc,.asc">
+  <button id="reset" disabled>Reset</button>
+  <span id="status">Loading the core...</span>
+</p>
+<p>Arrows: joystick. Z: button 1. X: button 2.</p>
+<canvas id="screen" width="256" height="192"></canvas>
+<script src="core.js"></script>
+<script src="player.js"></script>
+</body>
+</html>

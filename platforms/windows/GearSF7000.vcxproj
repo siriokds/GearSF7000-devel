@@ -67,7 +67,6 @@
     <ClCompile Include="..\..\src\Pico9918.cpp" />
     <ClCompile Include="..\..\src\HFELoader.cpp" />
     <ClCompile Include="..\..\src\Input.cpp" />
-    <ClCompile Include="..\..\src\Led.cpp" />
     <ClCompile Include="..\..\src\Memory.cpp" />
     <ClCompile Include="..\..\src\miniz\miniz.c" />
     <ClCompile Include="..\..\src\NEC765.cpp" />
@@ -255,7 +254,6 @@
     <ClInclude Include="..\..\src\IIRBandPassFilter .h" />
     <ClInclude Include="..\..\src\Input.h" />
     <ClInclude Include="..\..\src\IOPorts.h" />
-    <ClInclude Include="..\..\src\Led.h" />
     <ClInclude Include="..\..\src\Mapper.h" />
     <ClInclude Include="..\..\src\Memory.h" />
     <ClInclude Include="..\..\src\Memory_inline.h" />

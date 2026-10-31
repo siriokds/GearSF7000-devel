@@ -1,4 +1,7 @@
 /*
+ * Changes for GearSF7000 Copyright (C) 2026  Saverio Russo, under the
+ * same licence as the rest of this file (MIT).
+ *
  * The MIT License (MIT)
  * Copyright (c) 2018 Danijel Durakovic
  *

@@ -1,4 +1,6 @@
 // Sms_Snd_Emu 0.1.4. http://www.slack.net/~ant/
+// Changes for GearSF7000 Copyright (C) 2024-2026  Saverio Russo, under the
+// same licence as the rest of this file (LGPL-2.1-or-later).
 
 #include "Sms_Apu.h"
 #include "../SN76489DebugEvents.h"

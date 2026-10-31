@@ -93,6 +93,7 @@ __pycache__/
 # Web player generated files
 /platforms/web/dist/
 /platforms/web/dist-local/
+/platforms/web/dist-player/
 /platforms/web/build/
 /platforms/web/.emcache/
 /platforms/web/local-games/

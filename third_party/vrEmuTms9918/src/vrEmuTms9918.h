@@ -2,6 +2,8 @@
  * Troy's TMS9918 Emulator - Core interface
  *
  * Copyright (c) 2021 Troy Schrapel
+ * Changes for GearSF7000 Copyright (C) 2026  Saverio Russo, under the
+ * same licence as the rest of this file (MIT).
  *
  * This code is licensed under the MIT license
  *

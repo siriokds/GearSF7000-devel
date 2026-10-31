@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
+// Port of a public-domain shader by Timothy Lottes, credited below.
 #version 450 core
 // Trimmed direct translation of Timothy Lottes' crt-lottes-fast.glsl
 // (public domain/Unlicense, RetroArch adaptation by hunterk - see
