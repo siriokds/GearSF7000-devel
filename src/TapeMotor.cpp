@@ -1,13 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
 #include "TapeMotor.h"
 
-TapeMotor::TapeMotor() : MotorOn(false)
+TapeMotor::TapeMotor(Policy policy) : MotorOn(false), m_policy(policy)
 {
 }
 
 void TapeMotor::SetMotor(bool motorOn)
 {
-	MotorOn = true; // motorOn;
-	(void)motorOn; // unused
+	MotorOn = m_policy == Policy::AlwaysOn || motorOn;
 }
 
 bool TapeMotor::IsMotorOn()

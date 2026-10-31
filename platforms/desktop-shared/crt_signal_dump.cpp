@@ -1,7 +1,9 @@
 /*
  * GearSF7000 - CRT signal dump sink
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include <cstdio>
@@ -46,7 +48,7 @@ void CrtSignalDumpSink::AppendRecord(RecordType type, int dots)
 }
 
 void CrtSignalDumpSink::ConfigureSignal(bool isPAL,
-    TMS9918RasterTiming::SignalOutput signalOutput)
+    GC_CrtSignalOutput signalOutput)
 {
     AppendRecord(RecordConfigure, 0);
     m_Buffer.push_back(isPAL ? 1 : 0);

@@ -11,11 +11,21 @@
 **   - On HFE load, a .ds7 sidecar is saved automatically.
 **   - On eject/disk-change with dirty==1, the model is auto-saved as .ds7.
 **   - diskGetTrack / diskGetRotationConstants exposed for NEC765.
+**
+** Copyright (C) 2003-2006 Daniel Vik, Tomas Karlsson
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik and Tomas Karlsson (GPL-2.0-or-later,
+** used here under version 3); the changes and additions by Saverio Russo
+** are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
 */
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS   /* suppress MSVC deprecated CRT warnings */
 #endif
 #include "Disk.h"
+#include "Memory.h"
 #include "DiskModel.h"
 #include "DiskLayout.h"
 #include "EDSKLoader.h"
@@ -25,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <utility>
 #ifdef _WIN32
 #define STRCASECMP _stricmp
 #else
@@ -36,6 +47,92 @@
  * Global drive array
  * ========================================================= */
 static DISC_DRIVE diskDrives[MAXDRIVES];
+
+FloppyDriveDevice::FloppyDriveDevice(
+    int driveId, Memory* memory, FloppyDriveDebugConfiguration debug)
+    : m_driveId(driveId), m_memory(memory), m_debug(std::move(debug))
+{
+}
+
+DebugDeviceDefinition FloppyDriveDevice::DescribeDebugDevice() const
+{
+    DebugDeviceDefinition device;
+    device.key = m_debug.key;
+    device.parentKey = m_debug.parentKey;
+    device.typeKey = "floppy.drive";
+    device.name = m_debug.name;
+
+    DebugSpaceDefinition state;
+    state.id = DebugCommonSpace::State;
+    state.key = "state";
+    state.name = "Drive State";
+    state.targetMax = StateCount - 1;
+    state.supportedAccesses = DebugEventAccess_Event;
+    state.beforeValueAccesses = DebugEventAccess_Event;
+    state.afterValueAccesses = DebugEventAccess_Event;
+    state.defaultBitWidth = 1;
+    state.capabilities = DebugDescriptorCapability_EventsPublished |
+                         DebugDescriptorCapability_SnapshotReadable;
+    state.targets = {
+        {MediaPresent, "Media Present", 1},
+        {Enabled, "Enabled", 1},
+        {WriteProtected, "Write Protected", 1},
+        {Motor, "Motor", 1},
+        {Index, "Index", 1}
+    };
+    device.spaces.push_back(std::move(state));
+    return device;
+}
+
+void FloppyDriveDevice::BindDebugEvents(const DebugDeviceRegistry& registry)
+{
+    const DebugDeviceDescriptor* device = registry.FindDevice(m_debug.key.c_str());
+    m_debugDevice = device != nullptr ? device->id : 0;
+}
+
+void FloppyDriveDevice::Observe(bool motor, bool index)
+{
+    const bool current[StateCount] = {
+        diskPresent(m_driveId) != 0,
+        diskIsEnabled(m_driveId) != 0,
+        diskIsReadOnly(m_driveId) != 0,
+        motor,
+        index
+    };
+    if (!m_hasObservation)
+    {
+        Capture(motor, index);
+        return;
+    }
+    for (unsigned i = 0; i < StateCount; ++i)
+        Publish(static_cast<State>(i), current[i]);
+}
+
+void FloppyDriveDevice::Capture(bool motor, bool index)
+{
+    const bool current[StateCount] = {
+        diskPresent(m_driveId) != 0,
+        diskIsEnabled(m_driveId) != 0,
+        diskIsReadOnly(m_driveId) != 0,
+        motor,
+        index
+    };
+    for (unsigned i = 0; i < StateCount; ++i)
+        m_observed[i] = current[i];
+    m_hasObservation = true;
+}
+
+void FloppyDriveDevice::Publish(State state, bool value)
+{
+    const bool before = m_observed[state];
+    if (before == value)
+        return;
+    m_observed[state] = value;
+    if (m_memory == nullptr || m_debugDevice == 0)
+        return;
+    m_memory->CheckDeviceStateChange(
+        {m_debugDevice, DebugCommonSpace::State, state}, before, value);
+}
 
 /* =========================================================
  * Free all DiskTrack/DiskSector memory for a drive

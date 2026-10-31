@@ -1,4 +1,6 @@
 // Private oscillators used by Sms_Apu
+// Changes for GearSF7000 Copyright (C) 2024-2026  Saverio Russo, under the
+// same licence as the rest of this file (LGPL-2.1-or-later).
 
 // Sms_Snd_Emu 0.1.4
 #ifndef SMS_OSCS_H

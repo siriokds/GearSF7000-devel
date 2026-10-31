@@ -1,3 +1,15 @@
+// SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+// Copyright (C) 2013  Ignacio Sanchez
+// Copyright (C) 2026  Saverio Russo
+// Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+// and additions by Saverio Russo are AGPL-3.0-or-later.
+#include "../../../src/SystemBusM5.h"
+#include "../../../src/definitions.h"
+#if GEARSF7000_ENABLE_GAMEGEAR
+#include "../../../src/SystemBusGG.h"
+#endif
+#include "MSXKeyboard.h"
+#include "SystemBusMSX.h"
 #include "mcp_config.h"
 #if GEARSF7000_ENABLE_MCP
 #include "mcp_debug_adapter.h"
@@ -13,12 +25,16 @@
 #if GEARSF7000_ENABLE_SR1000
 #include "../../../src/SR1000.h"
 #endif
-#include "../../../src/Video.h"
+#include "../../../src/ITMS99xxDebugProvider.h"
+#include "../../../src/IVideoDevice.h"
+#include "../../../src/IVideoDebugProvider.h"
 #if GEARSF7000_ENABLE_AY
 // For GetAyPortBase(), so get_ay8910_status can report where the card answers.
 #include "../../../src/MachineIOPorts.h"
 #endif
 #include "../../../src/Z80Disassembler.h"
+#include "../../../src/RomMap.h"
+#include "../rom_map_project.h"
 #include "../imgui/memory_editor.h"
 #include "../gui_debug_disassembler_export.h"
 #include "../gui_debug_basic_typer.h"
@@ -37,10 +53,166 @@
 #include "../renderer.h"
 #include "../config.h"
 
-namespace { enum { MCP_BP_ROMRAM = 0, MCP_BP_VRAM = 1, MCP_BP_VDPREG = 2 }; json unavailable(const char* feature) { return {{"error", std::string(feature) + " is not available in this GearSF7000 build"}}; } }
+namespace
+{
+enum { MCP_BP_ROMRAM = 0, MCP_BP_VRAM = 1, MCP_BP_VDPREG = 2 };
+json unavailable(const char* feature)
+{
+    return {{"error", std::string(feature) +
+        " is not available in this GearSF7000 build"}};
+}
+json unavailableOnMachine(const char* feature)
+{
+    return {{"error", std::string(feature) + " is not available on the current machine"}};
+}
+json unavailableOnActiveVideoDevice(const char* feature)
+{
+    return {{"error", std::string(feature) +
+        " is not provided by the active video device"}};
+}
+}
 
 namespace
 {
+ITMS99xxDebugProvider* GetTmsDebug(GearSF7000Core* core)
+{
+    if (!core)
+        return nullptr;
+    const VideoDeviceHandle handle = core->AcquireVideoDevice();
+    return handle.device
+        ? dynamic_cast<ITMS99xxDebugProvider*>(handle.device)
+        : nullptr;
+}
+
+IVideoDebugProvider* GetVideoDebug(GearSF7000Core* core,
+                                   IVideoDevice** device = nullptr)
+{
+    if (device)
+        *device = nullptr;
+    if (!core)
+        return nullptr;
+    const VideoDeviceHandle handle = core->AcquireVideoDevice();
+    if (!handle.device)
+        return nullptr;
+    if (device)
+        *device = handle.device;
+    return handle.device->GetDebugProvider();
+}
+
+bool ResolveSpriteSource(const IVideoDebugProvider& provider,
+                         const std::string& requested,
+                         GC_VideoDebugSpriteSourceDescriptor& descriptor)
+{
+    const std::string wanted = requested.empty() ? "live" : requested;
+    const char* alias = wanted == "live" ? "live-sat"
+        : (wanted == "rendered" ? "last-rendered-frame" : nullptr);
+    GC_VideoDebugSpriteSourceDescriptor first;
+    bool haveFirst = false;
+    for (std::size_t index = 0; index < provider.GetDebugSpriteSourceCount(); ++index)
+    {
+        GC_VideoDebugSpriteSourceDescriptor candidate;
+        if (!provider.DescribeDebugSpriteSource(index, candidate) || !candidate.code)
+            continue;
+        if (!haveFirst)
+        {
+            first = candidate;
+            haveFirst = true;
+        }
+        if (wanted == candidate.code || (alias && std::strcmp(alias, candidate.code) == 0))
+        {
+            descriptor = candidate;
+            return true;
+        }
+    }
+    if (wanted == "live" && haveFirst)
+    {
+        descriptor = first;
+        return true;
+    }
+    return false;
+}
+
+const char* SpriteVisualStateName(GC_VideoDebugSpriteVisualState state)
+{
+    switch (state)
+    {
+        case GC_VideoDebugSpriteVisualState::None: return "none";
+        case GC_VideoDebugSpriteVisualState::Absent: return "absent";
+        case GC_VideoDebugSpriteVisualState::Complete: return "complete";
+        case GC_VideoDebugSpriteVisualState::Partial: return "partial";
+        case GC_VideoDebugSpriteVisualState::Overflow: return "overflow";
+    }
+    return "unknown";
+}
+
+json VideoDebugFieldValue(const GC_VideoDebugGridCellFieldDescriptor& field)
+{
+    if (field.format == GC_VideoDebugValueFormat::Text)
+        return field.text ? json(field.text) : json("");
+    if (field.format == GC_VideoDebugValueFormat::Boolean)
+        return field.value != 0;
+    return field.value;
+}
+
+bool GetActiveVideoEventMemorySpace(GearSF7000Core* core,
+                                    const DebugDeviceDescriptor*& device,
+                                    const DebugSpaceDescriptor*& space)
+{
+    device = nullptr;
+    space = nullptr;
+    if (!core)
+        return false;
+    const VideoDeviceHandle handle = core->AcquireVideoDevice();
+    if (!handle.device)
+        return false;
+    const DebugDeviceDefinition definition =
+        handle.device->DescribeDebugDevice();
+    const DebugDeviceRegistry& registry =
+        core->GetDebugEventManager()->GetRegistry();
+    device = registry.FindDeviceByType(definition.typeKey.c_str());
+    if (!device)
+        return false;
+    space = registry.FindSpace(device->id, DebugCommonSpace::Memory);
+    return space != nullptr;
+}
+
+bool FindPrimaryVideoMemorySpace(const IVideoDebugProvider& provider,
+                                 GC_VideoMemorySpaceDescriptor& selected)
+{
+    bool haveFallback = false;
+    GC_VideoMemorySpaceDescriptor fallback;
+    for (std::size_t spaceIndex = 0;
+         spaceIndex < provider.GetMemorySpaceCount(); ++spaceIndex)
+    {
+        GC_VideoMemorySpaceDescriptor candidate;
+        if (!provider.DescribeMemorySpace(spaceIndex, candidate) ||
+            !candidate.code || !candidate.readable ||
+            candidate.address_size_bytes == 0)
+            continue;
+        if (!haveFallback)
+        {
+            fallback = candidate;
+            haveFallback = true;
+        }
+        for (std::size_t regionIndex = 0;
+             regionIndex < provider.GetMemoryRegionCount(candidate.code);
+             ++regionIndex)
+        {
+            GC_VideoMemoryRegionDescriptor region;
+            if (provider.DescribeMemoryRegion(candidate.code, regionIndex,
+                    region) &&
+                region.role == GC_VideoMemoryRegionRole::DisplayRam)
+            {
+                selected = candidate;
+                return true;
+            }
+        }
+    }
+    if (haveFallback)
+        selected = fallback;
+    return haveFallback;
+}
+
 const char kBase64Chars[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -68,7 +240,16 @@ std::string Base64Encode(const unsigned char* data, int size)
 }
 
 void DebugAdapter::Pause() { emu_pause(); }
-void DebugAdapter::Resume() { emu_debug_continue(); }
+json DebugAdapter::Resume()
+{
+    emu_debug_continue();
+    if (!m_core->IsMachineReady())
+        return {{"error", emu_get_machine_start_error().empty()
+            ? "No bootable cartridge or firmware is loaded" : emu_get_machine_start_error()},
+            {"machine_ready", false}};
+    if (emu_is_execution_stopped()) return {{"error", "Unable to resume execution"}};
+    return {{"success", true}};
+}
 void DebugAdapter::StepInto() { emu_debug_step_into(); }
 void DebugAdapter::StepOver() { emu_debug_step_over(); }
 void DebugAdapter::StepOut() { /* unavailable until the CPU-neutral call stack lands */ }
@@ -78,16 +259,12 @@ void DebugAdapter::StepFrame(int frames) { emu_debug_step_frames(frames); }
 // confirmation and there is nothing to poll for.
 json DebugAdapter::StepFrameSync(int frames)
 {
-    const std::uint64_t before =
-        m_core->GetVideo() ? m_core->GetVideo()->GetFrameRenderDiagnostics().frameSerial
-                           : 0;
+    const std::uint64_t before = m_core->GetVideoFrameSerial();
 
     bool breakpointHit = false;
     const int completed = emu_debug_step_frames_now(frames, &breakpointHit);
 
-    const std::uint64_t after =
-        m_core->GetVideo() ? m_core->GetVideo()->GetFrameRenderDiagnostics().frameSerial
-                           : 0;
+    const std::uint64_t after = m_core->GetVideoFrameSerial();
 
     json result = {
         {"success", true},
@@ -107,7 +284,13 @@ json DebugAdapter::StepFrameSync(int frames)
     result["pc"] = pc;
     return result;
 }
-void DebugAdapter::Reset(bool paused) { m_core->ResetROM(NULL, paused); }
+void DebugAdapter::Reset(bool paused)
+{
+    Cartridge::ForceConfiguration config;
+    config.type = config_forced_cartridge_type();
+    config.fallbackType = config_fallback_cartridge_type();
+    emu_reset(config, paused);
+}
 json DebugAdapter::GetDebugStatus() { const CpuStateSnapshot s=m_core->GetCpuStateAccess()->GetCpuStateSnapshot(); const bool corePaused=m_core->IsPaused(); const bool debuggerPaused=emu_is_debugging(); return {{"paused", corePaused || debuggerPaused}, {"paused_by_core", corePaused}, {"paused_by_debugger", debuggerPaused}, {"pc", s.pc}, {"halted", s.halted}, {"cpu_backend", m_core->GetCpuBackendName()}, {"save_states_available", m_core->IsCpuStatePersistenceAvailable()}}; }
 json DebugAdapter::RunToAddress(u16 address) { m_core->GetMemory()->ArmRunToAddress(address); emu_debug_continue(); return {{"success",true},{"address",address},{"resumed",true}}; }
 
@@ -131,24 +314,6 @@ const char* debug_category_name(DebugEventCategory category)
     case DebugEventCategory::DeviceState: return "device_state";
     default: return "unknown";
     }
-}
-
-bool is_vdp_latch_replacement(const DebugEvent& event)
-{
-    const DebugDeviceDescriptor* device = FindDebugDeviceDescriptor(event.device);
-    return device != NULL && device->typeKey != NULL
-        && std::string(device->typeKey) == "ti.tms9918"
-        && event.space == DebugCommonSpace::State
-        && event.targetV2 == Video::DebugCpuPortLatchReplacement;
-}
-
-json decode_vdp_port_request(u64 packed)
-{
-    return {
-        {"write", (packed & (1u << 22)) != 0},
-        {"address", (packed >> 8) & 0x3FFF},
-        {"value", packed & 0xFF}
-    };
 }
 
 bool debug_category_from_name(const std::string& name, DebugEventCategory* category)
@@ -260,13 +425,14 @@ json DebugAdapter::AddDebugRule(const std::string& categoryName, u16 start, u16 
     rule.oneShot = oneShot;
     rule.actions = (log ? DebugEventAction_Log : 0) | (pause ? DebugEventAction_Pause : 0);
 
-    if (const char* error = ValidateDebugRule(rule))
+    if (const char* error = ValidateDebugRule(rule, m_core->GetDebugEventManager()->GetRegistry()))
         return {{"error", error}};
 
-    DebugEventManager* events = m_core->GetMemory()->GetDebugEventManager();
-    const u32 id = events->AddRule(rule);
+    DebugEventManager* events = m_core->GetDebugEventManager();
+    const u32 id = events->QueueAddRule(rule);
     if (id == 0)
         return {{"error", "Rule was rejected by the debug engine"}};
+    m_core->ApplyPendingDebugEventCommands();
     for (const DebugRule& added : events->GetRules())
         if (added.id == id)
             return {{"success", true}, {"rule", debug_rule_json(added)}};
@@ -307,10 +473,11 @@ json DebugAdapter::AddDeviceDebugRule(const std::string& deviceKey, const std::s
     rule.oneShot = oneShot;
     rule.actions = (log ? DebugEventAction_Log : 0) | (pause ? DebugEventAction_Pause : 0);
 
-    DebugEventManager* events = m_core->GetMemory()->GetDebugEventManager();
-    const u32 id = events->AddRule(rule);
+    DebugEventManager* events = m_core->GetDebugEventManager();
+    const u32 id = events->QueueAddRule(rule);
     if (id == 0)
         return {{"error", "Rule was rejected; verify list_debug_devices capabilities"}};
+    m_core->ApplyPendingDebugEventCommands();
     for (const DebugRule& added : events->GetRules())
         if (added.id == id)
             return {{"success", true}, {"rule", debug_rule_json(added)}};
@@ -320,25 +487,34 @@ json DebugAdapter::AddDeviceDebugRule(const std::string& deviceKey, const std::s
 json DebugAdapter::ListDebugRules()
 {
     json rules = json::array();
-    for (const DebugRule& rule : m_core->GetMemory()->GetDebugEventManager()->GetRules())
+    for (const DebugRule& rule : m_core->GetDebugEventManager()->GetRules())
         rules.push_back(debug_rule_json(rule));
     return {{"rules", rules}};
 }
 
 json DebugAdapter::RemoveDebugRule(u32 id)
 {
-    return {{"success", m_core->GetMemory()->GetDebugEventManager()->RemoveRule(id)}, {"id", id}};
+    DebugEventManager* manager = m_core->GetDebugEventManager();
+    const bool exists = std::any_of(manager->GetRules().begin(), manager->GetRules().end(),
+        [id](const DebugRule& rule) { return rule.id == id; });
+    if (exists)
+    {
+        manager->QueueRemoveRule(id);
+        m_core->ApplyPendingDebugEventCommands();
+    }
+    return {{"success", exists}, {"id", id}};
 }
 
 json DebugAdapter::ClearDebugRules()
 {
-    m_core->GetMemory()->GetDebugEventManager()->ClearRules();
+    m_core->GetDebugEventManager()->QueueClearRules();
+    m_core->ApplyPendingDebugEventCommands();
     return {{"success", true}};
 }
 
 json DebugAdapter::ListDebugDevices()
 {
-    const DebugDeviceRegistry& registry = GetGearDebugDeviceRegistry();
+    const DebugDeviceRegistry& registry = m_core->GetDebugEventManager()->GetRegistry();
     size_t deviceCount = 0;
     const DebugDeviceDescriptor* devices = registry.GetDevices(&deviceCount);
     json output = json::array();
@@ -373,12 +549,30 @@ json DebugAdapter::ListDebugDevices()
             });
         }
         const DebugDeviceDescriptor* parent = registry.GetParent(device.id);
+        json presets = json::array();
+        for (size_t p = 0; p < device.presetCount; ++p)
+        {
+            const DebugRulePresetDescriptor& preset = device.presets[p];
+            presets.push_back({
+                {"key", preset.key}, {"name", preset.name},
+                {"space_key", preset.spaceKey},
+                {"target_start", preset.targetStart},
+                {"target_end", preset.targetEnd},
+                {"access_mask", preset.accessMask},
+                {"use_value_condition", preset.useValueCondition},
+                {"value_condition", static_cast<int>(preset.valueCondition)},
+                {"value_mask", preset.valueMask},
+                {"before_value", preset.beforeValueExpected},
+                {"after_value", preset.valueExpected},
+                {"actions", preset.actions}
+            });
+        }
         output.push_back({
             {"id", device.id}, {"key", device.key}, {"type_key", device.typeKey},
             {"name", device.displayName},
             {"parent", parent != NULL ? json(parent->key) : json(nullptr)},
             {"child_count", registry.GetChildCount(device.id)},
-            {"spaces", spaces}
+            {"spaces", spaces}, {"presets", presets}
         });
     }
     return {{"schema_version", 2}, {"devices", output}};
@@ -387,7 +581,7 @@ json DebugAdapter::ListDebugDevices()
 json DebugAdapter::GetDebugEvents(const json& arguments)
 {
     std::vector<DebugEvent> events;
-    DebugEventManager* manager = m_core->GetMemory()->GetDebugEventManager();
+    DebugEventManager* manager = m_core->GetDebugEventManager();
     manager->CopyEvents(events);
 
     McpDebugEventQuery query;
@@ -438,7 +632,9 @@ json DebugAdapter::GetDebugEvents(const json& arguments)
     query.space = arguments.value("space", std::string());
 
     std::vector<DebugEvent> filtered;
-    const size_t matched = McpFilterDebugEvents(events, query, filtered);
+    const DebugDeviceRegistry& registry =
+        m_core->GetDebugEventManager()->GetRegistry();
+    const size_t matched = McpFilterDebugEvents(events, query, filtered, registry);
     json output = json::array();
     for (const DebugEvent& event : filtered)
     {
@@ -447,20 +643,52 @@ json DebugAdapter::GetDebugEvents(const json& arguments)
             {"pc", event.pc}, {"target", event.target}, {"value", event.value}, {"value_known", event.valueKnown},
             {"before", event.beforeValue}, {"before_known", event.beforeKnown},
             {"after", event.afterValue}, {"after_known", event.afterKnown},
-            {"schema_version", event.schemaVersion}, {"device", GetDebugDeviceName(event.device)},
-            {"space", GetDebugSpaceName(event.space)}, {"target_v2", event.targetV2},
+            {"schema_version", event.schemaVersion}, {"device", GetDebugDeviceName(registry, event.device)},
+            {"space", GetDebugSpaceName(registry, event.device, event.space)}, {"target_v2", event.targetV2},
             {"value_width", event.valueWidth}, {"before_v2", event.beforeValueV2},
             {"after_v2", event.afterValueV2}, {"source", GetDebugEventSourceName(event.source)},
             {"phase", GetDebugEventPhaseName(event.phase)},
             {"pause", (event.actions & DebugEventAction_Pause) != 0}};
         if (event.bankKnown)
             entry["bank"] = event.bank;
-        if (is_vdp_latch_replacement(event) && event.beforeKnown && event.afterKnown)
+        DebugEventPresentation presentation;
+        if (FormatDebugEventPresentation(registry, event, presentation))
         {
-            entry["vdp_latch_replacement"] = {
-                {"discarded", decode_vdp_port_request(event.beforeValueV2)},
-                {"replacement", decode_vdp_port_request(event.afterValueV2)}
-            };
+            if (presentation.typeLabel[0] != 0)
+                entry["type_label"] = presentation.typeLabel;
+            if (presentation.details[0] != 0)
+                entry["details"] = presentation.details;
+            if (presentation.semanticKey != nullptr)
+            {
+                json semantic = json::object();
+                for (size_t i = 0; i < presentation.attributeCount; ++i)
+                {
+                    const DebugEventPresentationAttribute& attribute =
+                        presentation.attributes[i];
+                    if (attribute.key == nullptr)
+                        continue;
+                    json* destination = &semantic;
+                    if (attribute.group != nullptr)
+                        destination = &semantic[attribute.group];
+                    switch (attribute.kind)
+                    {
+                    case DebugPresentationValueKind::Boolean:
+                        (*destination)[attribute.key] =
+                            attribute.unsignedValue != 0;
+                        break;
+                    case DebugPresentationValueKind::Text:
+                        (*destination)[attribute.key] =
+                            attribute.textValue != nullptr
+                                ? attribute.textValue : "";
+                        break;
+                    case DebugPresentationValueKind::Unsigned:
+                        (*destination)[attribute.key] =
+                            attribute.unsignedValue;
+                        break;
+                    }
+                }
+                entry[presentation.semanticKey] = std::move(semantic);
+            }
         }
         if (event.raster.rasterKnown)
         {
@@ -477,8 +705,7 @@ json DebugAdapter::GetDebugEvents(const json& arguments)
         }
         if (event.raster.gapKnown)
         {
-            // End-of-transfer to end-of-transfer, which is the spacing the
-            // VDP itself sees. The TMS9918 needs 29T in Graphics I/II.
+            // End-of-transfer to end-of-transfer, as published by the device.
             entry["tstates_since_previous_port_access"] =
                 event.raster.tStatesSincePreviousAccess;
         }
@@ -491,70 +718,331 @@ json DebugAdapter::GetDebugEvents(const json& arguments)
 
 json DebugAdapter::ClearDebugEvents()
 {
-    m_core->GetMemory()->GetDebugEventManager()->ClearEvents();
+    m_core->GetDebugEventManager()->ClearEvents();
     return {{"success", true}};
 }
 
-void DebugAdapter::SetBreakpoint(u16 a,int t,bool r,bool w,bool x) { SetBreakpointRange(a,a,t,r,w,x); }
-void DebugAdapter::SetBreakpointRange(u16 a,u16 b,int t,bool r,bool w,bool x) { Memory* m=m_core->GetMemory(); if(t==MCP_BP_ROMRAM && x) { for(u16 p=a;;p++) { Memory::stDisassembleRecord* d=m->GetDisassembleRecord(p,true); if(std::find(m->GetBreakpointsCPU()->begin(),m->GetBreakpointsCPU()->end(),d)==m->GetBreakpointsCPU()->end()) m->GetBreakpointsCPU()->push_back(d); if(p==b) break; } } else { Memory::stMemoryBreakpoint bp={a,b,r,w,a!=b}; (t==MCP_BP_VRAM?m->GetBreakpointsVRAM():m->GetBreakpointsMem())->push_back(bp); } }
-void DebugAdapter::ClearBreakpointByAddress(u16 a,int t,u16 b) { Memory* m=m_core->GetMemory(); if(t==MCP_BP_ROMRAM) { auto* v=m->GetBreakpointsCPU(); v->erase(std::remove_if(v->begin(),v->end(),[a](Memory::stDisassembleRecord* r){return r&&r->address==a;}),v->end()); } else { auto* v=t==MCP_BP_VRAM?m->GetBreakpointsVRAM():m->GetBreakpointsMem(); v->erase(std::remove_if(v->begin(),v->end(),[a,b](const Memory::stMemoryBreakpoint& x){return x.address1==a && (!b||x.address2==b);}),v->end()); } }
-std::vector<BreakpointInfo> DebugAdapter::ListBreakpoints() { std::vector<BreakpointInfo> out; Memory* m=m_core->GetMemory(); for(auto* r:*m->GetBreakpointsCPU()) if(r) out.push_back({true,MCP_BP_ROMRAM,r->address,r->address,false,false,true,false,"rom_ram"}); for(int t=1;t<=2;t++) for(const auto& b:*(t==1?m->GetBreakpointsVRAM():m->GetBreakpointsMem())) out.push_back({true,t,b.address1,b.address2,b.read,b.write,false,b.range,t==1?"vram":"rom_ram"}); return out; }
+void DebugAdapter::SetBreakpoint(u32 a,int t,bool r,bool w,bool x) { SetBreakpointRange(a,a,t,r,w,x); }
+bool DebugAdapter::GetVideoBreakpointAddressRange(u32& minimum,
+                                                  u32& maximum) const
+{
+    const DebugDeviceDescriptor* device = nullptr;
+    const DebugSpaceDescriptor* space = nullptr;
+    if (!GetActiveVideoEventMemorySpace(m_core, device, space))
+        return false;
+    minimum = space->targetMin;
+    maximum = space->targetMax;
+    return true;
+}
+
+void DebugAdapter::SetBreakpointRange(u32 a, u32 b, int t, bool r, bool w, bool x)
+{
+    Memory* memory = m_core->GetMemory();
+    if (t == MCP_BP_ROMRAM && x)
+    {
+        for (u32 address = a;; ++address)
+        {
+            Memory::stDisassembleRecord* record =
+                memory->GetDisassembleRecord(static_cast<u16>(address), true);
+            std::vector<Memory::stDisassembleRecord*>* breakpoints =
+                memory->GetBreakpointsCPU();
+            if (std::find(breakpoints->begin(), breakpoints->end(), record) ==
+                breakpoints->end())
+                breakpoints->push_back(record);
+            if (address == b)
+                break;
+        }
+        // Read and write go in the memory list, beside the execution ones.
+        if (!r && !w)
+            return;
+    }
+    if (t == MCP_BP_VRAM)
+    {
+        const DebugDeviceDescriptor* device = nullptr;
+        const DebugSpaceDescriptor* space = nullptr;
+        if (!GetActiveVideoEventMemorySpace(m_core, device, space))
+            return;
+        DebugRule rule;
+        rule.useProbe = true;
+        rule.deviceKey = device->key;
+        rule.spaceKey = space->key;
+        rule.category = DebugEventCategory::DeviceState;
+        rule.addressStart = a;
+        rule.addressEnd = b;
+        rule.accessMask = (r ? DebugEventAccess_Read : 0) |
+            (w ? DebugEventAccess_Write : 0);
+        rule.actions = DebugEventAction_Log | DebugEventAction_Pause;
+        rule.breakOnHit = 1;
+        m_core->GetDebugEventManager()->QueueAddRule(rule);
+        m_core->ApplyPendingDebugEventCommands();
+        return;
+    }
+    memory->GetBreakpointsMem()->push_back({static_cast<u16>(a),
+        static_cast<u16>(b), r, w, a != b});
+}
+
+void DebugAdapter::ClearBreakpointByAddress(u32 a, int t, u32 b)
+{
+    Memory* memory = m_core->GetMemory();
+    if (t == MCP_BP_ROMRAM)
+    {
+        // Execution over the whole range; read and write below.
+        const u32 last = b ? b : a;
+        std::vector<Memory::stDisassembleRecord*>* breakpoints =
+            memory->GetBreakpointsCPU();
+        breakpoints->erase(std::remove_if(breakpoints->begin(), breakpoints->end(),
+            [a, last](Memory::stDisassembleRecord* record)
+            {
+                return record && record->address >= a && record->address <= last;
+            }), breakpoints->end());
+    }
+    if (t == MCP_BP_VRAM)
+    {
+        DebugEventManager* manager = m_core->GetDebugEventManager();
+        const DebugDeviceDescriptor* device = nullptr;
+        const DebugSpaceDescriptor* space = nullptr;
+        GetActiveVideoEventMemorySpace(m_core, device, space);
+        std::vector<u32> ids;
+        for (const DebugRule& rule : manager->GetRules())
+            if (((!rule.useProbe && rule.category == DebugEventCategory::Vram) ||
+                 (rule.useProbe && device && space &&
+                  rule.deviceKey == device->key && rule.spaceKey == space->key)) &&
+                (rule.actions & DebugEventAction_Pause) != 0 &&
+                rule.addressStart == a && (!b || rule.addressEnd == b))
+                ids.push_back(rule.id);
+        for (u32 id : ids)
+            manager->QueueRemoveRule(id);
+        m_core->ApplyPendingDebugEventCommands();
+        return;
+    }
+    std::vector<Memory::stMemoryBreakpoint>* breakpoints =
+        memory->GetBreakpointsMem();
+    breakpoints->erase(std::remove_if(breakpoints->begin(), breakpoints->end(),
+        [a, b](const Memory::stMemoryBreakpoint& breakpoint)
+        {
+            return breakpoint.address1 == a &&
+                (!b || breakpoint.address2 == b);
+        }), breakpoints->end());
+}
+
+std::vector<BreakpointInfo> DebugAdapter::ListBreakpoints()
+{
+    std::vector<BreakpointInfo> result;
+    Memory* memory = m_core->GetMemory();
+    for (Memory::stDisassembleRecord* record : *memory->GetBreakpointsCPU())
+        if (record)
+            result.push_back({true, MCP_BP_ROMRAM, record->address,
+                record->address, false, false, true, false, "rom_ram"});
+    for (const Memory::stMemoryBreakpoint& breakpoint :
+        *memory->GetBreakpointsMem())
+        result.push_back({true, MCP_BP_VDPREG, breakpoint.address1,
+            breakpoint.address2, breakpoint.read, breakpoint.write, false,
+            breakpoint.range, "rom_ram"});
+    const DebugDeviceDescriptor* videoDevice = nullptr;
+    const DebugSpaceDescriptor* videoSpace = nullptr;
+    const bool haveVideoSpace = GetActiveVideoEventMemorySpace(
+        m_core, videoDevice, videoSpace);
+    for (const DebugRule& rule : m_core->GetDebugEventManager()->GetRules())
+    {
+        const bool legacyVram = !rule.useProbe &&
+            rule.category == DebugEventCategory::Vram;
+        const bool activeVideoMemory = rule.useProbe && haveVideoSpace &&
+            rule.deviceKey == videoDevice->key && rule.spaceKey == videoSpace->key;
+        if ((!legacyVram && !activeVideoMemory) ||
+            (rule.actions & DebugEventAction_Pause) == 0)
+            continue;
+        result.push_back({rule.enabled, MCP_BP_VRAM,
+            rule.addressStart, rule.addressEnd,
+            (rule.accessMask & DebugEventAccess_Read) != 0,
+            (rule.accessMask & DebugEventAccess_Write) != 0,
+            false, rule.addressStart != rule.addressEnd, "vram"});
+    }
+    return result;
+}
+
 RegistersSnapshot DebugAdapter::GetRegisters() { const CpuStateSnapshot s=m_core->GetCpuStateAccess()->GetCpuStateSnapshot(); return {s.af,s.bc,s.de,s.hl,s.af2,s.bc2,s.de2,s.hl2,s.ix,s.iy,s.sp,s.pc,s.wz,s.i,s.r,s.iff1,s.iff2,s.halted,s.interruptMode}; }
-void DebugAdapter::SetRegister(const std::string& n,u32 v) { CpuStateAccess* cpu=m_core->GetCpuStateAccess(); if(n=="AF")cpu->SetCpuRegister(CpuRegister::AF,v); else if(n=="BC")cpu->SetCpuRegister(CpuRegister::BC,v); else if(n=="DE")cpu->SetCpuRegister(CpuRegister::DE,v); else if(n=="HL")cpu->SetCpuRegister(CpuRegister::HL,v); else if(n=="AF2")cpu->SetCpuRegister(CpuRegister::AF2,v); else if(n=="BC2")cpu->SetCpuRegister(CpuRegister::BC2,v); else if(n=="DE2")cpu->SetCpuRegister(CpuRegister::DE2,v); else if(n=="HL2")cpu->SetCpuRegister(CpuRegister::HL2,v); else if(n=="IX")cpu->SetCpuRegister(CpuRegister::IX,v); else if(n=="IY")cpu->SetCpuRegister(CpuRegister::IY,v); else if(n=="SP")cpu->SetCpuRegister(CpuRegister::SP,v); else if(n=="PC")cpu->SetCpuRegister(CpuRegister::PC,v); else if(n=="WZ")cpu->SetCpuRegister(CpuRegister::WZ,v); else if(n=="I")cpu->SetCpuRegister(CpuRegister::I,v); else if(n=="R")cpu->SetCpuRegister(CpuRegister::R,v); else if(n=="IFF1")cpu->SetCpuRegister(CpuRegister::IFF1,v); else if(n=="IFF2")cpu->SetCpuRegister(CpuRegister::IFF2,v); else if(n=="IM")cpu->SetCpuRegister(CpuRegister::InterruptMode,v); }
+bool DebugAdapter::SetRegister(const std::string& name,u32 v)
+{
+    std::string n; for(char c:name) n+=(char)toupper((unsigned char)c);
+    CpuStateAccess* cpu=m_core->GetCpuStateAccess();
+    const CpuStateSnapshot s=cpu->GetCpuStateSnapshot();
+    // Pairs: AF' and AF2 are the same alternate register.
+    struct Pair { const char* name; const char* alt; CpuRegister reg; u16 cur; };
+    const Pair pairs[]={
+        {"AF",nullptr,CpuRegister::AF,s.af},{"BC",nullptr,CpuRegister::BC,s.bc},{"DE",nullptr,CpuRegister::DE,s.de},{"HL",nullptr,CpuRegister::HL,s.hl},
+        {"AF'","AF2",CpuRegister::AF2,s.af2},{"BC'","BC2",CpuRegister::BC2,s.bc2},{"DE'","DE2",CpuRegister::DE2,s.de2},{"HL'","HL2",CpuRegister::HL2,s.hl2},
+        {"IX",nullptr,CpuRegister::IX,s.ix},{"IY",nullptr,CpuRegister::IY,s.iy},{"SP",nullptr,CpuRegister::SP,s.sp},{"PC",nullptr,CpuRegister::PC,s.pc},{"WZ",nullptr,CpuRegister::WZ,s.wz}};
+    for(const Pair& p:pairs)
+    {
+        if(n==p.name||(p.alt&&n==p.alt)) return cpu->SetCpuRegister(p.reg,(u16)v);
+        // 8-bit halves: first letter is the high byte (A in AF, IXH in IX), second the low.
+        const std::string pn=p.name; const bool alt=pn.size()==3;
+        const std::string hi=(pn=="IX"||pn=="IY")?pn+"H":std::string(1,pn[0])+(alt?"'":"");
+        const std::string lo=(pn=="IX"||pn=="IY")?pn+"L":std::string(1,pn[1])+(alt?"'":"");
+        if(pn=="SP"||pn=="PC"||pn=="WZ") continue;
+        if(n==hi) return cpu->SetCpuRegister(p.reg,(u16)((p.cur&0x00FF)|((v&0xFF)<<8)));
+        if(n==lo) return cpu->SetCpuRegister(p.reg,(u16)((p.cur&0xFF00)|(v&0xFF)));
+    }
+    if(n=="I") return cpu->SetCpuRegister(CpuRegister::I,v);
+    if(n=="R") return cpu->SetCpuRegister(CpuRegister::R,v);
+    if(n=="IFF1") return cpu->SetCpuRegister(CpuRegister::IFF1,v);
+    if(n=="IFF2") return cpu->SetCpuRegister(CpuRegister::IFF2,v);
+    if(n=="IM") return cpu->SetCpuRegister(CpuRegister::InterruptMode,v);
+    return false;
+}
 MemoryAreaInfo DebugAdapter::GetMemoryAreaInfo(int a)
 {
     Memory* m = m_core->GetMemory();
-    Video* v = m_core->GetVideo();
     Cartridge* cartridge = m_core->GetCartridge();
     switch (a)
     {
         case 0: return {0, "Z80 address space", 0x10000, 0, nullptr};
         case 1:
         {
-            // The $C000-$FFFF work RAM window is backed by a different
-            // buffer - and mirrored over a different size - depending on
-            // the loaded cartridge/mode; this must mirror Memory::Read()'s
-            // own dispatch (Memory_inline.h) exactly, or area 1 silently
-            // shows a buffer the running game never touches. Confirmed live
-            // on an SG1000_16K game (Pop Flamer): memory_search on the old
-            // always-m_pRam exposure found zero changes over minutes of
-            // real play, because that cartridge type's RAM is m_pSGMRam,
-            // not m_pRam - area 0 (which reads through Memory::Read()) saw
-            // the same address change on every hit. Unconditionally
-            // exposing m_pRam as 0x4000 bytes was also an out-of-bounds
-            // read/write past its real MAX_SRAM_SIZE (0x800) allocation for
-            // every cartridge type, independent of that bug.
-            if (m->IsSF7000Enabled())
-                return {1, "RAM", 0x4000, 0xC000, m->GetSGMRam() + 0xC000};
-            switch (cartridge->GetType())
-            {
-                case Cartridge::CartridgeTypes::SC3000_ASC16L:
-                case Cartridge::CartridgeTypes::SC3000_32K:
-                    return {1, "RAM", 0x4000, 0xC000, m->GetSGMRam() + 0x4000};
-                case Cartridge::CartridgeTypes::SG1000_16K:
-                    return {1, "RAM", 0x4000, 0xC000, m->GetSGMRam()};
-                case Cartridge::CartridgeTypes::SC3000_2K:
-                    return {1, "RAM", 0x800, 0xC000, m->GetRam()};
-                default:
-                    return {1, "RAM", 0x400, 0xC000, m->GetRam()};
+            // Preserve the historical main-window alias. Complete installed
+            // regions have stable IDs 8 (internal), 9 (external), 10 (cart).
+            if (!m_core->GetSystemBus()) return {-1, "invalid", 0, 0, nullptr};
+            for (const auto& region : m_core->GetSystemBus()->GetRamRegions()) {
+                if (!region.showInEditor || region.role == RamRole::Cartridge) continue;
+                u32 offset = 0, size = region.size, base = region.displayBase;
+                if (m->IsSF7000Enabled()) { offset = 0xC000; size = 0x4000; base = 0xC000; }
+                else if (region.role == RamRole::External && size == 0x8000 && base == 0x8000)
+                { offset = 0x4000; size = 0x4000; base = 0xC000; }
+                return {1, region.name, size, base, region.data + offset};
             }
+            return {-1, "invalid", 0, 0, nullptr};
         }
-        case 2: return {2, "BIOS", 0x2000, 0, m->GetBios()};
-        case 3: return {3, "VRAM", 0x4000, 0, v->GetVRAM()};
+        case 2: return {2, "BIOS", m->GetBiosSize(), 0, m->GetBios()};
+        case 3:
+        {
+            const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+            IVideoDebugProvider* provider = handle.device
+                ? handle.device->GetDebugProvider() : nullptr;
+            GC_VideoMemorySpaceDescriptor space;
+            if (!provider || !FindPrimaryVideoMemorySpace(*provider, space))
+                return {-1, "invalid", 0, 0, nullptr};
+            return {3, space.name ? space.name : "Video memory",
+                    space.address_size_bytes, 0, space.direct_data};
+        }
         case 4:
             return {4, "Cartridge ROM", static_cast<u32>(cartridge->GetROMSize()), 0,
                 cartridge->GetROM()};
+        case 5:
+        {
+            if (!m_core->GetSystemBus()) return {-1, "invalid", 0, 0, nullptr};
+            const auto type = cartridge->GetType();
+            for (const auto& region : m_core->GetSystemBus()->GetRamRegions()) {
+                const bool split = type == Cartridge::SC3000_SURVIVORS_MULTICART ||
+                                   type == Cartridge::SC3000_SURVIVORS_MEGACART;
+                if (region.role == RamRole::Cartridge ||
+                    (region.role == RamRole::External &&
+                     ((m->GetSGMDevice() && m->GetSGMDevice()->IsPresent()) || split ||
+                      type == Cartridge::SG1000_DAHJEE_TYPE_A ||
+                      type == Cartridge::SG1000_OTHELLO_2K ||
+                      type == Cartridge::SG1000_CASTLE_8K ||
+                      type == Cartridge::SC3000_16K_AT_8000)))
+                    return {5, region.name, split ? 0x4000u : region.size,
+                            region.displayBase, region.data};
+            }
+            return {-1, "invalid", 0, 0, nullptr};
+        }
+        case 8:
+        case 9:
+        case 10:
+            if (m_core->GetSystemBus())
+                for (const auto& region : m_core->GetSystemBus()->GetRamRegions())
+                    if (a == 8 + static_cast<int>(region.role))
+                        return {a, region.name, region.size, region.displayBase, region.data};
+            return {-1, "invalid", 0, 0, nullptr};
+        case 6:
+        case 7:
+            if (m_core->GetMachineType() == MachineType::MSX) {
+                auto& bus = *static_cast<SystemBusMSX*>(const_cast<ISystemBus*>(m_core->GetSystemBus()));
+                auto& image = a == 6 ? bus.LogoROM() : bus.BasicROM();
+                if (!image.empty()) return {a, a == 6 ? "MSX Logo ROM" : "MSX BASIC ROM",
+                    static_cast<u32>(image.size()), 0, image.data()};
+            }
+            return {-1, "invalid", 0, 0, nullptr};
         default: return {-1, "invalid", 0, 0, nullptr};
     }
 }
 
 std::vector<MemoryAreaInfo> DebugAdapter::ListMemoryAreas()
 {
-    return {GetMemoryAreaInfo(0), GetMemoryAreaInfo(1), GetMemoryAreaInfo(2),
+    std::vector<MemoryAreaInfo> areas = {
+        GetMemoryAreaInfo(0), GetMemoryAreaInfo(1), GetMemoryAreaInfo(2),
         GetMemoryAreaInfo(3), GetMemoryAreaInfo(4)};
+    for (int area = 5; area <= 10; ++area) {
+        MemoryAreaInfo extra = GetMemoryAreaInfo(area);
+        if (extra.id >= 0) areas.push_back(extra);
+    }
+    return areas;
 }
-std::vector<u8> DebugAdapter::ReadMemoryArea(int a,u32 o,size_t n){std::vector<u8> out; MemoryAreaInfo i=GetMemoryAreaInfo(a); if(!i.size||o>=i.size)return out; n=std::min(n,(size_t)i.size-o); out.reserve(n); for(size_t x=0;x<n;x++)out.push_back(a==0?m_core->GetMemory()->Read((u16)(o+x)):i.data[o+x]); return out;}
-void DebugAdapter::WriteMemoryArea(int a,u32 o,const std::vector<u8>& d){MemoryAreaInfo i=GetMemoryAreaInfo(a); if(!i.size||o>=i.size)return; size_t n=std::min(d.size(),(size_t)i.size-o); for(size_t x=0;x<n;x++){if(a==0)m_core->GetMemory()->Write((u16)(o+x),d[x]); else if(a==3)m_core->GetVideo()->WriteVRAM((u16)(o+x),d[x]); else if(i.data)i.data[o+x]=d[x];}}
+std::vector<u8> DebugAdapter::ReadMemoryArea(int area, u32 offset,
+                                             size_t size)
+{
+    std::vector<u8> result;
+    const MemoryAreaInfo info = GetMemoryAreaInfo(area);
+    if (!info.size || offset >= info.size)
+        return result;
+    size = std::min(size, static_cast<size_t>(info.size - offset));
+    result.resize(size);
+
+    if (area == 0)
+    {
+        for (size_t index = 0; index < size; ++index)
+            result[index] = m_core->GetMemory()->Peek(
+                static_cast<u16>(offset + index));
+        return result;
+    }
+    if (area == 3)
+    {
+        const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+        const IVideoDebugProvider* provider = handle.device
+            ? handle.device->GetDebugProvider() : nullptr;
+        GC_VideoMemorySpaceDescriptor space;
+        if (!provider || !FindPrimaryVideoMemorySpace(*provider, space) ||
+            !provider->ReadMemorySpace(space.code, offset, result.data(), size))
+            result.clear();
+        return result;
+    }
+    if (!info.data)
+    {
+        result.clear();
+        return result;
+    }
+    std::memcpy(result.data(), info.data + offset, size);
+    return result;
+}
+
+void DebugAdapter::WriteMemoryArea(int area, u32 offset,
+                                   const std::vector<u8>& data)
+{
+    const MemoryAreaInfo info = GetMemoryAreaInfo(area);
+    if (!info.size || offset >= info.size)
+        return;
+    const size_t size = std::min(data.size(),
+        static_cast<size_t>(info.size - offset));
+    if (area == 0)
+    {
+        for (size_t index = 0; index < size; ++index)
+            m_core->GetMemory()->Write(static_cast<u16>(offset + index),
+                                       data[index]);
+        return;
+    }
+    if (area == 3)
+    {
+        const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+        IVideoDebugProvider* provider = handle.device
+            ? handle.device->GetDebugProvider() : nullptr;
+        GC_VideoMemorySpaceDescriptor space;
+        if (provider && FindPrimaryVideoMemorySpace(*provider, space))
+            provider->WriteMemorySpace(space.code, offset, data.data(), size);
+        return;
+    }
+    if (info.data)
+        std::memcpy(info.data + offset, data.data(), size);
+}
 std::vector<DisasmLine> DebugAdapter::GetDisassembly(u16 a,u16 b,int,bool){std::vector<DisasmLine> out; Memory* m=m_core->GetMemory(); Z80Disassembler* d=m_core->GetDisassembler(); if(!d)return out; for(u32 x=a;x<=b;){d->Disassemble((u16)x); auto* r=m->GetDisassembleRecord((u16)x,false); if(!r){x++;continue;} out.push_back({r->address,(u8)r->bank,r->name,r->bytes,r->segment,r->size,r->jump,r->jump_address,0,false,0,false,0}); x+=std::max(1,r->size);} return out;}
 
 json DebugAdapter::GetCodeCoverage(const json& query)
@@ -625,12 +1113,217 @@ json DebugAdapter::GetCodeCoverage(const json& query)
     return result;
 }
 
+// The ROM map as the window shows it: the ROM, its project, the coverage
+// (100% minus UNKNOWN), the share of each kind, and the ranges in address
+// order. Ranges can run to thousands on a big ROM, so they are paged.
+json DebugAdapter::GetRomMap(const json& query)
+{
+    RomMap* map = m_core->GetRomMap();
+    if (!map)
+        return {{"error", "ROM map not available in this build"}};
+    json result = {{"enabled", map->IsEnabled()}, {"collecting", map->IsCollecting()},
+                   {"rom_attached", map->IsAttached()}};
+    // The Live Disassembler works inside a project: a ROM with none has nothing
+    // collected until create_rom_map_project makes one.
+    result["project_active"] = rom_map_project_active();
+    result["projects_folder"] = rom_map_project_root();
+    if (!map->IsAttached())
+    {
+        result["project_dir"] = rom_map_project_dir();
+        const char* why = rom_map_project_last_error();
+        if (why && why[0])
+            result["project_error"] = why;
+        return result;
+    }
+    char crc[16];
+    snprintf(crc, sizeof(crc), "%08X", map->GetCrc());
+    result["rom"] = m_core->GetCartridge()->GetFileName();
+    result["rom_size"] = map->GetRomSize();
+    result["crc32"] = crc;
+    result["project_dir"] = rom_map_project_dir();
+    const char* error = rom_map_project_last_error();
+    if (error && error[0])
+        result["project_error"] = error;
+    if (!map->IsCollecting())
+        return result;
+
+    const double size = static_cast<double>(map->GetRomSize());
+    result["sessions"] = map->GetSessions();
+    const long long saved = rom_map_project_last_save_time();
+    if (saved != 0)
+    {
+        char when[32];
+        const time_t t = static_cast<time_t>(saved);
+        strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", localtime(&t));
+        result["last_saved"] = when;
+    }
+    result["unsaved_changes"] = rom_map_project_is_dirty();
+    // CODE? is a hint to be confirmed, never covered (as the Live Disassembler).
+    const double unknown = 100.0 * (map->GetCount(RomMap::Kind_Unknown) +
+                                    map->GetCount(RomMap::Kind_CodeCandidate)) / size;
+    result["coverage_percent"] = std::round((100.0 - unknown) * 100.0) / 100.0;
+    json kinds = json::object();
+    for (u8 kind = 0; kind < RomMap::Kind_Count; ++kind)
+    {
+        const u32 bytes = map->GetCount(static_cast<RomMap::Kind>(kind));
+        kinds[RomMap::KindName(kind)] = {{"bytes", bytes},
+            {"percent", std::round(10000.0 * bytes / size) / 100.0}};
+    }
+    result["kinds"] = kinds;
+
+    // The board's firmware, as the cartridge uses it: entry points reached
+    // from the cartridge (named when a symbol covers them) and the firmware
+    // bytes read as data. Coverage stays on the cartridge; this is what an
+    // export links in (DOCS/FIRMWARE_LINK_EXPORT.md).
+    if (map->HasFirmware())
+    {
+        const auto symbolAt = [](u16 address) -> std::string {
+            const int count = gui_debug_symbol_count();
+            for (int i = 0; i < count; ++i)
+            {
+                int b = 0; u16 a = 0; const char* text = nullptr;
+                if (gui_debug_get_symbol(i, &b, &a, &text) && a == address && text)
+                    return text;
+            }
+            return "";
+        };
+        json entries = json::array();
+        for (const RomMap::FirmwareEntry& e : map->GetFirmwareEntries())
+        {
+            char address[8];
+            snprintf(address, sizeof(address), "%04X", e.address);
+            json entry = {{"address", address}, {"count", e.count}};
+            if (e.interrupt)
+                entry["interrupt"] = true;
+            const std::string name = symbolAt(e.address);
+            if (!name.empty())
+                entry["symbol"] = name;
+            entries.push_back(entry);
+        }
+        json reads = json::array();
+        for (const auto& r : map->GetFirmwareReadRanges())
+        {
+            char a[8], b[8];
+            snprintf(a, sizeof(a), "%04X", r.first);
+            snprintf(b, sizeof(b), "%04X", static_cast<u16>(r.second - 1));
+            reads.push_back({{"start", a}, {"end", b}, {"bytes", r.second - r.first}});
+        }
+        result["firmware"] = {{"entries", entries}, {"entry_count", entries.size()},
+                              {"data_bytes_read", map->GetFirmwareReadBytes()}, {"data_ranges", reads}};
+    }
+
+    const std::vector<RomMap::Range> ranges = map->BuildRanges();
+    const int offset = std::max(0, query.value("offset", 0));
+    const int limit = std::max(1, std::min(query.value("limit", 256), 4096));
+    json list = json::array();
+    for (int i = offset; i < static_cast<int>(ranges.size()) && i < offset + limit; ++i)
+    {
+        char start[16], end[16];
+        snprintf(start, sizeof(start), "$%04X", ranges[i].start);
+        snprintf(end, sizeof(end), "$%04X", ranges[i].end);
+        list.push_back({{"start", start}, {"end", end},
+                        {"bytes", ranges[i].end - ranges[i].start + 1},
+                        {"type", RomMap::RangeName(ranges[i])},
+                        {"evidence", map->DescribeEvidence(ranges[i])}});
+    }
+    result["range_count"] = ranges.size();
+    result["offset"] = offset;
+    result["ranges"] = list;
+    result["has_more"] = offset + limit < static_cast<int>(ranges.size());
+    return result;
+}
+
+json DebugAdapter::SetRomMapEnabled(bool enabled)
+{
+    if (!m_core->GetRomMap())
+        return {{"error", "ROM map not available in this build"}};
+    if (enabled && !rom_map_project_active())
+        return {{"error", "Load a ROM and create or open its project before enabling the ROM map"}};
+    rom_map_project_set_enabled(enabled);
+    json result = GetRomMap(json::object());
+    result.erase("ranges");
+    result["success"] = true;
+    return result;
+}
+
+json DebugAdapter::CreateRomMapProject(const std::string& name)
+{
+    if (!m_core->GetRomMap())
+        return {{"error", "ROM map not available in this build"}};
+    if (!rom_map_project_create(name))
+        return {{"error", std::string("project not created: ") + rom_map_project_last_error()}};
+    json result = GetRomMap(json::object());
+    result.erase("ranges");
+    result["success"] = true;
+    return result;
+}
+
+json DebugAdapter::SetRomMapProjectsFolder(const std::string& path)
+{
+    if (!path.empty() && !std::filesystem::path(path).is_absolute())
+        return {{"error", "directory must be an absolute local path, or empty for the default"}};
+    if (!rom_map_project_set_root(path))
+        return {{"error", rom_map_project_last_error()}};
+    return {{"success", true}, {"projects_folder", rom_map_project_root()},
+            {"project_active", rom_map_project_active()},
+            {"project_folder", rom_map_project_dir()}};
+}
+
+json DebugAdapter::OpenRomMapProject(const std::string& path)
+{
+    std::string rom;
+    if (!rom_map_project_resolve_rom(path, rom))
+        return {{"error", rom_map_project_last_error()}};
+    if (rom_map_project_is_dirty() && !rom_map_project_save())
+        return {{"error", "Could not save the current project; it was left open"}};
+    const bool enabled = rom_map_project_is_enabled();
+    // Even two projects with the same ROM must restore their own map.
+    if (enabled) rom_map_project_set_enabled(false);
+    json result = LoadRom(rom);
+    if (enabled) rom_map_project_set_enabled(true);
+    if (!result.contains("error"))
+    {
+        result["project_folder"] = rom_map_project_dir();
+        result["project_active"] = rom_map_project_active();
+        result["system"] = GetSystemInfo();
+    }
+    return result;
+}
+
+json DebugAdapter::SaveRomMap()
+{
+    RomMap* map = m_core->GetRomMap();
+    if (!map)
+        return {{"error", "ROM map not available in this build"}};
+    if (!map->IsCollecting())
+        return {{"error", "ROM map is not enabled, or no cartridge ROM is loaded"}};
+    if (!rom_map_project_save())
+        return {{"error", std::string("save failed: ") + rom_map_project_last_error()}};
+    json result = GetRomMap(json::object());
+    result.erase("ranges");
+    result["success"] = true;
+    return result;
+}
+
+json DebugAdapter::ResetRomMap()
+{
+    RomMap* map = m_core->GetRomMap();
+    if (!map)
+        return {{"error", "ROM map not available in this build"}};
+    if (!map->IsCollecting())
+        return {{"error", "ROM map is not enabled, or no cartridge ROM is loaded"}};
+    rom_map_project_reset();
+    json result = GetRomMap(json::object());
+    result["success"] = true;
+    return result;
+}
+
 json DebugAdapter::ClearCodeCoverage()
 {
     m_core->GetMemory()->ClearCodeCoverage();
     return {{"success", true}, {"covered_instructions", 0}};
 }
-json DebugAdapter::GetZ80Clock(){const std::uint64_t ticks=m_core->GetCpuStateAccess()->GetElapsedTStates(); const int clockHz=m_core->GetVideo()->IsPAL()?GC_MASTER_CLOCK_PAL:GC_MASTER_CLOCK_NTSC; const double clockMHz=static_cast<double>(clockHz)/1000000.0; const double microseconds=static_cast<double>(ticks)/clockMHz; return {{"ticks",ticks},{"clock_hz",clockHz},{"clock_mhz",clockMHz},{"region",m_core->GetVideo()->IsPAL()?"PAL":"NTSC"},{"microseconds",microseconds},{"milliseconds",microseconds/1000.0}};}
+json DebugAdapter::GetZ80Clock(){const std::uint64_t ticks=m_core->GetCpuStateAccess()->GetElapsedTStates(); const int clockHz=static_cast<int>(m_core->GetClockDomains().GetRates().cpuHz); const double clockMHz=static_cast<double>(clockHz)/1000000.0; const double microseconds=static_cast<double>(ticks)/clockMHz; const char* videoStandard=m_core->GetVideoFrameDescriptor().region==Region_PAL?"PAL":"NTSC"; return {{"ticks",ticks},{"clock_hz",clockHz},{"clock_mhz",clockMHz},{"region",videoStandard},{"video_standard",videoStandard},{"microseconds",microseconds},{"milliseconds",microseconds/1000.0}};}
 json DebugAdapter::ResetZ80Clock(){m_core->GetCpuStateAccess()->SetElapsedTStates(0); return GetZ80Clock();}
 json DebugAdapter::GetZ80Status(){const CpuStateSnapshot s=m_core->GetCpuStateAccess()->GetCpuStateSnapshot(); RegistersSnapshot r=GetRegisters(); const u8 flags=(u8)(r.AF&0xFF); return {{"AF",r.AF},{"BC",r.BC},{"DE",r.DE},{"HL",r.HL},{"AF_alt",r.AF2},{"BC_alt",r.BC2},{"DE_alt",r.DE2},{"HL_alt",r.HL2},{"IX",r.IX},{"IY",r.IY},{"WZ",r.WZ},{"SP",r.SP},{"PC",r.PC},{"I",r.I},{"R",r.R},{"IFF1",r.IFF1},{"IFF2",r.IFF2},{"interrupt_mode",r.InterruptMode},{"int_requested",s.intLine},{"nmi_requested",s.nmiLine},{"halted",r.Halt},{"flags",{{"S",(flags&0x80)!=0},{"Z",(flags&0x40)!=0},{"Y",(flags&0x20)!=0},{"H",(flags&0x10)!=0},{"X",(flags&0x08)!=0},{"P_V",(flags&0x04)!=0},{"N",(flags&0x02)!=0},{"C",(flags&0x01)!=0}}},{"clock",GetZ80Clock()}};}
 
@@ -672,9 +1365,10 @@ json DebugAdapter::GetAtomicSnapshot(const json& arguments)
             return {{"error", "Atomic memory payload exceeds the 16384-byte total limit"}};
     }
 
-    Video* video = m_core->GetVideo();
+    const VideoDeviceHandle videoHandle = m_core->AcquireVideoDevice();
+    IVideoDevice* video = videoHandle.device;
     const u64 clockBefore = m_core->GetCpuStateAccess()->GetElapsedTStates();
-    const u64 frameBefore = video ? video->GetFrameRenderDiagnostics().frameSerial : 0;
+    const u64 frameBefore = video ? video->GetFrameSerial() : 0;
 
     json result = {
         {"schema_version", 1},
@@ -688,6 +1382,10 @@ json DebugAdapter::GetAtomicSnapshot(const json& arguments)
         result["vdp"] = {{"registers", GetVDPRegisters()["registers"]}, {"status", GetVDPStatus()}};
     if (arguments.value("sf7000", false))
         result["sf7000"] = GetSF7000Status();
+    if (arguments.value("msx", m_core->GetMachineType() == MachineType::MSX))
+        result["msx"] = GetMSXStatus();
+    if (arguments.value("m5", m_core->GetMachineType() == MachineType::SordM5))
+        result["m5"] = GetM5Status();
 
     json memory = json::array();
     for (const json& range : ranges)
@@ -710,43 +1408,159 @@ json DebugAdapter::GetAtomicSnapshot(const json& arguments)
     result["memory"] = memory;
 
     const u64 clockAfter = m_core->GetCpuStateAccess()->GetElapsedTStates();
-    const u64 frameAfter = video ? video->GetFrameRenderDiagnostics().frameSerial : 0;
+    const u64 frameAfter = video ? video->GetFrameSerial() : 0;
     result["capture"] = {{"clock_before", clockBefore}, {"clock_after", clockAfter},
                          {"frame_serial_before", frameBefore}, {"frame_serial_after", frameAfter},
                          {"stable", clockBefore == clockAfter && frameBefore == frameAfter}};
     return result;
 }
-json DebugAdapter::GetVDPRegisters(){json a=json::array();u8* r=m_core->GetVideo()->GetRegisters();for(int i=0;i<8;i++)a.push_back(r[i]);return {{"registers",a}};}
+json DebugAdapter::GetVDPRegisters()
+{
+    IVideoDevice* device = nullptr;
+    IVideoDebugProvider* provider = GetVideoDebug(m_core, &device);
+    json banks = json::array();
+    json legacyRegisters = json::array();
+    if (!provider || !device)
+        return {{"registers", legacyRegisters}, {"banks", banks}};
+
+    for (std::size_t bankIndex = 0;
+         bankIndex < provider->GetRegisterBankCount(); ++bankIndex)
+    {
+        GC_VideoRegisterBankDescriptor bank;
+        if (!provider->DescribeRegisterBank(bankIndex, bank) || !bank.code)
+            continue;
+        json registers = json::array();
+        for (u32 index = 0; index < bank.register_count; ++index)
+        {
+            GC_VideoRegisterDescriptor descriptor;
+            u32 value = 0;
+            if (!provider->DescribeRegister(bank.code, index, descriptor) ||
+                !provider->ReadRegisterSnapshot(bank.code, index, value))
+                continue;
+            json fields = json::array();
+            for (std::size_t fieldIndex = 0;
+                 fieldIndex < provider->GetRegisterFieldCount(bank.code, index);
+                 ++fieldIndex)
+            {
+                GC_VideoRegisterFieldDescriptor field;
+                if (!provider->DescribeRegisterField(
+                        bank.code, index, fieldIndex, field))
+                    continue;
+                fields.push_back({
+                    {"code", field.code ? field.code : ""},
+                    {"description", field.description ? field.description : ""},
+                    {"value", (value & field.mask) >> field.shift},
+                    {"mask", field.mask}, {"shift", field.shift}
+                });
+            }
+            json entry = {
+                {"index", index},
+                {"code", descriptor.code ? descriptor.code : ""},
+                {"name", descriptor.short_name ? descriptor.short_name : ""},
+                {"description", descriptor.description
+                    ? descriptor.description : ""},
+                {"value", value}, {"width_bits", descriptor.width_bits},
+                {"fields", fields}
+            };
+            u32 address = 0;
+            if (descriptor.has_derived_address &&
+                provider->ReadRegisterDerivedAddressSnapshot(
+                    bank.code, index, address))
+                entry["derived_address"] = address;
+            registers.push_back(std::move(entry));
+            if (bankIndex == 0)
+                legacyRegisters.push_back(value);
+        }
+        banks.push_back({
+            {"code", bank.code}, {"name", bank.name ? bank.name : ""},
+            {"description", bank.description ? bank.description : ""},
+            {"register_width_bits", bank.register_width_bits},
+            {"schema_revision", bank.schema_revision},
+            {"registers", std::move(registers)}
+        });
+    }
+    return {
+        {"device", device->GetDeviceDescriptor().key
+            ? device->GetDeviceDescriptor().key : ""},
+        // Kept for clients of the original single-bank response.
+        {"registers", std::move(legacyRegisters)},
+        {"banks", std::move(banks)}
+    };
+}
 json DebugAdapter::GetVDPStatus()
 {
-    Video* v = m_core->GetVideo();
+    IVideoDevice* device = nullptr;
+    IVideoDebugProvider* provider = GetVideoDebug(m_core, &device);
+    if (!device || !provider)
+        return unavailableOnActiveVideoDevice("Video debug state");
+
+    const GC_VideoDeviceDescriptor& deviceDescriptor =
+        device->GetDeviceDescriptor();
+    const GC_VideoFrameDescriptor frame = device->GetFrameDescriptor();
+    json state = json::object();
+    for (std::size_t index = 0; index < provider->GetStateValueCount(); ++index)
+    {
+        GC_VideoStateValueDescriptor descriptor;
+        if (!provider->DescribeStateValue(index, descriptor) || !descriptor.code)
+            continue;
+        if (descriptor.format == GC_VideoDebugValueFormat::Text)
+        {
+            const char* value = nullptr;
+            if (provider->ReadStateTextSnapshot(index, value))
+                state[descriptor.code] = value ? value : "";
+        }
+        else
+        {
+            u64 value = 0;
+            if (provider->ReadStateValueSnapshot(index, value))
+                state[descriptor.code] = descriptor.format ==
+                    GC_VideoDebugValueFormat::Boolean ? json(value != 0) : json(value);
+        }
+    }
+    json result = {
+        {"device", deviceDescriptor.key ? deviceDescriptor.key : ""},
+        {"model", deviceDescriptor.model ? deviceDescriptor.model : ""},
+        {"frame_serial", device->GetFrameSerial()},
+        {"state", std::move(state)},
+        {"frame", {
+            {"width", frame.frame_width}, {"height", frame.frame_height},
+            {"logical_width", frame.logical_width},
+            {"logical_height", frame.logical_height},
+            {"raster_width", frame.raster_width},
+            {"raster_height", frame.raster_height}
+        }}
+    };
+
+    ITMS99xxDebugProvider* v = GetTmsDebug(m_core);
+    if (v == nullptr)
+        return result;
     const auto sequencer = v->GetVRAMSequencerSnapshot();
     const auto frameDiagnostics = v->GetFrameRenderDiagnostics();
-    const auto kindName = [](TMS9918VramSequencer::RequestKind kind) {
+    const auto kindName = [](TMS99xxVramSequencer::RequestKind kind) {
         switch (kind)
         {
-            case TMS9918VramSequencer::RequestKind::CpuRead: return "cpu_read";
-            case TMS9918VramSequencer::RequestKind::CpuWrite: return "cpu_write";
-            case TMS9918VramSequencer::RequestKind::VideoFetch: return "video_fetch";
-            case TMS9918VramSequencer::RequestKind::Refresh: return "refresh";
-            case TMS9918VramSequencer::RequestKind::Internal: return "internal";
-            case TMS9918VramSequencer::RequestKind::SpriteFetch: return "sprite_fetch";
+            case TMS99xxVramSequencer::RequestKind::CpuRead: return "cpu_read";
+            case TMS99xxVramSequencer::RequestKind::CpuWrite: return "cpu_write";
+            case TMS99xxVramSequencer::RequestKind::VideoFetch: return "video_fetch";
+            case TMS99xxVramSequencer::RequestKind::Refresh: return "refresh";
+            case TMS99xxVramSequencer::RequestKind::Internal: return "internal";
+            case TMS99xxVramSequencer::RequestKind::SpriteFetch: return "sprite_fetch";
         }
         return "unknown";
     };
-    const auto scheduleName = [](TMS9918VramSequencer::Schedule schedule) {
+    const auto scheduleName = [](TMS99xxVramSequencer::Schedule schedule) {
         switch (schedule)
         {
-            case TMS9918VramSequencer::Schedule::Refresh: return "refresh";
-            case TMS9918VramSequencer::Schedule::Graphics: return "graphics";
-            case TMS9918VramSequencer::Schedule::Text: return "text";
-            case TMS9918VramSequencer::Schedule::Multicolor:
+            case TMS99xxVramSequencer::Schedule::Refresh: return "refresh";
+            case TMS99xxVramSequencer::Schedule::Graphics: return "graphics";
+            case TMS99xxVramSequencer::Schedule::Text: return "text";
+            case TMS99xxVramSequencer::Schedule::Multicolor:
                 return "multicolor";
         }
         return "unknown";
     };
 
-    return {
+    json tms = {
         {"status", v->GetStatusReg()},
         {"address", v->GetAddressReg()},
         {"address_counter", v->GetAddressReg()},
@@ -809,7 +1623,7 @@ json DebugAdapter::GetVDPStatus()
             {"schedule", scheduleName(sequencer.schedule)},
             {"video_schedule", scheduleName(sequencer.videoSchedule)},
             {"minimum_latency_phases",
-                TMS9918VramSequencer::CpuPortMinimumLatencyPhases},
+                TMS99xxVramSequencer::CpuPortMinimumLatencyPhases},
             {"pending", sequencer.hasPendingRequest},
             {"pending_kind", kindName(sequencer.pendingRequest.kind)},
             {"pending_address", sequencer.pendingRequest.address},
@@ -827,6 +1641,10 @@ json DebugAdapter::GetVDPStatus()
             {"completed_transfers", sequencer.statistics.completedTransfers}
         }}
     };
+    for (auto item = tms.begin(); item != tms.end(); ++item)
+        result[item.key()] = item.value();
+    result["tms99xx"] = std::move(tms);
+    return result;
 }
 
 // Lowercase an ASCII tool argument in place. Source names are compared
@@ -847,33 +1665,35 @@ json DebugAdapter::GetSlotHistory()
     // C64 Debugger's badline/VIC-II bus access view, but keyed to the
     // TMS9918's slot grid: it never stalls the CPU, so what this shows is a
     // CPU slot either used or left idle, not a badline-style freeze.
-    Video* v = m_core->GetVideo();
-    const Video::SlotActivityRecord* history = v->GetLineSlotHistory();
-    const auto kindName = [](TMS9918VramSlotSchedule::Activity activity) {
+    ITMS99xxDebugProvider* v = GetTmsDebug(m_core);
+    if (v == nullptr)
+        return unavailableOnActiveVideoDevice("TMS99xx slot history");
+    const ITMS99xxDebugProvider::SlotActivityRecord* history = v->GetLineSlotHistory();
+    const auto kindName = [](TMS99xxVramSlotSchedule::Activity activity) {
         switch (activity)
         {
-            case TMS9918VramSlotSchedule::Activity::Cpu: return "cpu";
-            case TMS9918VramSlotSchedule::Activity::Refresh: return "refresh";
-            case TMS9918VramSlotSchedule::Activity::Name: return "name";
-            case TMS9918VramSlotSchedule::Activity::Colour: return "colour";
-            case TMS9918VramSlotSchedule::Activity::Pattern: return "pattern";
-            case TMS9918VramSlotSchedule::Activity::SpriteScanY: return "sprite_scan_y";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedY: return "sprite_y";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedX: return "sprite_x";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedName: return "sprite_name";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedColour: return "sprite_colour";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedPattern: return "sprite_pattern";
+            case TMS99xxVramSlotSchedule::Activity::Cpu: return "cpu";
+            case TMS99xxVramSlotSchedule::Activity::Refresh: return "refresh";
+            case TMS99xxVramSlotSchedule::Activity::Name: return "name";
+            case TMS99xxVramSlotSchedule::Activity::Colour: return "colour";
+            case TMS99xxVramSlotSchedule::Activity::Pattern: return "pattern";
+            case TMS99xxVramSlotSchedule::Activity::SpriteScanY: return "sprite_scan_y";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedY: return "sprite_y";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedX: return "sprite_x";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedName: return "sprite_name";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedColour: return "sprite_colour";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedPattern: return "sprite_pattern";
             default: return "unknown";
         }
     };
 
     json slots = json::array();
-    for (std::uint16_t i = 0; i < TMS9918SlotGrid::SlotsPerLine; ++i)
+    for (std::uint16_t i = 0; i < TMS99xxSlotGrid::SlotsPerLine; ++i)
     {
-        const Video::SlotActivityRecord& record = history[i];
+        const ITMS99xxDebugProvider::SlotActivityRecord& record = history[i];
         json entry = {
             {"slot", i},
-            {"dot", TMS9918SlotGrid::SlotStartPhase(i) / 2},
+            {"dot", TMS99xxSlotGrid::SlotStartPhase(i) / 2},
             {"activity", kindName(record.activity)},
             {"index", record.index}
         };
@@ -897,7 +1717,7 @@ json DebugAdapter::GetSlotHistory()
 
 json DebugAdapter::SetRegion(const std::string& region)
 {
-    // Region decides the line count and therefore the refresh: 313 lines at
+    // The selected VDP decides the line count and therefore the refresh: 313 lines at
     // 50.159 Hz for PAL, 262 at 59.923 Hz for NTSC. It is a machine-level
     // choice, so it takes a reset. Stored in the emulator config as well, so a
     // ROM loaded afterwards keeps it.
@@ -905,57 +1725,39 @@ json DebugAdapter::SetRegion(const std::string& region)
     Cartridge::ForceConfiguration config;
     config.type = Cartridge::CartridgeNotSupported;
 
-    if (wanted == "pal" || wanted == "50")
-    {
-        config.region = Cartridge::CartridgePAL;
-        config_emulator.vdp = 2;
-    }
-    else if (wanted == "ntsc" || wanted == "60")
-    {
-        config.region = Cartridge::CartridgeNTSC;
-        config_emulator.vdp = 1;
-    }
-    else if (wanted == "auto")
-    {
-        config.region = Cartridge::CartridgeUnknownRegion;
-        config_emulator.vdp = 0;
-    }
-    else
-    {
-        return {{"error", "region must be \"pal\", \"ntsc\" or \"auto\""},
-                {"region", region}};
-    }
-
-    if (!m_core->GetCartridge()->IsReady())
-    {
-        // ResetROM is a no-op without a cartridge, so the region would silently
-        // stay as it was. The choice is still recorded for the next ROM loaded.
-        // This is not a failure - the setting took - so it must not carry an
-        // "error" key: the transport flags isError on any response that has
-        // one (see HandleToolCall), and a caller told "isError: true" after a
-        // request that actually succeeded has no reason to trust the field
-        // again.
-        return {{"success", true},
-                {"requested", wanted},
-                {"note", "No cartridge inserted: the region was stored and will apply to the next ROM loaded"}};
-    }
+    if (wanted == "auto") config_select_video_option("");
+    else if (wanted == "pal" || wanted == "50" || wanted == "ntsc" || wanted == "60") {
+        const auto* option = FindMachineVideoOptionForFrequency(
+            static_cast<SystemModel>(config_emulator.machine), config_selected_video_option(),
+            wanted == "pal" || wanted == "50" ? VDP_FREQ_50Hz : VDP_FREQ_60Hz);
+        if (!option) return {{"error", "No unambiguous compatible video option for this frequency with the selected core"}, {"region", region}};
+        config_select_video_option(option->code);
+    } else return {{"error", "region must be pal, ntsc or auto"}, {"region", region}};
 
     emu_reset(config);
 
-    const bool pal = m_core->GetVideo()->IsPAL();
+    const GC_VideoFrameDescriptor frame = m_core->GetVideoFrameDescriptor();
+    const bool pal = frame.region == Region_PAL;
+    const double refreshHz = frame.refresh_rate.denominator > 0
+        ? static_cast<double>(frame.refresh_rate.numerator) /
+          static_cast<double>(frame.refresh_rate.denominator)
+        : 0.0;
     return {
         {"success", true},
         {"requested", wanted},
         {"region", pal ? "PAL" : "NTSC"},
-        {"lines_per_frame", pal ? 313 : 262},
-        {"refresh_hz", pal ? 50.158 : 59.923},
+        {"video_option", m_core->GetActiveVideoOptionCode()},
+        {"lines_per_frame", frame.raster_height},
+        {"refresh_hz", refreshHz},
         {"note", "The machine was reset to apply it."}
     };
 }
 
 json DebugAdapter::SetRendererSource(const std::string& source)
 {
-    Video* v = m_core->GetVideo();
+    ITMS99xxDebugProvider* v = GetTmsDebug(m_core);
+    if (v == nullptr)
+        return unavailableOnActiveVideoDevice("TMS99xx renderer selection");
     const std::string wanted = LowerAscii(source);
 
     if (wanted == "streaming")
@@ -981,64 +1783,286 @@ json DebugAdapter::SetRendererSource(const std::string& source)
 
 json DebugAdapter::ReadFrameBuffer(const std::string& source, int y, int height)
 {
-    Video* v = m_core->GetVideo();
-    const std::string wanted = source.empty() ? std::string("presented") : LowerAscii(source);
+    const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+    IVideoDevice* device = handle.device;
+    if (!device)
+        return unavailableOnActiveVideoDevice("Frame-buffer inspection");
+    const GC_VideoFrameDescriptor descriptor = device->GetFrameDescriptor();
+    if (!descriptor.IsValid())
+        return {{"error", "The active video device reported invalid frame geometry"}};
 
-    const u16* buffer = nullptr;
+    const std::string wanted = source.empty()
+        ? std::string("presented") : LowerAscii(source);
+    ITMS99xxDebugProvider* tms =
+        dynamic_cast<ITMS99xxDebugProvider*>(device);
+
     if (wanted == "presented")
-        buffer = v->GetFrameBuffer();
-    else if (wanted == "legacy")
+    {
+        const GC_VideoFrameView frame =
+            device->GetFrameView(GC_PIXEL_RGB888);
+        if (!frame.IsValid() || frame.pixel_format != GC_PIXEL_RGB888)
+            return {{"error", "The active video device returned no RGB888 frame"}};
+
+        const int width = frame.descriptor.frame_width;
+        const int bufferHeight = frame.descriptor.frame_height;
+        if (y < 0) y = 0;
+        if (y >= bufferHeight)
+            return {{"error", "y is past the bottom of the frame"},
+                    {"height", bufferHeight}};
+        if (height <= 0 || y + height > bufferHeight)
+            height = bufferHeight - y;
+
+        static const char kHex[] = "0123456789ABCDEF";
+        json rows = json::array();
+        for (int line = y; line < y + height; ++line)
+        {
+            std::string row;
+            row.reserve(static_cast<std::size_t>(width) * 6);
+            const u8* pixels = frame.pixels +
+                static_cast<std::size_t>(line) * frame.row_stride_bytes;
+            for (int byte = 0; byte < width * 3; ++byte)
+            {
+                row.push_back(kHex[pixels[byte] >> 4]);
+                row.push_back(kHex[pixels[byte] & 0x0F]);
+            }
+            rows.push_back(std::move(row));
+        }
+
+        json result = {
+            {"device", device->GetDeviceDescriptor().key
+                ? device->GetDeviceDescriptor().key : ""},
+            {"source", wanted}, {"y", y}, {"width", width},
+            {"height", height}, {"encoding", "rgb888_hex"},
+            {"bits_per_pixel", 24}, {"rows", std::move(rows)}
+        };
+        if (tms)
+            result["presented_source"] = tms->IsPresentStreaming()
+                ? "streaming" : "legacy";
+        return result;
+    }
+
+    const u16* indexedBuffer = nullptr;
+    if (wanted == "legacy" && tms)
     {
 #if GEARSF7000_ENABLE_LEGACY_VIDEO_RENDERER
-        buffer = v->GetComposedBuffer(false);
+        indexedBuffer = tms->GetComposedBuffer(false);
 #else
-        return {{"error", "This build has the legacy renderer compiled out (GEARSF7000_ENABLE_LEGACY_VIDEO_RENDERER=0). Only \"presented\" and \"streaming\" are available."},
-                {"source", source}};
+        return {{"error", "This build has the legacy renderer compiled out "
+            "(GEARSF7000_ENABLE_LEGACY_VIDEO_RENDERER=0)."},
+            {"source", source}};
 #endif
     }
-    else if (wanted == "streaming")
-        buffer = v->GetComposedBuffer(true);
+    else if (wanted == "streaming" && tms)
+        indexedBuffer = tms->GetComposedBuffer(true);
+    else if (wanted == "legacy" || wanted == "streaming")
+        return unavailableOnActiveVideoDevice("TMS99xx renderer comparison");
     else
-        return {{"error", "source must be \"presented\", \"legacy\" or \"streaming\""}, {"source", source}};
+        return {{"error", "source must be presented, legacy or streaming"},
+                {"source", source}};
+    if (!indexedBuffer)
+        return {{"error", "The active video device returned no frame buffer"}};
 
-    if (y < 0)
-        y = 0;
-    if (y >= GC_RESOLUTION_HEIGHT)
-        return {{"error", "y is past the bottom of the frame"}, {"height", GC_RESOLUTION_HEIGHT}};
-    if (height <= 0)
-        height = GC_RESOLUTION_HEIGHT - y;
-    if (y + height > GC_RESOLUTION_HEIGHT)
-        height = GC_RESOLUTION_HEIGHT - y;
-
-    // Both composed buffers hold TMS9918 palette indices 0..15, so one nibble
-    // per pixel is lossless: a 256 pixel line becomes 64 hex characters.
-    static const char kHex[] = "0123456789ABCDEF";
-    json rows = json::array();
-    for (int line = y; line < y + height; ++line)
+    // Renderer comparison is a TMS99xx diagnostic. Its composed buffers are
+    // native logical pixels containing palette indices.
+    if (tms)
     {
-        std::string row;
-        row.reserve(GC_RESOLUTION_WIDTH);
-        const int offset = line * GC_RESOLUTION_WIDTH;
-        for (int pixel = 0; pixel < GC_RESOLUTION_WIDTH; ++pixel)
-            row.push_back(kHex[buffer[offset + pixel] & 0x0F]);
-        rows.push_back(row);
+        const int width = descriptor.logical_width;
+        const int bufferHeight = descriptor.logical_height;
+        if (y < 0) y = 0;
+        if (y >= bufferHeight)
+            return {{"error", "y is past the bottom of the frame"},
+                    {"height", bufferHeight}};
+        if (height <= 0 || y + height > bufferHeight)
+            height = bufferHeight - y;
+
+        static const char kHex[] = "0123456789ABCDEF";
+        json rows = json::array();
+        for (int line = y; line < y + height; ++line)
+        {
+            std::string row;
+            row.reserve(static_cast<std::size_t>(width));
+            const int offset = line * width;
+            for (int pixel = 0; pixel < width; ++pixel)
+                row.push_back(kHex[indexedBuffer[offset + pixel] & 0x0F]);
+            rows.push_back(std::move(row));
+        }
+        return {
+            {"device", device->GetDeviceDescriptor().key
+                ? device->GetDeviceDescriptor().key : ""},
+            {"source", wanted},
+            {"presented_source", tms->IsPresentStreaming()
+                ? "streaming" : "legacy"},
+            {"y", y}, {"width", width}, {"height", height},
+            {"encoding", "palette_index_hex"}, {"bits_per_pixel", 4},
+            {"rows", std::move(rows)}
+        };
     }
 
-    return {
-        {"source", wanted},
-        {"presented_source", v->IsPresentStreaming() ? "streaming" : "legacy"},
-        {"y", y},
-        {"width", GC_RESOLUTION_WIDTH},
-        {"height", height},
-        {"encoding", "one hex nibble per pixel, TMS9918 palette index"},
-        {"rows", rows}
-    };
+    return unavailableOnActiveVideoDevice("Renderer comparison");
 }
 
-json DebugAdapter::GetPSGStatus(){Audio* audio=m_core->GetAudio();const Audio::PeakInfo& p=audio->GetPeakInfo();int periods[5]={};unsigned char volumes[4]={};audio->GetApu()->GetRegs(periods,volumes);json channels=json::array();const int clockHz=m_core->GetVideo()->IsPAL()?GC_MASTER_CLOCK_PAL:GC_MASTER_CLOCK_NTSC;for(int i=0;i<3;i++){const int period=periods[i];channels.push_back({{"channel",i},{"period",period},{"volume",volumes[i]},{"frequency_hz",period?static_cast<double>(clockHz)/(32.0*period):0.0}});}return {{"clock_hz",clockHz},{"tone_divider",32},{"channels",channels},{"noise",{{"control",periods[3]},{"volume",volumes[3]}}},{"peak",p.psg},{"master_peak",p.output},{"tape_peak",p.cassette}};}
+json DebugAdapter::GetFirmwareStatus()
+{
+    const auto* memory = m_core->GetMemory();
+    const bool msx = m_core->GetMachineType() == MachineType::MSX;
+    const bool loaded = memory->IsBiosLoaded();
+    const bool builtin = msx && emu_is_cbios_active();
+    const std::string configured = msx ? config_emulator.msx_bios_path
+        : m_core->GetMachineType() == MachineType::Coleco ? config_emulator.coleco_bios_path
+        : m_core->GetMachineType() == MachineType::SordM5 ? config_emulator.m5_bios_path
+        : config_emulator.bios_path;
+    json result = {{"main_loaded", loaded}, {"source", loaded ? (builtin ? "built_in_cbios" : "external") : "none"},
+        {"main_path", loaded && !builtin ? memory->GetBiosFilePath() : ""},
+        {"main_name", loaded ? std::filesystem::path(memory->GetBiosFilePath()).filename().string() : ""},
+        {"main_size", loaded ? memory->GetBiosSize() : 0}, {"main_crc", memory->GetBiosCRC()},
+        {"configured_external_path", configured}, {"start_error", emu_get_machine_start_error()}};
+    if (msx) {
+        const auto& bus = *static_cast<const SystemBusMSX*>(m_core->GetSystemBus());
+        result["configured_use_cbios"] = config_emulator.msx_use_cbios;
+        result["pending_changes"] = emu_has_pending_msx_firmware();
+        result["logo_size"] = bus.LogoROM().size(); result["logo_crc"] = bus.LogoCRC();
+        result["basic_size"] = bus.BasicROM().size(); result["basic_crc"] = bus.BasicCRC();
+    }
+    return result;
+}
+
+json DebugAdapter::GetM5Status()
+{
+    const auto* bus = m_core->GetM5Bus();
+    if (!bus) return unavailableOnMachine("Sord M5");
+    const auto ctc = bus->CTC().GetSnapshot();
+    json channels = json::array(), rows = json::array(), keys = json::array(), mappings = json::array();
+    for (const auto& ch : ctc.channels)
+        channels.push_back({{"control", ch.control}, {"constant", ch.constant}, {"counter", ch.counter},
+            {"prescaler_phase", ch.prescalerPhase}, {"loaded", ch.loaded}, {"running", ch.running},
+            {"waiting_for_trigger", ch.waitingForTrigger}, {"trigger_high", ch.triggerHigh},
+            {"pending", ch.pending}, {"in_service", ch.inService}, {"zero_count_high", ch.zeroCountHigh}});
+    for (unsigned row = 0; row < M5Input::RowCount; ++row) {
+        const u8 value = bus->Input().ReadRow(row); rows.push_back(value);
+        for (unsigned bit = 0; bit < 8; ++bit)
+            if (value & (1 << bit)) keys.push_back(M5Input::KeyLabel(row, bit));
+    }
+    for (const auto& map : bus->Mapper().GetMappings()) {
+        const char* area = map.area == M5MemoryMapper::Area::Bios ? "bios"
+            : map.area == M5MemoryMapper::Area::Cartridge ? "cartridge"
+            : map.area == M5MemoryMapper::Area::InternalRam ? "internal_ram"
+            : map.area == M5MemoryMapper::Area::ExternalRam ? "external_ram" : "unmapped";
+        mappings.push_back({{"area", area}, {"start", map.start}, {"end", map.end},
+            {"backing_size", map.backingSize}, {"writable", map.writable}});
+    }
+    const u8 joy = bus->Input().ReadJoystick();
+    const u8 fire = bus->Input().ReadRow(1);
+    json players = json::array();
+    for (unsigned p = 0; p < 2; ++p) players.push_back({
+        {"right", bool(joy & (1 << (p * 4)))}, {"up", bool(joy & (2 << (p * 4)))},
+        {"left", bool(joy & (4 << (p * 4)))}, {"down", bool(joy & (8 << (p * 4)))},
+        {"fire1", bool(fire & (1 << (p * 4)))}, {"fire2", bool(fire & (2 << (p * 4)))}});
+    return {{"firmware", GetFirmwareStatus()}, {"memory_map", mappings},
+        {"em5", {{"installed", bus->EM5Installed()}, {"configured", config_emulator.m5_em5_installed},
+                 {"size_bytes", bus->EM5Installed() ? M5MemoryMapper::EM5RamSize : 0}}},
+        {"cpu_clock", bus->CpuClock()}, {"cpu_half_cycles", bus->CpuHalfCycles()},
+        {"psg_wait", {{"additional_tstates", SystemBusM5::ProvisionalPsgWaitTStates}, {"provisional", true}}},
+        {"ctc", {{"clock", ctc.timestamp}, {"vector", ctc.vector}, {"interrupt", bus->CTC().GetInterrupt()},
+            {"interrupt_enable_in", ctc.interruptEnableIn}, {"channels", channels}}},
+        {"input", {{"keyboard", {{"rows", rows}, {"active_low", false}, {"pressed_keys", keys},
+            {"reset_pressed", bool(bus->Input().ReadResetStatus() & 0x80)}}},
+            {"joystick_raw", joy}, {"players", players}, {"fire_supported", true}}},
+        {"command", bus->Command()}, {"printer_data", bus->PrinterData()},
+        {"tape", {{"connected", false}, {"motor", bus->TapeMotor()}, {"output_negative", bus->TapeOutputNegative()}}},
+        {"printer_connected", false}};
+}
+
+json DebugAdapter::GetMSXStatus()
+{
+    if (m_core->GetMachineType() != MachineType::MSX) return unavailableOnMachine("MSX1");
+    const auto& bus = *static_cast<const SystemBusMSX*>(m_core->GetSystemBus());
+    const auto& slots = bus.Slots();
+    json pages = json::array(), secondary = json::array();
+    for (const auto& page : bus.GetPageMappings())
+        pages.push_back({{"start", page.start}, {"end", page.end},
+            {"primary", page.primary}, {"secondary", page.secondary},
+            {"expanded", page.expanded}, {"mapped", page.mapped},
+            {"device", page.device}, {"offset", page.offset}, {"writable", page.writable}});
+    for (unsigned slot = 0; slot < 4; ++slot) secondary.push_back(slots.GetSecondarySlots(slot));
+    const auto ppi = bus.PPI().GetSnapshot();
+    json latches = json::array(), pins = json::array(), masks = json::array();
+    for (unsigned port = 0; port < 3; ++port) {
+        latches.push_back(ppi.outputLatch[port]);
+        pins.push_back(bus.PPI().PeekRegister(port));
+        masks.push_back(ppi.drivenMask[port]);
+    }
+    Audio* audio = m_core->GetAudio();
+    json cassette = {{"present", false}};
+#if GEARSF7000_ENABLE_SR1000
+    ITapeRecorder* tape = m_core->GetCassette();
+    cassette = {{"present", true}, {"loaded", tape->IsLoaded()},
+        {"playing", tape->IsPlaying()}, {"motor", tape->IsMotorOn()},
+        {"input", tape->GetSignal() != 0}, {"output", bus.Cassette().GetOutput()},
+        {"position_percent", tape->GetPositionPercentage()},
+        {"formats", json::array({"wav", "mp3"})}, {"recording_supported", false}};
+#endif
+    return {{"present", true},
+        {"cassette", cassette},
+        {"firmware", GetFirmwareStatus()},
+        {"slots", {{"primary_register", slots.GetPrimarySlots()},
+            {"expanded_mask", slots.GetExpandedSlots()}, {"secondary_registers", secondary}, {"pages", pages}}},
+        {"ppi", {{"port_base", 0xA8}, {"control", ppi.control},
+            {"output_latches", latches}, {"port_values", pins}, {"output_masks", masks},
+            {"keyboard_row", bus.KeyboardRow()}}},
+        {"keyboard", GetInputState()["keyboard"]}, {"ay", GetAY8910Status()},
+        {"one_bit", {{"enabled", audio->IsOneBitEnabled()},
+            {"level", audio->GetOneBitDevice().GetLevel()}, {"ppi_pc7", bus.KeyboardClickLevel()},
+            {"peak", audio->GetPeakInfo().oneBit}}},
+        {"capabilities", {{"keyboard_layout", "international"}, {"cartridge_mapper", "linear_8_16_32k"},
+            {"joystick", false}, {"cassette", m_core->HasCassetteInterface()}, {"ram_mapper", false}}}};
+}
+
+json DebugAdapter::GetPSGStatus()
+{
+    if (m_core->GetMachineType() == MachineType::MSX) {
+        json result = GetAY8910Status();
+        Audio* audio = m_core->GetAudio();
+        result["one_bit"] = {{"enabled", audio->IsOneBitEnabled()},
+            {"level", audio->GetOneBitDevice().GetLevel()}, {"peak", audio->GetPeakInfo().oneBit}};
+        return result;
+    }
+    Audio* audio = m_core->GetAudio();
+    Sms_Apu* psg = audio->GetApu();
+    const Audio::PeakInfo& peak = audio->GetPeakInfo();
+    int periods[5] = {};
+    unsigned char volumes[4] = {};
+    psg->GetRegs(periods, volumes);
+    json channels = json::array();
+    const int clockHz = static_cast<int>(
+        m_core->GetClockDomains().GetRates().cpuHz);
+    for (int i = 0; i < 3; ++i)
+    {
+        const int period = periods[i];
+        channels.push_back({
+            {"channel", i}, {"period", period}, {"volume", volumes[i]},
+            {"frequency_hz", period
+                ? static_cast<double>(clockHz) / (32.0 * period) : 0.0}});
+    }
+    const Sms_Apu::NoiseConfiguration noise = psg->GetNoiseConfiguration();
+    return {
+        {"chip", psg->GetVariantName()},
+        {"variant", psg->GetVariantKey()},
+        {"clock_hz", clockHz},
+        {"tone_divider", 32},
+        {"channels", channels},
+        {"noise", {
+            {"control", periods[3]}, {"volume", volumes[3]},
+            {"lfsr_width", noise.lfsrWidth},
+            {"white_noise_tap_mask", noise.whiteNoiseTapMask}}},
+        {"peak", peak.psg}, {"master_peak", peak.output},
+        {"tape_peak", peak.cassette},
+        {"one_bit", {{"enabled", audio->IsOneBitEnabled()},
+                     {"level", audio->GetOneBitDevice().GetLevel()},
+                     {"peak", peak.oneBit}}}};
+}
 json DebugAdapter::GetSF7000Status(){
 #if GEARSF7000_ENABLE_SF7000
-SF7000* sf=m_core->GetSF7000();if(!sf)return unavailable("SF-7000");NEC765DebugInfo f={};DiskDebugInfo d={};sf->GetFDCDebugInfo(&f);sf->GetDiskDebugInfo(&d);const uint32_t rev=sf->GetFDCBitsPerRevolution();const uint32_t pos=sf->GetFDCRotationBits();const bool motor=sf->DiskMotorOn;return {{"motor_on",motor},{"motor_requested",sf->MotorIsOn()},{"index",sf->FDCIndexActive()},{"ipl_enabled",sf->IPL_Enabled()},{"ppi2",{{"e4",sf->Port_E4},{"e5",sf->Port_E5},{"e6",sf->Port_E6},{"e7",sf->Port_E7}}},{"fdc",{{"clock_hz",sf->GetFDCClockHz()},{"main_status",f.mainStatus},{"command",f.commandCode},{"phase",f.phase},{"phase_step",f.phaseStep},{"irq",f.interrupt!=0},{"drive",f.drive},{"track",f.currentTrack},{"destination_track",f.destinationTrack},{"cylinder",f.cylinder},{"side",f.side},{"sector",f.sector},{"size_code",f.sizeCode}}},{"rotation",{{"spindle_fraction",sf->GetDiskRotationFraction()},{"raw_mfm_bits",pos},{"bits_per_revolution",rev},{"raw_mfm_fraction",rev?static_cast<double>(pos)/rev:0.0}}},{"disk",{{"present",d.present!=0},{"enabled",d.enabled!=0},{"write_protected",d.readOnly!=0},{"dirty",d.dirty!=0},{"format",static_cast<int>(d.format)},{"file",d.fileName?d.fileName:""},{"tracks",d.tracks},{"sides",d.sides},{"sectors_per_track",d.sectorsPerTrack},{"sector_size",d.sectorSize},{"rpm",d.rpm},{"bitrate_kbps",d.bitrateKbps}}}};
+SF7000* sf=m_core->GetSF7000();if(!sf || !m_core->GetMemory()->IsSF7000Enabled())return unavailableOnMachine("SF-7000");NEC765DebugInfo f={};DiskDebugInfo d={};sf->GetFDCDebugInfo(&f);sf->GetDiskDebugInfo(&d);const uint32_t rev=sf->GetFDCBitsPerRevolution();const uint32_t pos=sf->GetFDCRotationBits();const bool motor=sf->DiskMotorOn;return {{"motor_on",motor},{"motor_requested",sf->MotorIsOn()},{"index",sf->FDCIndexActive()},{"ipl_enabled",sf->IPL_Enabled()},{"ppi2",{{"e4",sf->Port_E4},{"e5",sf->Port_E5},{"e6",sf->Port_E6},{"e7",sf->Port_E7}}},{"fdc",{{"clock_hz",sf->GetFDCClockHz()},{"main_status",f.mainStatus},{"command",f.commandCode},{"phase",f.phase},{"phase_step",f.phaseStep},{"irq",f.interrupt!=0},{"drive",f.drive},{"track",f.currentTrack},{"destination_track",f.destinationTrack},{"cylinder",f.cylinder},{"side",f.side},{"sector",f.sector},{"size_code",f.sizeCode}}},{"rotation",{{"spindle_fraction",sf->GetDiskRotationFraction()},{"raw_mfm_bits",pos},{"bits_per_revolution",rev},{"raw_mfm_fraction",rev?static_cast<double>(pos)/rev:0.0}}},{"disk",{{"present",d.present!=0},{"enabled",d.enabled!=0},{"write_protected",d.readOnly!=0},{"dirty",d.dirty!=0},{"format",static_cast<int>(d.format)},{"file",d.fileName?d.fileName:""},{"tracks",d.tracks},{"sides",d.sides},{"sectors_per_track",d.sectorsPerTrack},{"sector_size",d.sectorSize},{"rpm",d.rpm},{"bitrate_kbps",d.bitrateKbps}}}};
 #else
 return unavailable("SF-7000");
 #endif
@@ -1047,18 +2071,23 @@ return unavailable("SF-7000");
 json DebugAdapter::GetAY8910Status()
 {
     Audio* audio = m_core->GetAudio();
-    if (!audio->IsAyEnabled())
-        return {{"present", false}, {"reason", "expansion disabled; enable it and reset"}};
-
     Ay_Apu* ay = audio->GetAyApu();
+    const IAYPorts* ports = ay->GetPorts();
+    const json attachment = {{"connected", ports != nullptr},
+        {"description", ports ? json(ports->GetDescription()) : json(nullptr)}};
+    if (!audio->IsAyEnabled())
+        return {{"present", false}, {"reason", "expansion disabled; enable it and reset"},
+                {"io_attachment", attachment}};
+
     const int clockHz = audio->GetAyClockHz();
 
     u8 r[16];
     json regs = json::array();
     for (int i = 0; i < 16; ++i) { r[i] = static_cast<u8>(ay->read(i)); regs.push_back(r[i]); }
 
-    // The audible tone is clock/(32*period): the datasheet's /16 counts half
-    // oscillations. Same convention as get_psg_status reports for the PSG.
+    // AY tone frequency uses the physical chip clock directly. Its /16 is a
+    // complete-wave divider; the renderer's doubled-clock timebase is an
+    // implementation detail and must not leak into this hardware report.
     json channels = json::array();
     for (int i = 0; i < 3; ++i)
     {
@@ -1066,7 +2095,7 @@ json DebugAdapter::GetAY8910Status()
         channels.push_back({
             {"channel", i},
             {"period", period},
-            {"frequency_hz", period ? static_cast<double>(clockHz) / (32.0 * period) : 0.0},
+            {"frequency_hz", period ? static_cast<double>(clockHz) / (16.0 * period) : 0.0},
             {"volume", r[8 + i] & 0x0F},
             {"envelope_mode", (r[8 + i] & 0x10) != 0},
             {"tone_enabled", (r[7] & (1 << i)) == 0},
@@ -1078,11 +2107,17 @@ json DebugAdapter::GetAY8910Status()
         {"present", true},
         {"chip", audio->GetAyChip() == Audio::AyChip::YM2149 ? "YM2149" : "AY-3-8910"},
         {"clock_hz", clockHz},
-        {"tone_divider", 32},
-        {"port_base", GetAyPortBase()},
+        {"tone_divider", 16},
+        {"port_base", m_core->GetMachineType() == MachineType::MSX ? 0xA0 : m_core->GetSGMDevice().IsPresent() ? 0x50 : GetAyPortBase()},
+        {"onboard", m_core->GetMachineType() == MachineType::MSX},
+        {"io_attachment", attachment},
         {"selected_register", audio->GetAySelectedRegister()},
         {"channels", channels},
-        {"noise", {{"period", r[6] & 0x1F}}},
+        {"noise", {{"period", r[6] & 0x1F},
+                   {"divider", 16},
+                   {"frequency_hz", (r[6] & 0x1F)
+                       ? static_cast<double>(clockHz) / (16.0 * (r[6] & 0x1F))
+                       : 0.0}}},
         {"envelope", {{"period", envPeriod},
                       {"shape", r[13] & 0x0F},
                       {"steps", audio->GetAyChip() == Audio::AyChip::YM2149 ? 32 : 16}}},
@@ -1092,8 +2127,134 @@ json DebugAdapter::GetAY8910Status()
 json DebugAdapter::GetAY8910Status(){return unavailable("AY-3-8910");}
 #endif
 
-json DebugAdapter::GetScreenshot()
+#if GEARSF7000_ENABLE_YM2413
+json DebugAdapter::GetYM2413Status()
 {
+    Audio* audio = m_core->GetAudio();
+    if (!audio->IsYm2413Enabled())
+        return {{"present", false},
+                {"reason", "FM Sound Unit disconnected, unsupported by this machine, or reset pending"}};
+    Ym2413* fm = audio->GetYm2413();
+    json regs = json::array();
+    for (int i = 0; i < 0x40; ++i)
+        regs.push_back(fm->ReadRegister(i));
+    json channels = json::array();
+    for (int ch = 0; ch < 9; ++ch)
+    {
+        const u8 low = fm->ReadRegister(0x10 + ch);
+        const u8 high = fm->ReadRegister(0x20 + ch);
+        const u8 iv = fm->ReadRegister(0x30 + ch);
+        channels.push_back({
+            {"channel", ch}, {"f_number", low | ((high & 1) << 8)},
+            {"block", (high >> 1) & 7}, {"key_on", (high & 0x10) != 0},
+            {"sustain", (high & 0x20) != 0}, {"instrument", iv >> 4},
+            {"instrument_name", fm->GetInstrumentName(iv >> 4)},
+            {"volume", iv & 0x0F}, {"enabled", fm->IsChannelEnabled(ch)},
+            {"muted", fm->IsChannelMuted(ch)}});
+    }
+    const u8 rhythm = fm->ReadRegister(0x0E);
+    json percussion = json::array();
+    for (int ch = 9; ch < 14; ++ch)
+        percussion.push_back({{"channel", ch}, {"name", fm->GetChannelName(ch)},
+            {"enabled", fm->IsChannelEnabled(ch)}, {"muted", fm->IsChannelMuted(ch)},
+            {"key_on", (rhythm & 0x20) != 0 && (rhythm & (1 << (ch - 9))) != 0}});
+    const bool integrated = audio->GetYm2413Interface() ==
+        Audio::FmInterface::JapaneseSMS;
+    return {{"present", true}, {"chip", "YM2413"},
+            {"interface", integrated ? "Japanese SMS integrated FM"
+                                      : "FM Sound Unit / compatible external interface"},
+            {"clock_hz", fm->GetClockHz()},
+            {"ports", {{"register", 0xF0}, {"data", 0xF1}, {"control", 0xF2}}},
+            {"selected_register", fm->GetSelectedRegister()},
+            {"control", audio->GetYm2413ControlLatch()},
+            {"control_port_read", audio->ReadControl()},
+            {"psg_output_enabled", audio->IsPsgOutputEnabled()},
+            {"fm_output_enabled", audio->IsFmOutputEnabled()},
+            {"channels", channels},
+            {"percussion", percussion},
+            {"waveform_capture_enabled", fm->IsDebugEnabled()},
+            {"waveform_sample_count", fm->GetDebugSampleCount()},
+            {"access_timing", {{"violation_count", fm->GetTimingViolationCount()},
+                {"address_wait_clocks", 12}, {"data_wait_clocks", 84},
+                {"enforcement", "diagnostic_only"}}},
+            {"rhythm", {{"enabled", (rhythm & 0x20) != 0},
+                        {"bass_drum", (rhythm & 0x10) != 0},
+                        {"snare_drum", (rhythm & 0x08) != 0},
+                        {"tom_tom", (rhythm & 0x04) != 0},
+                        {"top_cymbal", (rhythm & 0x02) != 0},
+                        {"high_hat", (rhythm & 0x01) != 0}}},
+            {"registers", regs}};
+}
+
+static json LoudnessToJson(const LoudnessMeter& m)
+{
+    // JSON has no -inf: silence or "not enough audio yet" reads as null.
+    auto lufs = [](double v) { return std::isfinite(v) ? json(v) : json(nullptr); };
+    return {{"momentary_lufs", lufs(m.GetMomentary())},
+            {"short_term_lufs", lufs(m.GetShortTerm())},
+            {"integrated_lufs", lufs(m.GetIntegrated())},
+            {"momentary_max_lufs", lufs(m.GetMomentaryMax())},
+            {"short_term_max_lufs", lufs(m.GetShortTermMax())},
+            {"loudness_range_lu", m.GetRange()},
+            {"sample_peak_dbfs", lufs(m.GetPeakDbfs())}};
+}
+
+json DebugAdapter::SetYM2413Enabled(bool enabled, bool reset)
+{
+    // Same path as the Audio menu: persist the choice and stage it; the
+    // audio unit latches presence at the next reset.
+    config_audio.ym2413_enable = enabled;
+    emu_set_ym2413_config(enabled);
+    if (reset)
+        Reset(false);
+    Audio* audio = m_core->GetAudio();
+    return {{"success", true}, {"connected", enabled}, {"reset", reset},
+            {"present", audio->IsYm2413Enabled()},
+            {"note", reset ? (audio->IsYm2413Enabled() == enabled ? "applied"
+                                  : "staged; this machine has no FM interface")
+                           : "staged: requires a ROM reset (debug_reset) to take effect"}};
+}
+
+json DebugAdapter::SetYM2413LoudnessEnabled(bool enabled, bool reset)
+{
+    Audio* audio = m_core->GetAudio();
+    audio->EnableLoudnessMeter(enabled);
+    if (reset)
+        audio->ResetLoudnessMeter();
+    return {{"success", true}, {"enabled", audio->IsLoudnessMeterEnabled()},
+            {"reset", reset}, {"fm_present", audio->IsYm2413Enabled()}};
+}
+
+json DebugAdapter::GetYM2413Loudness()
+{
+    Audio* audio = m_core->GetAudio();
+    return {{"enabled", audio->IsLoudnessMeterEnabled()},
+            {"fm_present", audio->IsYm2413Enabled()},
+            {"standard", "ITU-R BS.1770-4 / EBU R128"},
+            {"measured_seconds", audio->GetOutputLoudness().GetSeconds()},
+            {"fm", LoudnessToJson(audio->GetFmLoudness())},
+            {"output", LoudnessToJson(audio->GetOutputLoudness())},
+            {"limiter", {
+                {"pre_limiter_peak_dbfs", audio->GetLoudnessPreLimiterPeak() > 0.0f
+                    ? json(20.0 * std::log10(audio->GetLoudnessPreLimiterPeak() / 32767.0))
+                    : json(nullptr)},
+                {"knee_dbfs", 20.0 * std::log10(0.95)},
+                {"limited_samples", audio->GetLoudnessLimitedSamples()}}},
+            {"note", "Emulated time. Integrated is gated (-70 LUFS absolute, -10 LU relative). "
+                     "null = silence or window not yet filled (M needs 0.4 s, S 3 s). "
+                     "Output is the final mix after the soft limiter; stereo channels summed per BS.1770."}};
+}
+#else
+json DebugAdapter::GetYM2413Status(){return unavailable("YM2413");}
+json DebugAdapter::SetYM2413Enabled(bool, bool){return unavailable("YM2413");}
+json DebugAdapter::SetYM2413LoudnessEnabled(bool, bool){return unavailable("YM2413");}
+json DebugAdapter::GetYM2413Loudness(){return unavailable("YM2413");}
+#endif
+
+json DebugAdapter::GetScreenshot(const std::string& area)
+{
+    if (area != "visible" && area != "frame")
+        return {{"error", "area must be \"visible\" or \"frame\""}};
     // A cartridge is not the only way this machine is ready to present a
     // frame: SF-7000 IPL+RAM alone boot a complete machine with no SC-3000
     // cartridge inserted at all (see GearSF7000Core::IsMachineReady()).
@@ -1101,15 +2262,13 @@ json DebugAdapter::GetScreenshot()
         return {{"error", "No cartridge or SF-7000 IPL loaded"}};
 
     unsigned char* pngBuffer = nullptr;
-    const int pngSize = emu_get_screenshot_png(&pngBuffer);
+    GC_VideoRect captured;
+    const int pngSize = emu_get_screenshot_png(&pngBuffer, area == "frame", &captured);
     if (pngSize == 0 || pngBuffer == nullptr)
         return {{"error", "Unable to capture the frame buffer"}};
 
     const std::string base64Png = Base64Encode(pngBuffer, pngSize);
     free(pngBuffer);
-
-    GC_RuntimeInfo runtime;
-    emu_get_runtime(runtime);
 
     // width/height are the packed frame, border included when overscan is
     // on - the same mismatch this session found in the Sprites debug view's
@@ -1117,21 +2276,24 @@ json DebugAdapter::GetScreenshot()
     // exactly the border's thickness. content_area is where the real
     // 256x192 picture starts inside that frame, so a caller can place a SAT
     // X/Y (always active-area-relative) onto this image without repeating
-    // that mistake.
+    // that mistake. Both rectangles are in the returned IMAGE's coordinates,
+    // not the frame's: with a Game Gear window the image starts 48,24 into the
+    // picture, so content_area goes negative and visible_area is the whole image.
     const GC_VideoFrameDescriptor descriptor = m_core->GetVideoFrameDescriptor();
+    const auto inImage = [&captured](const GC_VideoRect& r) {
+        return json{{"x", r.x - captured.x}, {"y", r.y - captured.y},
+                    {"width", r.width}, {"height", r.height}};
+    };
 
     return {
         {"__mcp_image", true},
         {"data", base64Png},
         {"mimeType", "image/png"},
-        {"width", runtime.screen_width},
-        {"height", runtime.screen_height},
-        {"content_area", {
-            {"x", descriptor.content_area.x},
-            {"y", descriptor.content_area.y},
-            {"width", descriptor.content_area.width},
-            {"height", descriptor.content_area.height}
-        }}
+        {"area", area},
+        {"width", captured.width},
+        {"height", captured.height},
+        {"content_area", inImage(descriptor.content_area)},
+        {"visible_area", inImage(descriptor.visible_area)}
     };
 }
 
@@ -1255,32 +2417,103 @@ json DebugAdapter::SaveDebugPng(const std::string& view, int sprite_index, const
 
     if (view == "tiles")
     {
-        // lines is always 32 in the GUI view, matching the buffer's full
-        // 256x256 allocation exactly - no crop needed.
-        emu_save_debug_png(file_path.c_str(), emu_debug_tile_buffer, 256, 256, 256 * 3);
-        return {{"success", true}, {"file_path", file_path}, {"view", view}, {"width", 256}, {"height", 256}};
+        const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+        IVideoDebugProvider* provider = m_core->IsVideoDeviceHandleCurrent(handle)
+            ? handle.device->GetDebugProvider() : nullptr;
+        GC_VideoDebugLayerSurface surface;
+        bool found = false;
+        if (provider)
+            for (std::size_t index = 0; index < provider->GetDebugLayerCount(); ++index)
+            {
+                GC_VideoDebugLayerDescriptor layer;
+                if (provider->DescribeDebugLayer(index, layer) &&
+                    layer.kind == GC_VideoDebugLayerKind::TileCatalog &&
+                    provider->ReadDebugLayerSurface(index, surface) && surface.rgba)
+                {
+                    found = true;
+                    break;
+                }
+            }
+        if (!found)
+            return {{"error", "The active video device exposes no tile catalogue"}};
+
+        std::vector<u8> rgb(static_cast<std::size_t>(surface.width) * surface.height * 3);
+        for (u32 row = 0; row < surface.height; ++row)
+            for (u32 column = 0; column < surface.width; ++column)
+            {
+                const u8* rgba = surface.rgba + row * surface.row_pitch + column * 4;
+                u8* destination = &rgb[(row * surface.width + column) * 3];
+                destination[0] = rgba[0];
+                destination[1] = rgba[1];
+                destination[2] = rgba[2];
+            }
+        emu_save_debug_png(file_path.c_str(), rgb.data(), static_cast<int>(surface.width),
+                           static_cast<int>(surface.height), static_cast<int>(surface.width * 3));
+        return {{"success", true}, {"file_path", file_path}, {"view", view},
+                {"width", surface.width}, {"height", surface.height}};
     }
     else if (view == "background")
     {
-        Video* video = m_core->GetVideo();
-        int mode = video->GetMode();
-        int cols = (mode == 1) ? 40 : 32;
-        int rows = 24;
-        int crop_width = (mode == 1) ? (int)(6.0f * 40.0f) : 256;
-        int crop_height = rows * 8;
-        emu_save_debug_png(file_path.c_str(), emu_debug_background_buffer, crop_width, crop_height, 256 * 3);
-        return {{"success", true}, {"file_path", file_path}, {"view", view}, {"width", crop_width}, {"height", crop_height}, {"cols", cols}};
+        const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+        IVideoDebugProvider* provider = m_core->IsVideoDeviceHandleCurrent(handle)
+            ? handle.device->GetDebugProvider() : nullptr;
+        GC_VideoDebugLayerSurface surface;
+        bool found = false;
+        if (provider)
+            for (std::size_t index = 0; index < provider->GetDebugLayerCount(); ++index)
+            {
+                GC_VideoDebugLayerDescriptor layer;
+                if (provider->DescribeDebugLayer(index, layer) &&
+                    layer.kind == GC_VideoDebugLayerKind::TileGrid &&
+                    provider->ReadDebugLayerSurface(index, surface) && surface.rgba)
+                {
+                    found = true;
+                    break;
+                }
+            }
+        if (!found)
+            return {{"error", "The active video device exposes no background layer"}};
+
+        std::vector<u8> rgb(static_cast<std::size_t>(surface.width) * surface.height * 3);
+        for (u32 row = 0; row < surface.height; ++row)
+            for (u32 column = 0; column < surface.width; ++column)
+            {
+                const u8* rgba = surface.rgba + row * surface.row_pitch + column * 4;
+                u8* destination = &rgb[(row * surface.width + column) * 3];
+                destination[0] = rgba[0];
+                destination[1] = rgba[1];
+                destination[2] = rgba[2];
+            }
+        emu_save_debug_png(file_path.c_str(), rgb.data(), static_cast<int>(surface.width),
+            static_cast<int>(surface.height), static_cast<int>(surface.width * 3));
+        return {{"success", true}, {"file_path", file_path}, {"view", view},
+                {"width", surface.width}, {"height", surface.height}};
     }
     else if (view == "sprite")
     {
         if ((sprite_index < 0) || (sprite_index >= 32))
             return {{"error", "sprite_index must be 0-31"}};
 
-        Video* video = m_core->GetVideo();
-        u8* regs = video->GetRegisters();
-        bool sprites_16 = IsSetBit(regs[1], 1);
-        int sprite_size = sprites_16 ? 16 : 8;
-        emu_save_debug_png(file_path.c_str(), emu_debug_sprite_buffers[sprite_index], sprite_size, sprite_size, 16 * 3);
+        const VideoDeviceHandle handle = m_core->AcquireVideoDevice();
+        IVideoDebugProvider* provider = handle.device
+            ? handle.device->GetDebugProvider() : nullptr;
+        GC_VideoDebugSpriteAtlasSurface atlas;
+        if (!provider || !provider->ReadDebugSpriteAtlas("live-sat", 0, atlas) ||
+            !atlas.rgba || sprite_index >= static_cast<int>(atlas.item_count))
+            return {{"error", "The active video device exposes no live sprite atlas"}};
+        const GC_VideoDebugSpriteAtlasItemDescriptor& entry = atlas.items[sprite_index];
+        const int sprite_size = static_cast<int>(entry.width);
+        std::vector<u8> rgb(static_cast<std::size_t>(sprite_size * sprite_size * 3));
+        for (int y = 0; y < sprite_size; ++y)
+            for (int x = 0; x < sprite_size; ++x)
+            {
+                const u8* rgba = atlas.rgba + (entry.atlas_y + y) * atlas.row_pitch +
+                    (entry.atlas_x + x) * 4;
+                u8* output = &rgb[(y * sprite_size + x) * 3];
+                output[0] = rgba[0]; output[1] = rgba[1]; output[2] = rgba[2];
+            }
+        emu_save_debug_png(file_path.c_str(), rgb.data(), sprite_size,
+                           sprite_size, sprite_size * 3);
         return {{"success", true}, {"file_path", file_path}, {"view", view}, {"sprite_index", sprite_index}, {"width", sprite_size}, {"height", sprite_size}};
     }
 
@@ -1304,195 +2537,171 @@ json DebugAdapter::GetFullRasterDebugScreenshot()
         {"__mcp_image", true},
         {"data", base64Png},
         {"mimeType", "image/png"},
-        {"width", TMS9918RasterTiming::DotsPerLine},
-        {"height", m_core->GetVideo()->IsPAL() ? GC_LINES_PER_FRAME_PAL : GC_LINES_PER_FRAME_NTSC}
+        {"width", m_core->GetVideoFrameDescriptor().raster_width},
+        {"height", m_core->GetVideoFrameDescriptor().raster_height}
     };
 }
 
 
 json DebugAdapter::ListSprites(int line, const std::string& source)
 {
-    Video* video = m_core->GetVideo();
-    if (video == NULL)
-        return unavailable("Sprite inspection");
+    IVideoDevice* device = nullptr;
+    IVideoDebugProvider* provider = GetVideoDebug(m_core, &device);
+    if (!provider || !device)
+        return unavailableOnActiveVideoDevice("Sprite inspection");
 
-    const Video::SpriteDebugSnapshot snap = video->GetSpriteDebugSnapshot(line);
-
-    if (source == "rendered")
+    GC_VideoDebugSpriteSourceDescriptor sourceDescriptor;
+    if (!ResolveSpriteSource(*provider, source, sourceDescriptor))
     {
-        const Video::RenderedSpriteDebugFrame& frame =
-            video->GetLastRenderedSpriteDebugFrame();
-        if (!frame.valid)
-            return {{"error", "No complete rendered frame has been captured"}};
-
-        const int height = frame.large ? 16 : 8;
-        const u16 completeMask = frame.large ? 0xFFFFu : 0x00FFu;
-        json list = json::array();
-        for (int index = 0; index < 32; ++index)
+        json available = json::array();
+        for (std::size_t index = 0;
+             index < provider->GetDebugSpriteSourceCount(); ++index)
         {
-            const Video::RenderedSpriteDebugEntry& e = frame.entries[index];
-            const u16 rows = e.fetchedRows & completeMask;
-            const char* result = !e.seen ? "not_fetched"
-                : (rows == completeMask ? "complete" : "partial");
-            char rowsHex[5];
-            snprintf(rowsHex, sizeof(rowsHex), "%04X", rows);
-            list.push_back({
-                {"index", index},
-                {"seen", e.seen},
-                {"raw_y", e.rawY},
-                {"visible_y", (e.rawY + 1) & 0xFF},
-                {"x", e.x},
-                {"effective_x", static_cast<int>(e.x) -
-                    ((e.colour & 0x80) ? 32 : 0)},
-                {"early_clock", (e.colour & 0x80) != 0},
-                {"pattern", e.name},
-                {"colour", e.colour & 0x0F},
-                {"fetched_rows", rows},
-                {"fetched_rows_hex", rowsHex},
-                {"result", result}
+            GC_VideoDebugSpriteSourceDescriptor candidate;
+            if (provider->DescribeDebugSpriteSource(index, candidate) &&
+                candidate.code)
+                available.push_back(candidate.code);
+        }
+        return {{"error", "Unknown sprite source"}, {"source", source},
+                {"available_sources", std::move(available)}};
+    }
+
+    int minimum = 0;
+    int maximum = 0;
+    if (provider->DescribeDebugSpriteParameter(
+            sourceDescriptor.code, minimum, maximum))
+    {
+        if (line < 0)
+            line = minimum;
+        if (line < minimum || line > maximum)
+            return {{"error", "Sprite source parameter is out of range"},
+                    {"parameter", sourceDescriptor.parameter_code
+                        ? sourceDescriptor.parameter_code : "line"},
+                    {"minimum", minimum}, {"maximum", maximum}};
+    }
+
+    GC_VideoDebugSpriteAtlasSurface atlas;
+    if (!provider->ReadDebugSpriteAtlas(sourceDescriptor.code, line, atlas) ||
+        !atlas.rgba || !atlas.items)
+        return {{"error", "The sprite source has no current surface"},
+                {"source", sourceDescriptor.code}};
+
+    json sourceFields = json::array();
+    for (std::size_t fieldIndex = 0;
+         fieldIndex < provider->GetDebugSpriteSourceFieldCount(
+             sourceDescriptor.code, line); ++fieldIndex)
+    {
+        GC_VideoDebugGridCellFieldDescriptor field;
+        if (!provider->DescribeDebugSpriteSourceField(
+                sourceDescriptor.code, line, fieldIndex, field))
+            continue;
+        sourceFields.push_back({
+            {"code", field.code ? field.code : ""},
+            {"label", field.label ? field.label : ""},
+            {"value", VideoDebugFieldValue(field)},
+            {"format", static_cast<int>(field.format)},
+            {"width_bits", field.width_bits}
+        });
+    }
+
+    json sprites = json::array();
+    for (u32 itemIndex = 0; itemIndex < atlas.item_count; ++itemIndex)
+    {
+        const GC_VideoDebugSpriteAtlasItemDescriptor& item = atlas.items[itemIndex];
+        json fields = json::object();
+        json fieldDescriptors = json::array();
+        for (std::size_t fieldIndex = 0;
+             fieldIndex < provider->GetDebugSpriteItemFieldCount(
+                 sourceDescriptor.code, line, item.index); ++fieldIndex)
+        {
+            GC_VideoDebugGridCellFieldDescriptor field;
+            if (!provider->DescribeDebugSpriteItemField(sourceDescriptor.code,
+                    line, item.index, fieldIndex, field))
+                continue;
+            const std::string code = field.code ? field.code :
+                (field.label ? field.label : "value");
+            const json value = VideoDebugFieldValue(field);
+            fields[code] = value;
+            fieldDescriptors.push_back({
+                {"code", code}, {"label", field.label ? field.label : ""},
+                {"value", value}, {"format", static_cast<int>(field.format)},
+                {"width_bits", field.width_bits}
             });
         }
-        return {
-            {"source", "rendered"},
-            {"frame_serial", frame.frameSerial},
-            {"sprites", list},
-            {"count", 32},
-            {"sprites_enabled", frame.spritesEnabled},
-            {"height", height},
-            {"width", height},
-            {"magnified", frame.magnified},
-            {"legend", {
-                {"complete", "Every source row was fetched at least once."},
-                {"partial", "Only some rows were fetched (clipping, raster changes, or four-sprite overflow)."},
-                {"not_fetched", "This SAT index supplied no row to the completed frame."}
-            }},
-            {"last_frame", {
-                {"collisions", snap.collisions},
-                {"collision_line", snap.collisionLine},
-                {"collision_dot", snap.collisionDot},
-                {"overflow_line", snap.overflowLine},
-                {"overflow_sprite", snap.overflowSprite}
-            }}
-        };
-    }
-    if (source != "live")
-        return {{"error", "source must be live or rendered"}};
-
-    json list = json::array();
-    for (int i = 0; i < snap.count; ++i)
-    {
-        const Video::SpriteDebugEntry& e = snap.entries[i];
         json entry = {
-            {"index", e.index},
-            // Both, always. raw_y is the byte in the table; visible_y is the
-            // line it draws on, which is one lower - the off-by-one that
-            // makes every comparison against the screen wrong if only one of
-            // the two is reported.
-            {"raw_y", e.rawY},
-            {"visible_y", e.visibleY},
-            {"x", e.x},
-            {"effective_x", e.effectiveX},
-            {"early_clock", e.earlyClock},
-            {"pattern", e.name},
-            {"colour", e.colour & 0x0F}
+            {"index", item.index}, {"width", item.width},
+            {"height", item.height},
+            {"visual_state", SpriteVisualStateName(item.visual_state)},
+            {"fields", std::move(fields)},
+            {"field_descriptors", std::move(fieldDescriptors)}
         };
-        // Only when the answer means something. The chip keeps selection
-        // state for the line it is on, so these are absent rather than false
-        // when the snapshot could not be tied to that line - false would read
-        // as "not selected", which is a different claim.
-        if (snap.lineStateValid)
-        {
-            entry["selected_on_line"] = e.selectedOnLine;
-            entry["overflow_cause"] = e.overflowCause;
-        }
-        list.push_back(entry);
+        if (item.has_screen_rect)
+            entry["screen_rect"] = {
+                {"x", item.screen_x}, {"y", item.screen_y},
+                {"width", item.screen_width}, {"height", item.screen_height}
+            };
+        sprites.push_back(std::move(entry));
     }
 
     json result = {
-        {"source", "live"},
-        {"sprites", list},
-        {"count", snap.count},
-        {"line", snap.line},
-        {"line_state_valid", snap.lineStateValid},
-        {"sprites_enabled", snap.spritesEnabled},
-        {"height", snap.height},
-        {"magnified", snap.magnified},
-        {"width", snap.height},
-        // The last COMPLETE frame, not the one in progress - a debugger is
-        // usually paused in the VBlank, where the live counters have already
-        // reset and would report nothing.
-        //
-        // Frame-level, not per-sprite: the hardware records that a collision
-        // happened, not which pair caused it, so there is no per-sprite flag
-        // to report and none is invented here.
-        {"last_frame", {
-            {"collisions", snap.collisions},
-            {"collision_line", snap.collisionLine},
-            {"collision_dot", snap.collisionDot},
-            {"overflow_line", snap.overflowLine},
-            {"overflow_sprite", snap.overflowSprite}
-        }}
+        {"device", device->GetDeviceDescriptor().key
+            ? device->GetDeviceDescriptor().key : ""},
+        {"source", sourceDescriptor.code},
+        {"source_name", sourceDescriptor.name ? sourceDescriptor.name : ""},
+        {"legend", sourceDescriptor.legend ? sourceDescriptor.legend : ""},
+        {"capabilities", sourceDescriptor.capabilities},
+        {"generation", atlas.generation},
+        {"atlas_width", atlas.width}, {"atlas_height", atlas.height},
+        {"count", atlas.item_count}, {"source_fields", std::move(sourceFields)},
+        {"sprites", std::move(sprites)}
     };
-
-    if (snap.terminatorIndex >= 0)
-        result["terminator_index"] = snap.terminatorIndex;
-    else
-        result["note"] = "No $D0 terminator in the table: all 32 entries are "
-                         "part of the list.";
-
-    if (!snap.lineStateValid)
-        result["line_note"] =
-            "Selection state is only kept for the line the beam is on, so "
-            "selected_on_line and overflow_cause are omitted. Pause on the "
-            "line of interest to get them.";
-
-    if (!snap.spritesEnabled)
-        result["mode_note"] =
-            "The current mode has no sprite plane, so nothing in this table "
-            "is drawn.";
-
+    if (sourceDescriptor.parameter_code)
+    {
+        result["parameter"] = sourceDescriptor.parameter_code;
+        result["parameter_value"] = line;
+    }
     return result;
 }
 
 json DebugAdapter::GetSpritePipeline()
 {
-    Video* video = m_core->GetVideo();
+    ITMS99xxDebugProvider* video = GetTmsDebug(m_core);
     if (video == NULL)
-        return unavailable("Sprite pipeline inspection");
-    const Video::SpritePipelineDebugSnapshot snap =
+        return unavailableOnActiveVideoDevice("TMS99xx sprite pipeline inspection");
+    const ITMS99xxDebugProvider::SpritePipelineDebugSnapshot snap =
         video->GetSpritePipelineDebugSnapshot();
-    const auto activityName = [](TMS9918VramSlotSchedule::Activity activity) {
+    const auto activityName = [](TMS99xxVramSlotSchedule::Activity activity) {
         switch (activity)
         {
-            case TMS9918VramSlotSchedule::Activity::SpriteScanY: return "sprite_scan_y";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedY: return "sprite_y";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedX: return "sprite_x";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedName: return "sprite_name";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedColour: return "sprite_colour";
-            case TMS9918VramSlotSchedule::Activity::SpriteSelectedPattern: return "sprite_pattern";
-            case TMS9918VramSlotSchedule::Activity::Cpu: return "cpu";
-            case TMS9918VramSlotSchedule::Activity::Refresh: return "refresh";
-            case TMS9918VramSlotSchedule::Activity::Name: return "name";
-            case TMS9918VramSlotSchedule::Activity::Colour: return "colour";
-            case TMS9918VramSlotSchedule::Activity::Pattern: return "pattern";
+            case TMS99xxVramSlotSchedule::Activity::SpriteScanY: return "sprite_scan_y";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedY: return "sprite_y";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedX: return "sprite_x";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedName: return "sprite_name";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedColour: return "sprite_colour";
+            case TMS99xxVramSlotSchedule::Activity::SpriteSelectedPattern: return "sprite_pattern";
+            case TMS99xxVramSlotSchedule::Activity::Cpu: return "cpu";
+            case TMS99xxVramSlotSchedule::Activity::Refresh: return "refresh";
+            case TMS99xxVramSlotSchedule::Activity::Name: return "name";
+            case TMS99xxVramSlotSchedule::Activity::Colour: return "colour";
+            case TMS99xxVramSlotSchedule::Activity::Pattern: return "pattern";
             default: return "unknown";
         }
     };
 
     json lines = json::array();
-    for (const Video::SpritePipelineLineDebug& line : snap.lines)
+    for (const ITMS99xxDebugProvider::SpritePipelineLineDebug& line : snap.lines)
     {
         if (!line.valid)
             continue;
         json selected = json::array();
         for (int slot = 0; slot < line.selectedCount && slot < 4; ++slot)
         {
-            const Video::SpritePipelineLatchDebug& e = line.selected[slot];
+            const ITMS99xxDebugProvider::SpritePipelineLatchDebug& e = line.selected[slot];
             selected.push_back({
                 {"slot", slot}, {"sat_index", e.satIndex},
                 {"raster_x", e.rasterX},
                 {"raster_dot", e.rasterX == 0xFF ? -1 :
-                    static_cast<int>(TMS9918SlotGrid::SlotStartPhase(
+                    static_cast<int>(TMS99xxSlotGrid::SlotStartPhase(
                         e.rasterX) / 2)},
                 {"sat", {{"y", e.y}, {"x", e.x}, {"name", e.name},
                          {"colour", e.colour}}},
@@ -1548,10 +2757,10 @@ json DebugAdapter::GetSpritePipeline()
 json DebugAdapter::GetSpriteScanlineHistory(int startLine, int endLine,
                                             bool includeEmpty)
 {
-    Video* video = m_core->GetVideo();
+    ITMS99xxDebugProvider* video = GetTmsDebug(m_core);
     if (video == NULL)
-        return unavailable("Sprite scanline history");
-    const Video::SpriteSelectionFrameHistory& history =
+        return unavailableOnActiveVideoDevice("TMS99xx sprite scanline history");
+    const ITMS99xxDebugProvider::SpriteSelectionFrameHistory& history =
         video->GetSpriteSelectionFrameHistory();
     if (!history.valid)
         return {{"error", "No completed or recorded sprite frame history"}};
@@ -1568,7 +2777,7 @@ json DebugAdapter::GetSpriteScanlineHistory(int startLine, int endLine,
     json rows = json::array();
     for (int y = startLine; y <= endLine; ++y)
     {
-        const Video::SpriteSelectionHistoryRow& row = history.rows[y];
+        const ITMS99xxDebugProvider::SpriteSelectionHistoryRow& row = history.rows[y];
         bool hasSprite = false;
         json slots = json::array();
         for (int lane = 0; lane < 5; ++lane)
@@ -1576,16 +2785,16 @@ json DebugAdapter::GetSpriteScanlineHistory(int startLine, int endLine,
             if (row.rasterX[lane] == 0xFF)
                 continue;
             hasSprite = true;
-            const auto scan = TMS9918VramSlotSchedule::GetSlot(
-                TMS9918VramSlotSchedule::Schedule::Graphics,
+            const auto scan = TMS99xxVramSlotSchedule::GetSlot(
+                TMS99xxVramSlotSchedule::Schedule::Graphics,
                 row.rasterX[lane]);
             json item = {
                 {"lane", lane}, {"overflow_candidate", lane == 4},
                 {"raster_x", row.rasterX[lane]},
-                {"raster_dot", TMS9918SlotGrid::SlotStartPhase(
+                {"raster_dot", TMS99xxSlotGrid::SlotStartPhase(
                     row.rasterX[lane]) / 2},
                 {"sat_index", scan.activity ==
-                    TMS9918VramSlotSchedule::Activity::SpriteScanY
+                    TMS99xxVramSlotSchedule::Activity::SpriteScanY
                         ? static_cast<int>(scan.index) : -1},
                 {"sat", {{"y", row.sat[lane][0]},
                          {"x", row.sat[lane][1]},
@@ -1623,162 +2832,378 @@ json DebugAdapter::GetSpriteScanlineHistory(int startLine, int endLine,
     };
 }
 
-json DebugAdapter::GetSpriteImage(int index, const std::string& source)
+json DebugAdapter::GetSpriteImage(int index, const std::string& source,
+                                  int parameter)
 {
-    if (index < 0 || index > 31)
-        return {{"error", "sprite_index must be 0-31"}, {"sprite_index", index}};
+    if (index < 0)
+        return {{"error", "sprite_index must be non-negative"},
+                {"sprite_index", index}};
 
-    Video* video = m_core->GetVideo();
-    if (video == NULL)
-        return unavailable("Sprite image");
+    IVideoDevice* device = nullptr;
+    IVideoDebugProvider* provider = GetVideoDebug(m_core, &device);
+    if (!provider || !device)
+        return unavailableOnActiveVideoDevice("Sprite image");
+    GC_VideoDebugSpriteSourceDescriptor sourceDescriptor;
+    if (!ResolveSpriteSource(*provider, source, sourceDescriptor))
+        return {{"error", "Unknown sprite source"}, {"source", source}};
 
-    if (source == "rendered")
+    int minimum = 0;
+    int maximum = 0;
+    if (provider->DescribeDebugSpriteParameter(
+            sourceDescriptor.code, minimum, maximum))
     {
-        const Video::RenderedSpriteDebugFrame& frame =
-            video->GetLastRenderedSpriteDebugFrame();
-        if (!frame.valid)
-            return {{"error", "No complete rendered frame has been captured"}};
-
-        const int side = frame.large ? 16 : 8;
-        const Video::RenderedSpriteDebugEntry& entry = frame.entries[index];
-        const u8* palette = video->GetCurrentPalette();
-        std::vector<u8> rgba(static_cast<std::size_t>(side) * side * 4, 0);
-        for (int y = 0; y < side; ++y)
-            for (int x = 0; x < side; ++x)
-            {
-                const int colour = entry.pixels[y * 16 + x] & 0x0F;
-                if (colour == 0)
-                    continue;
-                const std::size_t p =
-                    (static_cast<std::size_t>(y) * side + x) * 4;
-                rgba[p + 0] = palette[colour * 3 + 0];
-                rgba[p + 1] = palette[colour * 3 + 1];
-                rgba[p + 2] = palette[colour * 3 + 2];
-                rgba[p + 3] = 255;
-            }
-
-        unsigned char* png = NULL;
-        const int pngSize =
-            emu_encode_png_rgba(rgba.data(), side, side, &png);
-        if (png == NULL || pngSize == 0)
-            return {{"error", "Could not encode the rendered sprite as PNG"}};
-        const std::string base64 = Base64Encode(png, pngSize);
-        free(png);
-        return {
-            {"__mcp_image", true},
-            {"data", base64},
-            {"mimeType", "image/png"},
-            {"width", side},
-            {"height", side},
-            {"sprite_index", index},
-            {"source", "rendered"},
-            {"frame_serial", frame.frameSerial},
-            {"seen", entry.seen},
-            {"fetched_rows", entry.fetchedRows}
-        };
+        if (parameter < 0)
+            parameter = minimum;
+        if (parameter < minimum || parameter > maximum)
+            return {{"error", "Sprite source parameter is out of range"},
+                    {"parameter", sourceDescriptor.parameter_code
+                        ? sourceDescriptor.parameter_code : "line"},
+                    {"minimum", minimum}, {"maximum", maximum}};
     }
-    if (source != "live")
-        return {{"error", "source must be live or rendered"}};
+    else
+        parameter = 0;
 
-    const Video::SpriteDebugSnapshot snap = video->GetSpriteDebugSnapshot(-1);
+    GC_VideoDebugSpriteAtlasSurface atlas;
+    if (!provider->ReadDebugSpriteAtlas(
+            sourceDescriptor.code, parameter, atlas) ||
+        !atlas.rgba || !atlas.items)
+        return {{"error", "The sprite source has no current surface"},
+                {"source", sourceDescriptor.code}};
 
-    // Past the terminator there is no sprite - the chip never looks there.
-    // Returning a picture of whatever bytes happen to be in VRAM would be
-    // inventing an object.
-    if (snap.terminatorIndex >= 0 && index >= snap.terminatorIndex)
-        return {{"error", "Past the $D0 terminator: this entry is not part of "
-                          "the sprite list"},
-                {"sprite_index", index},
-                {"terminator_index", snap.terminatorIndex}};
-
-    const Video::SpriteDebugEntry* entry = NULL;
-    for (int i = 0; i < snap.count; ++i)
-        if (snap.entries[i].index == index)
-            entry = &snap.entries[i];
-    if (entry == NULL)
-        return {{"error", "No such sprite"}, {"sprite_index", index}};
-
-    const u8* vram = video->GetVRAM();
-    const u8* regs = video->GetRegisters();
-    const u16 patternBase = static_cast<u16>((regs[6] & 0x07) << 11);
-
-    const int side = snap.height;               // 8 or 16, before magnification
-    // In 16x16 mode the pattern number's low two bits are ignored: one sprite
-    // is four consecutive 8x8 patterns, quadrants in column order.
-    const int name = (side == 16) ? (entry->name & 0xFC) : entry->name;
-
-    const u8* palette = video->GetCurrentPalette();
-    const int colourIndex = entry->colour & 0x0F;
-    const u8 r = palette[colourIndex * 3 + 0];
-    const u8 g = palette[colourIndex * 3 + 1];
-    const u8 b = palette[colourIndex * 3 + 2];
-
-    std::vector<u8> rgba(static_cast<std::size_t>(side) * side * 4, 0);
-    for (int y = 0; y < side; ++y)
-    {
-        for (int x = 0; x < side; ++x)
+    const GC_VideoDebugSpriteAtlasItemDescriptor* selected = nullptr;
+    for (u32 itemIndex = 0; itemIndex < atlas.item_count; ++itemIndex)
+        if (atlas.items[itemIndex].index == static_cast<u32>(index))
         {
-            // Quadrant order for 16x16: +0 top-left, +1 bottom-left,
-            // +2 top-right, +3 bottom-right - down the column first, which is
-            // the order that catches people out.
-            int patternOffset = 0;
-            int localY = y;
-            if (side == 16)
-            {
-                patternOffset = ((x >= 8) ? 2 : 0) + ((y >= 8) ? 1 : 0);
-                localY = y & 7;
-            }
-            const u16 addr = static_cast<u16>(
-                (patternBase + ((name + patternOffset) << 3) + localY) & 0x3FFF);
-            const u8 row = vram[addr];
-            const bool on = (row & (0x80 >> (x & 7))) != 0;
-
-            const std::size_t p = (static_cast<std::size_t>(y) * side + x) * 4;
-            if (on)
-            {
-                rgba[p + 0] = r;
-                rgba[p + 1] = g;
-                rgba[p + 2] = b;
-                rgba[p + 3] = 255;
-            }
-            // else left at 0,0,0,0 - transparent. A sprite pixel that is off
-            // shows the background through, so the PNG has to say so rather
-            // than painting it black.
+            selected = &atlas.items[itemIndex];
+            break;
         }
-    }
+    if (!selected)
+        return {{"error", "No such sprite in this source"},
+                {"sprite_index", index}, {"item_count", atlas.item_count}};
+    if (!selected->width || !selected->height ||
+        selected->atlas_x + selected->width > atlas.width ||
+        selected->atlas_y + selected->height > atlas.height ||
+        atlas.row_pitch < atlas.width * 4)
+        return {{"error", "The video device returned an invalid sprite rectangle"}};
 
-    unsigned char* png = NULL;
-    const int pngSize = emu_encode_png_rgba(rgba.data(), side, side, &png);
-    if (png == NULL || pngSize == 0)
+    std::vector<u8> rgba(static_cast<std::size_t>(selected->width) *
+        selected->height * 4);
+    for (u32 y = 0; y < selected->height; ++y)
+        std::memcpy(rgba.data() + static_cast<std::size_t>(y) *
+                        selected->width * 4,
+            atlas.rgba + static_cast<std::size_t>(selected->atlas_y + y) *
+                atlas.row_pitch + selected->atlas_x * 4,
+            static_cast<std::size_t>(selected->width) * 4);
+
+    unsigned char* png = nullptr;
+    const int pngSize = emu_encode_png_rgba(rgba.data(),
+        static_cast<int>(selected->width), static_cast<int>(selected->height),
+        &png);
+    if (!png || pngSize == 0)
         return {{"error", "Could not encode the sprite as PNG"}};
-
     const std::string base64 = Base64Encode(png, pngSize);
     free(png);
 
+    json fields = json::object();
+    for (std::size_t fieldIndex = 0;
+         fieldIndex < provider->GetDebugSpriteItemFieldCount(
+             sourceDescriptor.code, parameter, selected->index); ++fieldIndex)
+    {
+        GC_VideoDebugGridCellFieldDescriptor field;
+        if (provider->DescribeDebugSpriteItemField(sourceDescriptor.code,
+                parameter, selected->index, fieldIndex, field) && field.code)
+            fields[field.code] = VideoDebugFieldValue(field);
+    }
+
+    json result = {
+        {"__mcp_image", true}, {"data", base64}, {"mimeType", "image/png"},
+        {"device", device->GetDeviceDescriptor().key
+            ? device->GetDeviceDescriptor().key : ""},
+        {"width", selected->width}, {"height", selected->height},
+        {"sprite_index", selected->index}, {"source", sourceDescriptor.code},
+        {"visual_state", SpriteVisualStateName(selected->visual_state)},
+        {"generation", atlas.generation}, {"fields", std::move(fields)}
+    };
+    if (sourceDescriptor.parameter_code)
+    {
+        result["parameter"] = sourceDescriptor.parameter_code;
+        result["parameter_value"] = parameter;
+    }
+    if (selected->has_screen_rect)
+        result["screen_rect"] = {
+            {"x", selected->screen_x}, {"y", selected->screen_y},
+            {"width", selected->screen_width},
+            {"height", selected->screen_height}
+        };
+    return result;
+}
+// The VGM export the GUI already had, reachable from a session: start it,
+// stop it, ask whether it is running. Writes the register log, not samples,
+// so two runs can be compared write by write.
+json DebugAdapter::StartVgmRecording(const std::string& file_path)
+{
+    if (file_path.empty())
+        return {{"error", "file_path is required"}};
+    if (emu_is_vgm_recording())
+        return {{"error", "already recording; call stop_vgm_recording first"}};
+    if (!emu_start_vgm_recording(file_path.c_str()))
+        return {{"error", "could not start: a bootable machine and a writable path are required"}};
+    return {{"success", true}, {"file_path", file_path}, {"recording", true}};
+}
+
+json DebugAdapter::StopVgmRecording()
+{
+    if (!emu_is_vgm_recording())
+        return {{"error", "not recording"}};
+    const std::string written = emu_stop_vgm_recording();
+    return {{"success", true}, {"file_path", written}, {"recording", false}};
+}
+
+json DebugAdapter::GetVgmRecordingStatus()
+{
+    return {{"recording", emu_is_vgm_recording()}, {"wav_recording", emu_is_wav_recording()}};
+}
+
+json DebugAdapter::StartWavRecording(const std::string& file_path)
+{
+    if (file_path.empty())
+        return {{"error", "file_path is required"}};
+    if (emu_is_wav_recording())
+        return {{"error", "already recording; call stop_wav_recording first"}};
+    if (!emu_start_wav_recording(file_path.c_str()))
+        return {{"error", "could not start: a bootable machine and a writable path are required"}};
+    return {{"success", true}, {"file_path", file_path}, {"recording", true}};
+}
+
+json DebugAdapter::StopWavRecording()
+{
+    if (!emu_stop_wav_recording())
+        return {{"error", "not recording"}};
+    return {{"success", true}, {"recording", false}};
+}
+
+// Silences the host output without touching the emulation: the machine keeps
+// running and a recording keeps capturing, nobody has to listen.
+json DebugAdapter::SetAudioMute(bool mute)
+{
+    emu_audio_mute(mute);
+    return {{"success", true}, {"muted", mute}, {"audio_enabled", emu_is_audio_enabled()}};
+}
+
+// One call for "what machine is this": the board and what it wires, the
+// fitted VDP, the clocks. Board facts (M1 wait, where the VDP interrupt
+// lands) are properties of the motherboard, never settings.
+json DebugAdapter::GetSystemOptions()
+{
+    json models = json::array(), mappers = json::array();
+    for (int id = 0; id <= static_cast<int>(SystemModel::GameGearExport); ++id)
+    {
+        const auto model = static_cast<SystemModel>(id);
+        if (IsValidSystemModel(model)) {
+            json options = json::array();
+            for (const auto* option : GetMachineVideoOptions(model))
+                options.push_back({{"code", option->code}, {"label", option->label},
+                    {"device", option->device}, {"variant", option->variant}, {"core", option->core}});
+            const auto* defaultOption = GetDefaultMachineVideoOption(model);
+            models.push_back({{"id", id}, {"name", GetSystemModelName(model)},
+                {"video_options", options}, {"default_video_option", defaultOption ? json(defaultOption->code) : json(nullptr)}});
+        }
+    }
+    for (int id = 0; id <= static_cast<int>(Cartridge::SORD_M5_LINEAR); ++id)
+        if (id != Cartridge::SF7000IPL && id != Cartridge::CartridgeNotSupported
+            && Cartridge::IsTypeBuilt(static_cast<Cartridge::CartridgeTypes>(id)))
+            mappers.push_back({{"id", id}, {"name", emu_get_mapper_name(static_cast<Cartridge::CartridgeTypes>(id))}});
+    mappers.push_back({{"id", Cartridge::MSX_ASCII16}, {"name", emu_get_mapper_name(Cartridge::MSX_ASCII16)}});
+    return {{"models", models}, {"mappers", mappers}, {"current", GetSystemInfo()},
+            {"note", "Manual mapper choices are development overrides, not a compatibility matrix. Changes are staged until reset/load; SF-7000 uses start_sf7000."}};
+}
+
+json DebugAdapter::SetSystemOptions(const json& arguments)
+{
+    if (arguments.empty()) return {{"error", "Specify model_id, video_option, mapper_mode or m5_em5"}};
+    const int modelId = arguments.value("model_id", config_emulator.machine);
+    if (modelId < 0 || modelId > static_cast<int>(SystemModel::GameGearExport)
+        || !IsValidSystemModel(static_cast<SystemModel>(modelId)))
+        return {{"error", "Unknown model_id; see get_system_options"}};
+    const std::string mode = arguments.value("mapper_mode", std::string());
+    if (arguments.contains("mapper_mode") && mode != "auto" && mode != "manual")
+        return {{"error", "mapper_mode must be auto or manual"}};
+    const int mapper = arguments.value("mapper_type_id", -1);
+    if (arguments.contains("mapper_type_id") && mode != "manual")
+        return {{"error", "mapper_type_id requires mapper_mode manual"}};
+    if (mode == "manual" && mapper != Cartridge::MSX_ASCII16 && (mapper < 0 || mapper > Cartridge::SORD_M5_LINEAR
+        || mapper == Cartridge::SF7000IPL || mapper == Cartridge::CartridgeNotSupported
+        || !Cartridge::IsTypeBuilt(static_cast<Cartridge::CartridgeTypes>(mapper))))
+        return {{"error", "Manual mode requires a mapper_type_id from get_system_options"}};
+    if (mode == "manual" && IsM5System(static_cast<SystemModel>(modelId)) && mapper != Cartridge::SORD_M5_LINEAR)
+        return {{"error", "Sord M5 requires the standard linear mapper"}};
+    if (mode == "manual" && IsMSXSystem(static_cast<SystemModel>(modelId)) &&
+        mapper != Cartridge::MSX_LINEAR && mapper != Cartridge::MSX_ASCII16)
+        return {{"error", "MSX1 supports the MSX linear and ASCII 16 mappers"}};
+    if (arguments.contains("m5_em5") &&
+        (!IsM5System(static_cast<SystemModel>(modelId)) || !arguments["m5_em5"].is_boolean()))
+        return {{"error", "m5_em5 must be a boolean with a Sord M5 model"}};
+    std::string videoOption;
+    if (arguments.contains("video_option")) {
+        if (!arguments["video_option"].is_string()) return {{"error", "video_option must be a code or default"}};
+        videoOption = arguments["video_option"].get<std::string>();
+        if (videoOption == "default") videoOption.clear();
+        const auto* option = videoOption.empty() ? GetDefaultMachineVideoOption(static_cast<SystemModel>(modelId)) : GetVideoCatalog().FindOption(videoOption);
+        if (!option || !option->available || !GetVideoCatalog().IsDeclared(static_cast<SystemModel>(modelId), option->code))
+            return {{"error", "Video option is unavailable or incompatible with model_id"}};
+    }
+    // Validate the whole request before changing any saved preference.
+    if (arguments.contains("model_id"))
+        config_select_machine(static_cast<SystemModel>(modelId));
+    if (arguments.contains("video_option")) config_select_video_option(videoOption);
+    if (!mode.empty()) config_emulator.mapper_mode = mode == "manual" ? 1 : 0;
+    if (mode == "manual") config_emulator.mapper_type = mapper;
+    if (arguments.contains("m5_em5")) config_emulator.m5_em5_installed = arguments["m5_em5"].get<bool>();
+    config_mapper_store();
+    json result = GetSystemInfo();
+    result["success"] = true;
+    result["staged"] = true;
+    result["note"] = "Preferences staged; running machine unchanged. Apply with debug_reset or load_rom; use start_sf7000 for SF-7000 boot. ROM extension auto-selection still applies at load.";
+    return result;
+}
+
+json DebugAdapter::GetSystemInfo()
+{
+    const SystemModel model = m_core->GetSystemModel();
+    const SystemModelDescriptor profile = GetSystemModelDescriptor(model);
+    const auto configResult = config_get_storage_result();
+    const ISystemBus* bus = m_core->GetSystemBus();
+    const MachineType motherboard = m_core->GetMachineType();
+    const char* motherboardName =
+        motherboard == MachineType::SG1000 ? "SG-1000"
+        : motherboard == MachineType::SMS ? "Master System"
+        : motherboard == MachineType::GameGear ? "Game Gear"
+        : motherboard == MachineType::SordM5 ? "Sord M5"
+        : motherboard == MachineType::MSX ? "MSX1"
+        : motherboard == MachineType::Coleco ? "ColecoVision" : "SC-3000";
+    json board = {
+        {"motherboard", motherboardName},
+        {"cpu_psg_clock_hz", bus ? bus->GetCpuPsgClockHz() : profile.cpuPsgClockHz},
+        {"m1_wait_cycles", bus ? bus->GetWaitCyclesM1() : 0u},
+        {"vdp_interrupt_pin",
+            motherboard == MachineType::SordM5 ? "CTC channel 3 -> INT" : bus && bus->GetVdpLineType() == VdpLineType::VDP_NMI ? "NMI" : "INT"},
+        {"bios_size_bytes", bus ? bus->GetBiosSize() : 0u},
+        {"bios_loaded", m_core->GetMemory()->IsBiosLoaded()},
+        {"bios_crc32", m_core->GetMemory()->GetBiosCRC()},
+        {"keyboard_ppi", m_core->HasKeyboardPPI() || IsMSXSystem(model)},
+        {"msx_ppi", IsMSXSystem(model)},
+        {"keyboard_interface", m_core->HasKeyboardInterface()},
+        {"sk1100", HasSK1100(model)},
+        {"sf7000", m_core->GetMemory()->IsSF7000Enabled()},
+        {"sgm", {{"present", m_core->GetSGMDevice().IsPresent()},
+                 {"lower_ram", m_core->GetSGMDevice().LowerEnabled()},
+                 {"upper_ram", m_core->GetSGMDevice().UpperEnabled()}}}
+    };
+    board["ram_buffer_capacity_bytes"] = Memory::RamCapacity;
+    board["ram_regions"] = json::array();
+    if (bus) for (const auto& region : bus->GetRamRegions())
+        board["ram_regions"].push_back({
+            {"key", region.key}, {"name", region.name},
+            {"area", 8 + static_cast<int>(region.role)},
+            {"size_bytes", region.size}, {"backing_offset", region.backingOffset},
+            {"display_base", region.displayBase}, {"shown_in_editor", region.showInEditor}});
+    if (bus && bus->GetBiosSize()) board["firmware"] = GetFirmwareStatus();
+    if (IsMSXSystem(model)) board["msx"] = GetMSXStatus();
+    if (IsM5System(model)) board["m5"] = GetM5Status();
+    json video;
+    const GC_VideoDeviceDescriptor* vdp = m_core->GetVideoDeviceDescriptor();
+    const GC_VideoFrameDescriptor frame = m_core->GetVideoFrameDescriptor();
+    video = {
+        {"option", m_core->GetActiveVideoOptionCode()},
+        {"device", vdp && vdp->key ? vdp->key : ""},
+        {"model", vdp && vdp->model ? vdp->model : ""},
+        {"region", frame.region == Region_PAL ? "PAL" : "NTSC"},
+        {"native_fps", m_core->GetNativeFrameRate()}
+    };
+    const GearSF7000ClockRates rates = m_core->GetClockDomains().GetRates();
+    json clocks = {
+        {"cpu_hz", rates.cpuHz},
+        {"vdp_hz", rates.videoDeviceHz},
+        {"fdc_hz", rates.fdcHz},
+        {"scale", m_core->GetClockScale()}
+    };
+    // The mapper in use and how it was chosen. An image that no signature or
+    // CRC recognises (a converted game, a flat 64K build) runs on the
+    // machine's default under auto, which usually means a black screen: the
+    // warning says so, because that is the first thing to check.
+    json mapper;
+    {
+        Cartridge* cart = m_core->GetCartridge();
+        const bool manual = config_emulator.mapper_mode == 1;
+        mapper = {
+            {"name", cart->IsReady() ? emu_get_mapper_name(cart->GetType()) : ""},
+            {"type_id", cart->IsReady() ? static_cast<int>(cart->GetType()) : -1},
+            {"selection", manual ? "manual"
+                : cart->IsTypeIdentified() ? "auto (detected)" : "auto (fallback)"},
+            {"identified", cart->IsTypeIdentified()}
+        };
+        if (cart->IsReady() && cart->GetType() == Cartridge::COLECO_MEGACART)
+        {
+            mapper["bank_size"] = 0x4000;
+            mapper["bank_count"] = cart->GetROMBankCount();
+            mapper["selected_bank"] = m_core->GetMemory()->GetRomBank();
+            mapper["fixed_bank"] = cart->GetROMBankCount() - 1;
+        }
+        const char* incompatibility = nullptr;
+        if (cart->IsReady() && !Cartridge::IsTypeCompatible(cart->GetType(),
+                cart->GetROMSize(), &incompatibility))
+            mapper["warning"] = incompatibility ? incompatibility : "Incompatible ROM size";
+        // Standard Coleco fallback is expected for small unidentified images.
+        if (cart->IsReady() && !manual && !cart->IsTypeIdentified()
+            && motherboard != MachineType::Coleco && motherboard != MachineType::MSX && motherboard != MachineType::SordM5)
+            mapper["warning"] = "No signature or CRC recognised this image: the mapper is the machine's default. A converted or flat-64K image needs Emulator > Mapper > Manual with its type (persisted per machine family in machines/*.ini).";
+    }
     return {
-        {"__mcp_image", true},
-        {"data", base64},
-        {"mimeType", "image/png"},
-        {"width", side},
-        {"height", side},
-        {"sprite_index", index},
-        {"source", "live"},
-        {"pattern", name},
-        {"colour", colourIndex},
-        // Deliberately not applied and deliberately said: the TMS9918 has no
-        // flip bit. Bit 7 of the colour byte is early clock. Flipping out of
-        // habit from other hardware produces a wrong picture.
-        {"note", "No flip is applied: the TMS9918 has none. Colour 0 pixels "
-                 "are transparent, not black."}
+        {"configuration", {{"format_version", 3},
+                           {"root", config_root_path ? config_root_path : ""},
+                           {"writable", config_storage_writable()},
+                           {"error", config_get_storage_error()},
+                           {"failure", configResult.success ? json(nullptr) : json{
+                               {"file", configResult.file}, {"operation", configResult.operation},
+                               {"reason", configResult.error}, {"retry_allowed", configResult.retry_allowed}}},
+                           {"notice", config_get_storage_notice()}}},
+        {"requested", {{"model_id", config_emulator.machine},
+                       {"video_option", config_selected_video_option().empty() ? "default" : config_selected_video_option()},
+                       {"m5_em5", config_emulator.m5_em5_installed},
+                       {"mapper_mode", config_emulator.mapper_mode == 1 ? "manual" : "auto"},
+                       {"mapper_type_id", config_emulator.mapper_type}}},
+        {"model", GetSystemModelName(model)},
+        {"model_id", static_cast<int>(model)},
+        {"board", std::move(board)},
+        {"video", std::move(video)},
+        {"clocks", std::move(clocks)},
+        {"mapper", std::move(mapper)},
+        {"rom_ready", m_core->GetCartridge()->IsReady()},
+        {"machine_ready", m_core->IsMachineReady()},
+        {"machine_generation", emu_get_machine_generation()},
+        {"note", "Board facts are fixed by the machine model: the M1 wait circuit and the pin the VDP interrupt reaches (INT on Sega boards and MSX, NMI on the ColecoVision) are wired on the motherboard, not chosen."}
     };
 }
-json DebugAdapter::GetMediaInfo(){Cartridge* c=m_core->GetCartridge();json result={{"rom",c->GetFilePath()},{"rom_ready",c->IsReady()},{"sf7000_enabled",m_core->GetMemory()->IsSF7000Enabled()}};
+json DebugAdapter::GetMediaInfo(){Cartridge* c=m_core->GetCartridge();json result={{"rom",c->GetFilePath()},{"rom_ready",c->IsReady()},{"sf7000_enabled",m_core->GetMemory()->IsSF7000Enabled()},{"machine_ready",m_core->IsMachineReady()},{"firmware_path",m_core->GetMemory()->GetBiosFilePath()},{"firmware_crc32",m_core->GetMemory()->GetBiosCRC()}};
+if(m_core->GetMemory()->GetBiosSize()) result["firmware"]=GetFirmwareStatus();
 #if GEARSF7000_ENABLE_SR1000
-SR1000* t=m_core->GetCassette();result["cassette_loaded"]=t->IsLoaded();result["cassette_playing"]=t->IsPlaying();result["cassette_motor"]=t->IsMotorOn();result["cassette_motor_requested"]=t->IsMotorRequested();result["cassette_position_percent"]=t->GetPositionPercentage();result["cassette_counter"]=t->GetCounter();result["cassette_counter_max"]=t->GetCounterMax();result["cassette_speed_target_percent"]=t->GetTapeSpeedPercent();result["cassette_speed_effective_percent"]=t->GetEffectiveTapeSpeedPercent();result["cassette_info"]=t->GetInfo();
+result["cassette_available"]=m_core->HasCassetteInterface();
+if(m_core->HasCassetteInterface()) {
+ITapeRecorder* t=m_core->GetCassette();result["cassette_loaded"]=t->IsLoaded();result["cassette_playing"]=t->IsPlaying();result["cassette_motor"]=t->IsMotorOn();result["cassette_motor_requested"]=t->IsMotorRequested();result["cassette_position_percent"]=t->GetPositionPercentage();result["cassette_counter"]=t->GetCounter();result["cassette_counter_max"]=t->GetCounterMax();result["cassette_speed_target_percent"]=t->GetTapeSpeedPercent();result["cassette_speed_effective_percent"]=t->GetEffectiveTapeSpeedPercent();result["cassette_info"]=t->GetInfo();
+}
 #endif
 return result;}
 json DebugAdapter::ListRecentRoms(){json roms=json::array();for(int i=0;i<config_max_recent_roms;i++)if(!config_emulator.recent_roms[i].empty())roms.push_back({{"index",i},{"file_path",config_emulator.recent_roms[i]}});return {{"roms",roms}};}
-json DebugAdapter::ListRecentTapes(){json tapes=json::array();for(int i=0;i<config_max_recent_cassettes;i++)if(!config_emulator.recent_cassettes[i].empty())tapes.push_back({{"index",i},{"file_path",config_emulator.recent_cassettes[i]}});return {{"tapes",tapes}};}
+json DebugAdapter::ListRecentTapes()
+{
+    const bool msx = m_core->GetMachineType() == MachineType::MSX;
+    const auto& config = msx ? config_emulator.msx_tape : config_emulator.sr1000_tape;
+    json tapes = json::array();
+    for (int i = 0; i < config_max_recent_cassettes; ++i)
+        if (!config.recent[i].empty())
+            tapes.push_back({{"index", i}, {"file_path", config.recent[i]}});
+    return {{"tapes", tapes}, {"recorder", msx ? "MSX Tape" : "SR-1000"}};
+}
 json DebugAdapter::ListRecentDisks(){json disks=json::array();for(int i=0;i<config_max_recent_discs;i++)if(!config_emulator.recent_discs[i].empty())disks.push_back({{"index",i},{"file_path",config_emulator.recent_discs[i]}});return {{"disks",disks}};}
 json DebugAdapter::LoadRom(const std::string& file_path){const std::filesystem::path romPath(file_path);if(file_path.empty()||!romPath.is_absolute())return {{"error","file_path must be an absolute local path"}};std::error_code pathError;if(!std::filesystem::is_regular_file(romPath,pathError))return {{"error","ROM path does not identify a readable local file"},{"file_path",file_path}};const bool loaded=application_load_rom(file_path.c_str());if(!loaded)return {{"error","Unable to load ROM; current ROM was left unchanged"},{"file_path",file_path}};std::filesystem::path symbolPath=romPath;symbolPath.replace_extension(".sym");json result={{"success",true},{"file_path",file_path},{"symbol_path",symbolPath.string()},{"symbol_file_present",std::filesystem::is_regular_file(symbolPath,pathError)},{"paused",m_core->IsPaused()}};
     // Loading a cartridge throws things away. Saying so beats letting a client
@@ -1815,23 +3240,23 @@ json DebugAdapter::SetStartPaused(bool paused)
         {"note", "Applies to the next load_rom/start_sf7000, not to what is already running."}
     };
 }
-json DebugAdapter::LoadTape(const std::string& file_path){const std::filesystem::path tapePath(file_path);if(file_path.empty()||!tapePath.is_absolute())return {{"error","file_path must be an absolute local path"}};std::error_code pathError;if(!std::filesystem::is_regular_file(tapePath,pathError))return {{"error","Tape path does not identify a readable local file"},{"file_path",file_path}};if(!application_load_tape(file_path.c_str()))return {{"error","Unable to load tape; current tape was left unchanged"},{"file_path",file_path}};return {{"success",true},{"file_path",file_path},{"write_protected",config_emulator.cassette_write_protected}};}
-json DebugAdapter::SetTapeSpeed(float percent){
+json DebugAdapter::LoadTape(const std::string& file_path){if(!m_core->HasCassetteInterface())return unavailableOnMachine("Cassette interface");const std::filesystem::path tapePath(file_path);if(file_path.empty()||!tapePath.is_absolute())return {{"error","file_path must be an absolute local path"}};std::error_code pathError;if(!std::filesystem::is_regular_file(tapePath,pathError))return {{"error","Tape path does not identify a readable local file"},{"file_path",file_path}};if(!application_load_tape(file_path.c_str()))return {{"error","Unable to load tape; current tape was left unchanged"},{"file_path",file_path}};return {{"success",true},{"file_path",file_path},{"write_protected",true}};}
+json DebugAdapter::SetTapeSpeed(float percent){if(!m_core->HasCassetteInterface())return unavailableOnMachine("Cassette interface");
 #if GEARSF7000_ENABLE_SR1000
 if(percent<-20.0f||percent>20.0f)return {{"error","speed must be between -20.0 and +20.0"}};m_core->GetCassette()->SetTapeSpeedPercent(percent);return {{"success",true},{"cassette_speed_target_percent",percent}};
 #else
 (void)percent;return unavailable("SR-1000");
 #endif
 }
-json DebugAdapter::TapePlay(){
+json DebugAdapter::TapePlay(){if(!m_core->HasCassetteInterface())return unavailableOnMachine("Cassette interface");
 #if GEARSF7000_ENABLE_SR1000
-SR1000* t=m_core->GetCassette();if(!t->IsLoaded())return {{"error","No tape loaded"}};emu_cassette_play();return {{"success",true},{"playing",true}};
+ITapeRecorder* t=m_core->GetCassette();if(!t->IsLoaded())return {{"error","No tape loaded"}};emu_cassette_play();return {{"success",true},{"playing",true}};
 #else
 return unavailable("SR-1000");
 #endif
 }
-json DebugAdapter::TapeStop(){emu_cassette_stop();return {{"success",true},{"playing",false}};}
-json DebugAdapter::TapeRewind(){emu_cassette_rewind();return {{"success",true},{"position_percent",0.0}};}
+json DebugAdapter::TapeStop(){if(!m_core->HasCassetteInterface())return unavailableOnMachine("Cassette interface");emu_cassette_stop();return {{"success",true},{"playing",false}};}
+json DebugAdapter::TapeRewind(){if(!m_core->HasCassetteInterface())return unavailableOnMachine("Cassette interface");emu_cassette_rewind();return {{"success",true},{"position_percent",0.0}};}
 json DebugAdapter::MountDisk(const std::string& file_path,bool write_protected){const std::filesystem::path diskPath(file_path);if(file_path.empty()||!diskPath.is_absolute())return {{"error","file_path must be an absolute local path"}};std::error_code pathError;if(!std::filesystem::is_regular_file(diskPath,pathError))return {{"error","Disk path does not identify a readable local file"},{"file_path",file_path}};if(!application_mount_disk(file_path.c_str(),write_protected))return {{"error","Unable to mount disk; current disk was left unchanged"},{"file_path",file_path}};return {{"success",true},{"file_path",file_path},{"write_protected",config_emulator.disc_write_protected},{"sf7000_started",false}};}
 json DebugAdapter::StartSF7000(){if(!application_start_sf7000())return {{"error","Unable to start SF-7000. Configure a valid 8 KB IPL path in SF-7000 > IPL first."},{"ipl_path",config_emulator.bios_path}};return {{"success",true},{"ipl_path",config_emulator.bios_path},{"ipl_loaded",emu_is_bios_loaded()},{"paused",m_core->IsPaused()}};}
 json DebugAdapter::ListSaveStateSlots(){return {{"slots",json::array({0,1,2,3,4,5,6,7,8,9})}};} json DebugAdapter::SelectSaveStateSlot(int){return unavailable("Selected save-state slot");} 
@@ -1880,9 +3305,7 @@ json DebugAdapter::SaveStateFile(const std::string& p)
                    {"bytes_written", bytesWritten},
                    {"format_version",
                     GearSF7000Core::GetSaveStateFormatVersion()}};
-    if (Video* video = m_core->GetVideo())
-        result["frame_serial"] =
-            video->GetFrameRenderDiagnostics().frameSerial;
+    result["frame_serial"] = m_core->GetVideoFrameSerial();
     return result;
 }
 
@@ -1901,9 +3324,7 @@ json DebugAdapter::LoadStateFile(const std::string& p)
     emu_pause();
 
     json result = {{"success", true}, {"file_path", p}, {"paused", true}};
-    if (Video* video = m_core->GetVideo())
-        result["frame_serial"] =
-            video->GetFrameRenderDiagnostics().frameSerial;
+    result["frame_serial"] = m_core->GetVideoFrameSerial();
 
     // A state from outside the recorder describes a different line of play,
     // so the recording that was running has been abandoned. Say so rather
@@ -2084,7 +3505,7 @@ json DebugAdapter::GetSyncSettings()
         {"machine_effective_fps", effective},
         {"clock_scale", m_core->GetClockScale()},
         {"cpu_clock_hz", rates.cpuHz},
-        {"vdp_clock_hz", rates.vdpMasterHz},
+        {"vdp_clock_hz", rates.videoDeviceHz},
         {"fdc_clock_hz", rates.fdcHz}
     };
 
@@ -2211,9 +3632,7 @@ json DebugAdapter::GetRewindPosition()
     snprintf(pc, sizeof(pc), "%04X", cpu.pc);
     result["pc"] = pc;
 
-    if (Video* video = m_core->GetVideo())
-        result["frame_serial"] =
-            video->GetFrameRenderDiagnostics().frameSerial;
+    result["frame_serial"] = m_core->GetVideoFrameSerial();
 
     return result;
 }
@@ -2340,6 +3759,10 @@ json DebugAdapter::AnalyzeRewindRange(const json& query)
 
         json sample = {{"position", position}, {"age", age},
                        {"frame_serial", frameSerial}};
+        if (query.value("msx", m_core->GetMachineType() == MachineType::MSX))
+            sample["msx"] = GetMSXStatus();
+        if (query.value("m5", m_core->GetMachineType() == MachineType::SordM5))
+            sample["m5"] = GetM5Status();
         if (includeCpu)
         {
             const CpuStateSnapshot cpu = m_core->GetCpuStateAccess()->GetCpuStateSnapshot();
@@ -2351,18 +3774,27 @@ json DebugAdapter::AnalyzeRewindRange(const json& query)
         }
         if (includeVdp)
         {
-            Video* video = m_core->GetVideo();
-            json registers = json::array();
-            for (int i = 0; i < 8; ++i) registers.push_back(video->GetRegisters()[i]);
-            const Video::FrameRenderDiagnostics d = video->GetFrameRenderDiagnostics();
-            sample["vdp"] = {{"registers", registers},
-                             {"status", video->GetStatusReg()},
-                             {"legacy_frame_hash", d.legacyFrameHash},
-                             {"background_hash", d.streamingBackgroundHash},
-                             {"sprite_hash", d.streamingSpriteHash},
-                             {"overflow_line", d.streamingOverflowLine},
-                             {"overflow_sprite", d.streamingOverflowSprite},
-                             {"collision_line", d.streamingCollisionLine}};
+            const json registerSnapshot = GetVDPRegisters();
+            json vdp = {
+                {"registers", registerSnapshot.value("registers", json::array())},
+                {"register_banks", registerSnapshot.value("banks", json::array())},
+                {"status", GetVDPStatus()}
+            };
+            ITMS99xxDebugProvider* video = GetTmsDebug(m_core);
+            if (video)
+            {
+                const ITMS99xxDebugProvider::FrameRenderDiagnostics d =
+                    video->GetFrameRenderDiagnostics();
+                vdp["renderer_diagnostics"] = {
+                    {"legacy_frame_hash", d.legacyFrameHash},
+                    {"background_hash", d.streamingBackgroundHash},
+                    {"sprite_hash", d.streamingSpriteHash},
+                    {"overflow_line", d.streamingOverflowLine},
+                    {"overflow_sprite", d.streamingOverflowSprite},
+                    {"collision_line", d.streamingCollisionLine}
+                };
+            }
+            sample["vdp"] = std::move(vdp);
         }
 
         json memory = json::array();
@@ -2556,9 +3988,7 @@ json DebugAdapter::RewindSeek(int snapshot)
 
     // The machine's own frame count since it was switched on, which is the
     // number that means the same thing across a whole session.
-    if (Video* video = m_core->GetVideo())
-        result["frame_serial"] =
-            video->GetFrameRenderDiagnostics().frameSerial;
+    result["frame_serial"] = m_core->GetVideoFrameSerial();
 
     // Kept so an existing client that reads "snapshot" does not break.
     result["snapshot"] = snapshot;
@@ -2578,7 +4008,7 @@ json DebugAdapter::RewindSeek(int snapshot)
     return result;
 }
 
-json DebugAdapter::TriggerNMI(){emu_pause_key_pressed();return {{"success",true},{"signal","nmi"},{"source","SC-3000 reset line / F1"}};} json DebugAdapter::KeyboardText(const std::string& text){std::string error;if(!emu_keyboard_text(text.c_str(),"MCP",&error))return {{"error",error.empty()?"Unable to queue SC-3000 keyboard text":error}};return {{"success",true},{"characters",text.size()},{"timing","initial idle, three matrix polls pressed, two released"}};} json DebugAdapter::CancelKeyboardText(){emu_keyboard_clear_text();return {{"success",true}};}
+json DebugAdapter::TriggerNMI(){if(m_core->GetMachineType() == MachineType::MSX || m_core->GetMachineType() == MachineType::SordM5)return unavailableOnMachine("NMI button on this machine");emu_pause_key_pressed();return {{"success",true},{"signal","nmi"},{"source","SC-3000 reset line / F1"}};} json DebugAdapter::KeyboardText(const std::string& text){std::string error;if(!emu_keyboard_text(text.c_str(),"MCP",&error))return {{"error",error.empty()?"Unable to queue SC-3000 keyboard text":error}};return {{"success",true},{"characters",text.size()},{"timing","initial idle, three matrix polls pressed, two released"}};} json DebugAdapter::CancelKeyboardText(){emu_keyboard_clear_text();return {{"success",true}};}
 json DebugAdapter::BasicTyperSetText(const std::string& text, bool send)
 {
     gui_debug_basic_typer_set_text(text.c_str());
@@ -2610,6 +4040,7 @@ json DebugAdapter::BasicTyperStatus()
 
 json DebugAdapter::LoadBasicProgram(const std::string& file_path, int pointer_block)
 {
+    if (m_core->GetMachineType() == MachineType::MSX || m_core->GetMachineType() == MachineType::SordM5) return unavailableOnMachine("BASIC import/export on this machine");
     const std::filesystem::path path(file_path);
     if (file_path.empty() || !path.is_absolute())
         return {{"error","file_path must be an absolute path"}};
@@ -2628,6 +4059,7 @@ json DebugAdapter::LoadBasicProgram(const std::string& file_path, int pointer_bl
 
 json DebugAdapter::SaveBasicProgram(const std::string& file_path, int pointer_block)
 {
+    if (m_core->GetMachineType() == MachineType::MSX || m_core->GetMachineType() == MachineType::SordM5) return unavailableOnMachine("BASIC import/export on this machine");
     const std::filesystem::path path(file_path);
     if (file_path.empty() || !path.is_absolute())
         return {{"error","file_path must be an absolute path"}};
@@ -2645,6 +4077,7 @@ json DebugAdapter::SaveBasicProgram(const std::string& file_path, int pointer_bl
 
 json DebugAdapter::FindBasicBlocks()
 {
+    if (m_core->GetMachineType() == MachineType::MSX || m_core->GetMachineType() == MachineType::SordM5) return unavailableOnMachine("BASIC import/export on this machine");
     u16 blocks[16];
     const int count = emu_find_basic_blocks(blocks, 16);
 
@@ -2671,6 +4104,54 @@ json DebugAdapter::KeyboardKey(const std::string& key, const std::string& action
 
     return {{"success", true}, {"key", key}, {"action", wantedAction}};
 }
+namespace
+{
+// A Mega Drive pad button by its MCP name, or 0 (no GC_Keys value is 0).
+GC_Keys MegaDriveButtonKey(const std::string& name)
+{
+    static const struct { const char* name; GC_Keys key; } kButtons[] = {
+        {"a", Key_MD_A}, {"b", Key_Left_Button}, {"c", Key_Right_Button},
+        {"start", Key_MD_Start}, {"x", Key_MD_X}, {"y", Key_MD_Y},
+        {"z", Key_MD_Z}, {"mode", Key_MD_Mode}};
+    for (const auto& entry : kButtons)
+        if (name == entry.name)
+            return entry.key;
+    return static_cast<GC_Keys>(0);
+}
+
+const char* ControllerDeviceId(SystemControllerDevice device)
+{
+    switch (device)
+    {
+    case SystemControllerDevice::MegaDrive3: return "md3";
+    case SystemControllerDevice::MegaDrive6: return "md6";
+    case SystemControllerDevice::SmsPad: break;
+    }
+    return "sms_pad";
+}
+}
+
+json DebugAdapter::SetControllerDevice(int player, const std::string& device)
+{
+    if (player != 1 && player != 2)
+        return {{"error", "player must be 1 or 2"}, {"player", player}};
+    if (m_core->GetMachineType() != MachineType::SMS)
+        return {{"error", "Only the Master System and the Mark III drive TH, which a Mega Drive pad needs; this board keeps its own joysticks."}};
+    const std::string wanted = LowerAscii(device);
+    int type = -1;
+    for (int d = 0; d <= static_cast<int>(SystemControllerDevice::MegaDrive6); ++d)
+        if (wanted == ControllerDeviceId(static_cast<SystemControllerDevice>(d)))
+            type = d;
+    if (type < 0)
+        return {{"error", "device must be \"sms_pad\", \"md3\" or \"md6\""}, {"device", device}};
+    if (!emu_set_controller_device(player - 1, type))
+        return {{"error", "the controller device could not be set"}};
+    const auto d = static_cast<SystemControllerDevice>(type);
+    return {{"success", true}, {"player", player}, {"device", ControllerDeviceId(d)},
+            {"name", GetControllerDeviceName(d)},
+            {"debug_device", player == 1 ? "event.sms.pad1" : "event.sms.pad2"}};
+}
+
 json DebugAdapter::ControllerButton(int player, const std::string& button, const std::string& action)
 {
     // The SC-3000 reads either the keyboard matrix or the joystick depending on
@@ -2680,6 +4161,14 @@ json DebugAdapter::ControllerButton(int player, const std::string& button, const
         return {{"error", "player must be 1 or 2"}, {"player", player}};
 
     const std::string wanted = LowerAscii(button);
+    if (m_core->GetMachineType() == MachineType::GameGear && player != 1)
+        return {{"error", "Game Gear has one built-in controller"}};
+    if (m_core->GetMachineType() == MachineType::SordM5 &&
+        wanted != "up" && wanted != "down" && wanted != "left" && wanted != "right" &&
+        wanted != "left_button" && wanted != "fire1" && wanted != "yellow" &&
+        wanted != "button1" && wanted != "fire" && wanted != "right_button" &&
+        wanted != "fire2" && wanted != "red" && wanted != "button2")
+        return {{"error", "Sord M5 supports directions and two Fire buttons"}};
     GC_Keys key;
     if      (wanted == "up")    key = Key_Up;
     else if (wanted == "down")  key = Key_Down;
@@ -2691,20 +4180,44 @@ json DebugAdapter::ControllerButton(int player, const std::string& button, const
     else if (wanted == "right_button" || wanted == "fire2" || wanted == "red"
              || wanted == "button2")
         key = Key_Right_Button;
-    // The ColecoVision keypad names this inherited from GearSF7000 - digits,
-    // asterisk, hash, blue, purple - were accepted here and forwarded to
-    // SK1100::JoystickPressed, whose switch has no case for any of them: they
-    // did nothing at all, silently, and reported success while doing it. The
-    // SC-3000 joystick has four directions and two buttons; there is no
-    // keypad to wire them to. Refused by name so a caller is told rather than
-    // left to wonder why a press had no effect.
-    else if (wanted == "blue" || wanted == "purple" || wanted == "asterisk" ||
-             wanted == "*" || wanted == "hash" || wanted == "#" ||
-             (wanted.size() == 1 && wanted[0] >= '0' && wanted[0] <= '9'))
-        return {{"error", "The SC-3000 joystick has no keypad: only up, down, left, right and the two fire buttons exist. This name comes from the ColecoVision controller and was silently doing nothing."},
-                {"button", button}};
+    else if (wanted == "start" && m_core->GetMachineType() == MachineType::GameGear)
+        key = Key_GG_Start;
+    else if (const GC_Keys mdKey = MegaDriveButtonKey(wanted))
+    {
+        // A Mega Drive pad's buttons exist only on a Master System port that
+        // holds one; b and c are its names for buttons 1 and 2.
+        key = mdKey;
+        const GC_Controllers port = player == 1 ? Controller_1 : Controller_2;
+        if (m_core->GetMachineType() != MachineType::SMS ||
+            m_core->GetControllerDevice(port) == SystemControllerDevice::SmsPad)
+            return {{"error", "a, b, c, start, x, y, z and mode are a Mega Drive pad's buttons, and this port holds none: plug one in with set_controller_device (Master System and Mark III only)."},
+                    {"button", button}};
+    }
     else
-        return {{"error", "unknown button"}, {"button", button}};
+    {
+        // The keypad exists only on a board whose controllers carry one
+        // (ColecoVision). Elsewhere the name is refused rather than silently
+        // forwarded to a joystick that has no case for it, which is what
+        // used to happen.
+        static const struct { const char* name; GC_Keys key; } kKeypad[] = {
+            {"0", Keypad_0}, {"1", Keypad_1}, {"2", Keypad_2}, {"3", Keypad_3},
+            {"4", Keypad_4}, {"5", Keypad_5}, {"6", Keypad_6}, {"7", Keypad_7},
+            {"8", Keypad_8}, {"9", Keypad_9},
+            {"*", Keypad_Asterisk}, {"asterisk", Keypad_Asterisk}, {"star", Keypad_Asterisk},
+            {"#", Keypad_Hash}, {"hash", Keypad_Hash}, {"pound", Keypad_Hash}};
+        std::string name = wanted;
+        if (name.compare(0, 7, "keypad_") == 0)
+            name = name.substr(7);
+        bool keypad = false;
+        for (const auto& entry : kKeypad)
+            if (name == entry.name) { key = entry.key; keypad = true; }
+        if (!keypad)
+            return {{"error", "unknown button"}, {"button", button}};
+        const ISystemBus* bus = m_core->GetSystemBus();
+        if (!bus || !bus->DescribeInput().joypadKeypad)
+            return {{"error", "This board's controllers have no keypad: only up, down, left, right and the two fire buttons exist. The keypad is a ColecoVision controller feature; see get_system_info."},
+                    {"button", button}};
+    }
 
     const GC_Controllers controller =
         player == 1 ? Controller_1 : Controller_2;
@@ -2730,8 +4243,19 @@ json DebugAdapter::ControllerButton(int player, const std::string& button, const
 
 json DebugAdapter::GetInputState()
 {
+    if (m_core->GetM5Bus()) return GetM5Status()["input"];
+    if (const auto* keyboard = m_core->GetMSXKeyboard()) {
+        json rows = json::array(), keys = json::array();
+        for (unsigned row = 0; row < MSXKeyboard::RowCount; ++row) {
+            const u8 value = keyboard->ReadRow(row); rows.push_back(value);
+            for (unsigned bit = 0; bit < 8; ++bit)
+                if (!(value & (1 << bit))) keys.push_back(MSXKeyboard::KeyLabel(row, bit));
+        }
+        return {{"keyboard", {{"layout", "international"}, {"rows", rows},
+                              {"pressed_keys", keys}, {"active_low", true}}}};
+    }
     // Row 7 of the SK-1100 matrix is where controller_button's writes land -
-    // see SK1100::JoystickPressed. Bits 0-5 are player 1 (up, down, left,
+    // see SegaKeyboard::JoystickPressed. Bits 0-5 are player 1 (up, down, left,
     // right, button1, button2), 6-11 are player 2, active low.
     uint16_t rows[8] = {};
     m_core->GetInputRows(rows);
@@ -2763,10 +4287,42 @@ json DebugAdapter::GetInputState()
     // paths as well as here. Said explicitly rather than reported as pressed
     // or omitted without comment, so a caller does not waste time chasing a
     // press that cannot have had any effect.
-    return {
+    json state = {
         {"player1", player(0)},
         {"player2", player(6)}
     };
+#if GEARSF7000_ENABLE_GAMEGEAR
+    if (m_core->GetMachineType() == MachineType::GameGear)
+    {
+        state.erase("player2");
+        state["player1"]["start"] =
+            static_cast<const SystemBusGG*>(m_core->GetSystemBus())->IsStartPressed();
+    }
+#endif
+    // A Master System port holds a device: which, and a Mega Drive pad's own
+    // buttons and (six buttons) phase.
+    if (m_core->GetMachineType() == MachineType::SMS)
+        for (unsigned p = 0; p < 2; ++p)
+        {
+            const ControllerDevice& pad = m_core->GetMachineIOPorts()->GetControllerDevice(p);
+            json& entry = state[p == 0 ? "player1" : "player2"];
+            entry["device"] = ControllerDeviceId(pad.GetType());
+            if (pad.GetType() == SystemControllerDevice::SmsPad)
+                continue;
+            const u8 b = pad.GetButtons();
+            entry["a"] = (b & ControllerDevice::ButtonA) != 0;
+            entry["start"] = (b & ControllerDevice::ButtonStart) != 0;
+            entry["x"] = (b & ControllerDevice::ButtonX) != 0;
+            entry["y"] = (b & ControllerDevice::ButtonY) != 0;
+            entry["z"] = (b & ControllerDevice::ButtonZ) != 0;
+            entry["mode"] = (b & ControllerDevice::ButtonMode) != 0;
+            if (const auto* six = dynamic_cast<const MegaDrive6Device*>(&pad))
+            {
+                entry["phase"] = six->GetPhase();
+                entry["six_button_mode"] = six->IsSixButtonMode();
+            }
+        }
+    return state;
 }
 
 json DebugAdapter::GetKeyboardMode()
@@ -2916,11 +4472,12 @@ namespace
 // stable "previous capture" baseline the way this needs. One MemEditor per
 // MCP memory area (see DebugAdapter::GetMemoryAreaInfo) instead, indexed
 // the same way.
-constexpr int kSearchAreaCount = 5;
+constexpr int kSearchAreaCount = 11;
 MemEditor g_search_editors[kSearchAreaCount];
 const u8* g_search_last_ptr[kSearchAreaCount] = {};
 u32 g_search_last_size[kSearchAreaCount] = {};
 bool g_search_captured[kSearchAreaCount] = {};
+u64 g_search_generation[kSearchAreaCount] = {};
 
 // Area 0 ("Z80 address space") has no flat backing buffer - ReadMemoryArea
 // synthesizes it byte-by-byte through Memory::Read() to respect bank
@@ -2936,17 +4493,21 @@ void RefreshSearchEditor(GearSF7000Core* core, int area, const MemoryAreaInfo& i
     {
         Memory* mem = core->GetMemory();
         for (u32 i = 0; i < info.size; i++)
-            g_area0_buffer[i] = mem->Read(static_cast<u16>(i));
+            g_area0_buffer[i] = mem->Peek(static_cast<u16>(i));
         data = g_area0_buffer;
     }
 
-    if (data != g_search_last_ptr[area] || info.size != g_search_last_size[area])
+    const u64 generation = emu_get_machine_generation();
+    if (data != g_search_last_ptr[area] || info.size != g_search_last_size[area] ||
+        generation != g_search_generation[area])
     {
         // The underlying buffer moved or resized (ROM (re)loaded, ejected,
         // etc.) - any earlier capture is against memory that may no longer
         // exist. Rebind and drop it rather than compare against stale data.
+        g_search_editors[area].Invalidate();
         g_search_editors[area].Reset(info.name.c_str(), const_cast<u8*>(data),
             static_cast<int>(info.size), 0, 1);
+        g_search_generation[area] = generation;
         g_search_last_ptr[area] = data;
         g_search_last_size[area] = info.size;
         g_search_captured[area] = false;
@@ -3125,7 +4686,7 @@ void remove_trace_rules(DebugEventManager* manager)
         if (is_trace_rule(rule))
             doomed.push_back(rule.id);
     for (u32 id : doomed)
-        manager->RemoveRule(id);
+        manager->QueueRemoveRule(id);
 }
 }
 
@@ -3137,7 +4698,7 @@ json DebugAdapter::SetTraceLog(bool enabled, u32 flags)
 json DebugAdapter::SetTraceLogDetailed(bool enabled, u32 flags,
                                        const json& arguments)
 {
-    DebugEventManager* manager = m_core->GetMemory()->GetDebugEventManager();
+    DebugEventManager* manager = m_core->GetDebugEventManager();
 
     remove_trace_rules(manager);
 
@@ -3199,7 +4760,7 @@ json DebugAdapter::SetTraceLogDetailed(bool enabled, u32 flags,
             rule.actions = DebugEventAction_Log;       // record only
             rule.oneShot = false;
 
-            if (const char* reason = ValidateDebugRule(rule))
+            if (const char* reason = ValidateDebugRule(rule, m_core->GetDebugEventManager()->GetRegistry()))
             {
                 // Said out loud rather than silently skipped: an empty "armed"
                 // list with no explanation is exactly the kind of quiet
@@ -3208,10 +4769,12 @@ json DebugAdapter::SetTraceLogDetailed(bool enabled, u32 flags,
                 continue;
             }
 
-            if (manager->AddRule(rule) != 0)
+            if (manager->QueueAddRule(rule) != 0)
                 armed.push_back(kind.key);
         }
     }
+
+    m_core->ApplyPendingDebugEventCommands();
 
     return {
         {"success", true},
@@ -3228,7 +4791,7 @@ json DebugAdapter::SetTraceLogDetailed(bool enabled, u32 flags,
 
 json DebugAdapter::GetTraceLog(int start, int count)
 {
-    DebugEventManager* manager = m_core->GetMemory()->GetDebugEventManager();
+    DebugEventManager* manager = m_core->GetDebugEventManager();
 
     // GetDebugEvents already builds the entries and wraps them; the window
     // and the ring's own numbers are what this adds.

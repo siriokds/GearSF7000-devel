@@ -1,8 +1,12 @@
 /*
  * GearSF7000 - frame recorder
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include "rewind.h"
@@ -20,13 +24,12 @@
 #include "config.h"
 #include "DiagnosticLog.h"
 #include "gearsf7000.h"
-#include "Video.h"
-#include "TMS9918RasterTiming.h"
 #include "Memory.h"
 #include "miniz/miniz.h"
 
 namespace
 {
+bool recording_gap = false;
 
 // One group is about a second of play. Small enough that eviction granularity
 // is not noticeable, large enough that the keyframes it forces are a small
@@ -66,6 +69,8 @@ struct Recorder
     // this, so it has to be exactly what the previous push serialized.
     std::vector<std::uint8_t> previous_raw;
     std::size_t raw_size = 0;
+    std::uint64_t video_device_generation = 0;
+    std::string video_device_key;
 
     // The recorder turned vertical sync off. Reported so it is never a
     // surprise; not undone on stop.
@@ -188,13 +193,30 @@ bool Inflate(const std::vector<std::uint8_t>& in, std::size_t expected,
 void DescribeSections(const std::vector<std::uint8_t>& raw)
 {
     g.sections.clear();
-    // magic(4) version(2) media(1) region(1) type(4) mapper(4) crc(4) serial(8)
+    // v1: magic(4) version(2) media(1) region(1) type(4) mapper(4) crc(4)
+    //     serial(8)
+    // v2 adds string(device key) and u16(device state version).
+    if (raw.size() < 28)
+        return;
+    const std::uint16_t format = std::uint16_t(raw[4]) |
+        (std::uint16_t(raw[5]) << 8);
     std::size_t p = 28;
     auto u32 = [&](std::size_t at) -> std::uint32_t {
         return std::uint32_t(raw[at]) | (std::uint32_t(raw[at + 1]) << 8) |
                (std::uint32_t(raw[at + 2]) << 16) |
                (std::uint32_t(raw[at + 3]) << 24);
     };
+
+    if (format >= 2)
+    {
+        if (p + 4 > raw.size())
+            return;
+        const std::uint32_t keyLength = u32(p);
+        p += 4;
+        if (keyLength > raw.size() - p || raw.size() - p - keyLength < 2)
+            return;
+        p += keyLength + 2;
+    }
 
     while (p + 10 <= raw.size())
     {
@@ -299,6 +321,7 @@ void rewind_destroy(void)
 
 void rewind_reset(void)
 {
+    recording_gap = false;
     // Swapped against empty containers rather than cleared: clear() keeps a
     // deque's block list and a vector's buffer, so switching the recorder off
     // would leave its memory allocated. Turning it off has to give the memory
@@ -311,6 +334,8 @@ void rewind_reset(void)
     g.frame_accum = 0;
     g.seek_position = -1;
     g.raw_size = 0;
+    g.video_device_generation = 0;
+    g.video_device_key.clear();
     g.dropped = 0;
     g.failures = 0;
     g.groups_dropped_for_memory = 0;
@@ -334,6 +359,16 @@ void rewind_push(void)
 {
     if (!g.enabled || emu_is_empty())
         return;
+
+    if (!emu_get_core()->GetDebugEventManager()->IsRuntimeActive())
+    {
+        recording_gap = true;
+        return;
+    }
+    // Keep existing history while suspended, but never splice new captures
+    // onto a timeline with an unrecorded interval. Covers sync MCP steps too.
+    if (recording_gap)
+        rewind_reset();
 
     // A frame has been produced while the cursor was parked in the past, so
     // execution has resumed from an old point and the frames after it belong
@@ -362,6 +397,19 @@ void rewind_push(void)
     const std::string text = stream.str();
     const std::uint8_t* raw = reinterpret_cast<const std::uint8_t*>(text.data());
     const std::size_t rawSize = text.size();
+
+    const VideoDeviceHandle video = emu_get_core()->AcquireVideoDevice();
+    const bool videoChanged = g.video_device_generation != 0 &&
+        (video.generation != g.video_device_generation ||
+         video.type_key != g.video_device_key);
+    if (videoChanged)
+        rewind_reset();
+
+    if (g.video_device_generation == 0)
+    {
+        g.video_device_generation = video.generation;
+        g.video_device_key = video.type_key;
+    }
 
     // A change of size means the machine was rewired underneath the ring
     // (different media, different mapper). Start again rather than XOR two
@@ -407,10 +455,7 @@ void rewind_push(void)
     Frame frame;
     frame.stored = std::move(payload);
     frame.keyframe = needKeyframe;
-    frame.frame_serial = emu_get_core()->GetVideo()
-                             ? emu_get_core()->GetVideo()
-                                   ->GetFrameRenderDiagnostics().frameSerial
-                             : 0;
+    frame.frame_serial = emu_get_core()->GetVideoFrameSerial();
 
     g.bytes += frame.stored.size();
     g.groups.back().bytes += frame.stored.size();
@@ -476,6 +521,9 @@ bool rewind_seek(int age)
 
     if (!emu_get_core()->LoadState(raw.data(), raw.size()))
         return false;
+    // The snapshot's own inputs are shown while it is inspected; if the machine
+    // runs on from it, the inputs held now take over first.
+    emu_mark_host_input_stale();
 
     emu_render_current_frame();
 
@@ -691,8 +739,8 @@ RewindStatus rewind_get_status(void)
     s.available = true;
     s.media_mode = core->GetMemory()->IsSF7000Enabled() ? "sf7000"
                                                         : "cartridge_rom";
-    s.region = core->GetVideo() && core->GetVideo()->IsPAL() ? "PAL"
-                                                             : "NTSC";
+    s.region = core->GetVideoFrameDescriptor().region == Region_PAL
+        ? "PAL" : "NTSC";
 
     const double fps = FramesPerSecond();
     const int exposed = ExposedCount();

@@ -82,16 +82,31 @@ endif
 ENABLE_AY ?= 1
 CPPFLAGS += -DGEARSF7000_ENABLE_AY=$(ENABLE_AY)
 
-# SF-7000 floppy drive, SR-1000 cassette recorder, SP-400 printer - each
-# independently optional, same reasoning and mechanism as ENABLE_AY above.
+ENABLE_YM2413 ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_YM2413=$(ENABLE_YM2413)
+
+# SF-7000 floppy drive and SR-1000 cassette recorder are independently
+# optional, with the same reasoning and mechanism as ENABLE_AY above.
 # Matched against Makefile.sources, which excludes each cluster's source
 # files from the build entirely when its flag is 0.
 ENABLE_SF7000 ?= 1
 CPPFLAGS += -DGEARSF7000_ENABLE_SF7000=$(ENABLE_SF7000)
 ENABLE_SR1000 ?= 1
 CPPFLAGS += -DGEARSF7000_ENABLE_SR1000=$(ENABLE_SR1000)
-ENABLE_SP400 ?= 1
-CPPFLAGS += -DGEARSF7000_ENABLE_SP400=$(ENABLE_SP400)
+ENABLE_PICO9918 ?= 1
+CPPFLAGS += -DGEARSF7000_ENABLE_PICO9918=$(ENABLE_PICO9918)
+CPPFLAGS += -DGEARSF7000_ENABLE_SMS=$(ENABLE_SMS) -DGEARSF7000_ENABLE_GAMEGEAR=$(ENABLE_GAMEGEAR)
+USE_PICOSMSVDP_CORE ?= 1
+PICOSMSVDP_CORE_PATH ?= $(abspath ../../../picoSMSvdp-core)
+CPPFLAGS += -DGEARSF7000_USE_PICOSMSVDP_CORE=$(USE_PICOSMSVDP_CORE)
+ifeq ($(USE_PICOSMSVDP_CORE),1)
+PICOSMSVDP_BUILD_DIR := $(abspath build/picosmsvdp-core)
+PICOSMSVDP_LIBRARY := $(PICOSMSVDP_BUILD_DIR)/src/libpico9918_core.a
+PICOSMSVDP_CPPFLAGS := -I$(PICOSMSVDP_CORE_PATH)/src \
+    -I$(PICOSMSVDP_BUILD_DIR)/src -DPICO9918_SMS=1 \
+    -DPICO9918_F18A=0 -DPICO9918_TEXT80=0 -DPICO9918_GPU=0
+LDFLAGS += $(PICOSMSVDP_LIBRARY)
+endif
 
 # Audio backend. SDL3 Audio tested clean on macOS (tape speaker included, the
 # thing CoreAudio was originally added to fix) - default it on every desktop
@@ -124,7 +139,7 @@ endif
 # there; BUILD_PROFILE separates the full and cartridge-computer products and
 # BUILD_CONFIG separates compiler Debug/Release output.
 BUILD_PROFILE ?= full
-BUILD_SIGNATURE = CXX=$(CXX);CC=$(CC);DEBUG=$(DEBUG);SANITIZE=$(SANITIZE);AUDIO_SAMPLE_RATE=$(AUDIO_SAMPLE_RATE);PRODUCT_SC3000=$(PRODUCT_SC3000);ENABLE_DEBUG_TOOLS=$(ENABLE_DEBUG_TOOLS);ENABLE_RECORDER=$(ENABLE_RECORDER);ENABLE_MCP=$(ENABLE_MCP);ENABLE_SPRITE_EXPANDER=$(ENABLE_SPRITE_EXPANDER);ENABLE_AY=$(ENABLE_AY);ENABLE_SF7000=$(ENABLE_SF7000);ENABLE_SR1000=$(ENABLE_SR1000);ENABLE_SP400=$(ENABLE_SP400);AUDIO_COREAUDIO=$(AUDIO_COREAUDIO);CPU=CLK;SDL=3;RENDERER=SDL_GPU;DEPS=MMD
+BUILD_SIGNATURE = CXX=$(CXX);CC=$(CC);DEBUG=$(DEBUG);SANITIZE=$(SANITIZE);AUDIO_SAMPLE_RATE=$(AUDIO_SAMPLE_RATE);PRODUCT_SC3000=$(PRODUCT_SC3000);ENABLE_DEBUG_TOOLS=$(ENABLE_DEBUG_TOOLS);ENABLE_RECORDER=$(ENABLE_RECORDER);ENABLE_MCP=$(ENABLE_MCP);ENABLE_SPRITE_EXPANDER=$(ENABLE_SPRITE_EXPANDER);ENABLE_AY=$(ENABLE_AY);ENABLE_YM2413=$(ENABLE_YM2413);ENABLE_SF7000=$(ENABLE_SF7000);ENABLE_SR1000=$(ENABLE_SR1000);ENABLE_PICO9918=$(ENABLE_PICO9918);ENABLE_SMS=$(ENABLE_SMS);ENABLE_GAMEGEAR=$(ENABLE_GAMEGEAR);USE_PICOSMSVDP_CORE=$(USE_PICOSMSVDP_CORE);PICOSMSVDP_CORE_PATH=$(PICOSMSVDP_CORE_PATH);AUDIO_COREAUDIO=$(AUDIO_COREAUDIO);CPU=CLK;SDL=3;RENDERER=SDL_GPU;DEPS=MMD
 # POSIX cksum is available on every host served by these Unix Makefiles. The
 # opaque leaf keeps paths short while the adjacent stamp records the complete
 # human-readable signature for diagnosis.
@@ -138,6 +153,9 @@ source_repo_path = $(if $(filter ../../%,$(1)),$(patsubst ../../%,%,$(1)),platfo
 source_object = $(OBJ_DIR)/$(basename $(call source_repo_path,$(1))).o
 OBJECTS := $(foreach source,$(SOURCES_C) $(SOURCES_CXX) $(SOURCES_MM),$(call source_object,$(source)))
 DEPENDENCIES := $(OBJECTS:.o=.d)
+ifeq ($(USE_PICOSMSVDP_CORE),1)
+$(call source_object,$(SRC_DIR)/PicoSMSVdpCoreAdapter.cpp): CPPFLAGS := $(PICOSMSVDP_CPPFLAGS) $(CPPFLAGS)
+endif
 
 SANITIZE ?= 0
 ifeq ($(SANITIZE), 1)
@@ -162,6 +180,11 @@ else ifeq ($(UNAME_S), Darwin)
     CPPFLAGS += `pkg-config --cflags sdl3`
     CPPFLAGS += -I/opt/local/include
     TARGET := $(TARGET_NAME)
+else ifneq (,$(filter MINGW% MSYS%,$(UNAME_S)))
+    PLATFORM = "Windows/MinGW"
+    LDFLAGS += `pkg-config --libs sdl3`
+    CPPFLAGS += `pkg-config --cflags sdl3`
+    TARGET := $(TARGET_NAME).exe
 else
     PLATFORM = "Generic Unix-like/BSD"
     LDFLAGS += `pkg-config --libs sdl3`
@@ -177,6 +200,20 @@ BUILD_CONFIG_FILE := $(OBJ_DIR)/.gearsf7000-build-config
 $(BUILD_CONFIG_FILE):
 	@mkdir -p $(@D)
 	@printf '%s\n' '$(BUILD_SIGNATURE)' > $@
+
+ifeq ($(USE_PICOSMSVDP_CORE),1)
+.PHONY: picosmsvdp_core
+picosmsvdp_core:
+	cmake -S $(PICOSMSVDP_CORE_PATH) -B $(PICOSMSVDP_BUILD_DIR) \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DPICO9918_EMULATOR=ON -DPICO9918_SMS=ON \
+		-DPICO9918_F18A=OFF -DPICO9918_TEXT80=OFF -DPICO9918_GPU=OFF \
+		-DBUILD_SHARED_LIBS=OFF
+	cmake --build $(PICOSMSVDP_BUILD_DIR)
+
+$(OBJECTS): | picosmsvdp_core
+$(TARGET): picosmsvdp_core
+endif
 
 all: header $(TARGET)
 	@echo Build complete for $(PLATFORM) \($(BUILD_CONFIG)\)
@@ -227,3 +264,9 @@ header:
 # Compiler-generated dependency files keep incremental builds ABI-safe when
 # a class layout or an inline implementation changes in a header.
 -include $(DEPENDENCIES)
+
+# The JSON files are the source of truth; embed them once for every frontend.
+VIDEO_CATALOG_HEADER = $(SRC_DIR)/VideoCatalogData.h
+$(VIDEO_CATALOG_HEADER): $(wildcard $(SRC_DIR)/video_*.json) ../../tools/generate_video_catalog.py ../../tools/validate_video_catalog.py
+	python3 ../../tools/generate_video_catalog.py
+$(OBJECTS): | $(VIDEO_CATALOG_HEADER)

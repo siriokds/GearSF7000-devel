@@ -1,6 +1,9 @@
 // Sms_Snd_Emu 0.1.4. http://www.slack.net/~ant/
+// Changes for GearSF7000 Copyright (C) 2024-2026  Saverio Russo, under the
+// same licence as the rest of this file (LGPL-2.1-or-later).
 
 #include "Sms_Apu.h"
+#include "../SN76489DebugEvents.h"
 
 #include "SaveStateStream.h"
 
@@ -379,8 +382,9 @@ void Sms_Apu::reset( unsigned feedback, int noise_width )
 	
 	if ( !feedback || !noise_width )
 	{
-		feedback = 0x0003;
-		noise_width = 15;
+		const NoiseConfiguration configuration = GetNoiseConfiguration();
+		feedback = configuration.whiteNoiseTapMask;
+		noise_width = configuration.lfsrWidth;
 	}
 	// convert to "Galios configuration"
 	looped_feedback = 1 << (noise_width - 1);
@@ -395,6 +399,27 @@ void Sms_Apu::reset( unsigned feedback, int noise_width )
 	squares [1].reset();
 	squares [2].reset();
 	noise.reset();
+	noise.shifter = looped_feedback;
+	noise.feedback = looped_feedback;
+}
+
+Sms_Apu::NoiseConfiguration Sms_Apu::GetNoiseConfiguration() const
+{
+	return variant_ == Variant::SegaIntegrated
+		? NoiseConfiguration{ 16, 0x0009 }
+		: NoiseConfiguration{ 15, 0x0003 };
+}
+
+const char* Sms_Apu::GetVariantName() const
+{
+	return variant_ == Variant::SegaIntegrated
+		? "Sega VDP PSG" : "SN76489AN";
+}
+
+const char* Sms_Apu::GetVariantKey() const
+{
+	return variant_ == Variant::SegaIntegrated
+		? "sega_integrated" : "ti_discrete";
 }
 
 
@@ -608,6 +633,8 @@ void Sms_Apu::end_frame( blip_time_t end_time )
 void Sms_Apu::write_ggstereo( blip_time_t time, int data )
 {
 	require( (unsigned) data <= 0xFF );
+	if ( !ggstereo_enabled )
+		return;
 	
 	ggstereo_save = data;
 
@@ -724,7 +751,7 @@ void Sms_Apu::write_data(blip_time_t time, int data)
 		}
 
 		noise.feedback = (data & 0x04) ? noise_feedback : looped_feedback;
-		noise.shifter = 0x8000;
+		noise.shifter = looped_feedback;
 
 	}
 
@@ -782,7 +809,7 @@ void Sms_Apu::write_data(blip_time_t time, int data)
 
 namespace
 {
-constexpr std::uint16_t kSmsApuStateVersion = 1;
+constexpr std::uint16_t kSmsApuStateVersion = 2;
 
 // noise.period and reg_noise_period are raw pointers into either the static
 // noise_periods table or square 2's period field, so they are stored as a
@@ -827,6 +854,7 @@ void Sms_Apu::SaveState( std::ostream& stream ) const
 	StateWriter w( stream );
 
 	w.U16( kSmsApuStateVersion );
+	w.U8( static_cast<std::uint8_t>( variant_ ) );
 
 	for ( int i = 0; i < osc_count; ++i )
 		w.Bool( chnEnable [i] );
@@ -868,7 +896,13 @@ bool Sms_Apu::LoadState( std::istream& stream )
 {
 	StateReader r( stream );
 
-	if ( r.U16() != kSmsApuStateVersion )
+	const std::uint16_t version = r.U16();
+	if ( version != 1 && version != kSmsApuStateVersion )
+		return false;
+	const Variant savedVariant = version >= 2
+		? static_cast<Variant>( r.U8() ) : Variant::SN76489AN;
+	if ( savedVariant != Variant::SN76489AN &&
+	     savedVariant != Variant::SegaIntegrated )
 		return false;
 
 	bool enable [osc_count];
@@ -929,6 +963,7 @@ bool Sms_Apu::LoadState( std::istream& stream )
 	looped_feedback = loopedFeedback;
 	ggstereo_save = ggStereo;
 	last_write = lastWrite;
+	variant_ = savedVariant;
 
 	const int* const squareTwoPeriod = &squares [2].period;
 	reg_noise_period = regNoiseIndex < 0    ? 0
@@ -939,4 +974,15 @@ bool Sms_Apu::LoadState( std::istream& stream )
 	                                 : &noise_periods [noiseIndex];
 
 	return true;
+}
+
+DebugDeviceDefinition Sms_Apu::DescribeDebugDevice() const
+{
+	DebugDeviceDefinition device = DescribeSn76489DebugEvents();
+	if ( variant_ == Variant::SegaIntegrated )
+	{
+		device.typeKey = "sega.sms_psg";
+		device.name = "Sega VDP PSG";
+	}
+	return device;
 }

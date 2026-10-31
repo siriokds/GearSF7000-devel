@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - CLK Z80 internal state serialization
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GEARSF7000_CLK_Z80_STATE_ACCESS_H
@@ -58,6 +58,9 @@ struct GearSF7000StateAccess
 
     static bool Save(const ProcessorStorage& storage, std::ostream& stream);
     static bool Load(ProcessorStorage& storage, std::istream& stream);
+    // Whole-machine reset: discard sampled/latched interrupts from the old
+    // devices. Deasserting an NMI line alone cannot clear its pending edge.
+    static void ClearMachineInterruptRequests(ProcessorStorage& storage);
 };
 
 }

@@ -1,6 +1,8 @@
 /*
  * GearSC3000 - no-debug desktop compatibility shim
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * The regular desktop shell historically calls a few debugger lifecycle and
  * shortcut hooks unconditionally. A computer-only product has no debugger;
@@ -24,7 +26,6 @@ int gui_debug_load_symbols_file_counted(const char*) { return -1; }
 void gui_debug_toggle_breakpoint() {}
 void gui_debug_reset_breakpoints_cpu() {}
 void gui_debug_reset_breakpoints_mem() {}
-void gui_debug_reset_breakpoints_vram() {}
 void gui_debug_runtocursor() {}
 void gui_debug_go_back() {}
 void gui_debug_copy_memory() {}

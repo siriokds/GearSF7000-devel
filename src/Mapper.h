@@ -1,31 +1,42 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026  Saverio Russo
-
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2024-2026  Saverio Russo
+ *
+ * Derived from Gearcoleco by Ignacio Sanchez. His code is free software: you
+ * can redistribute it and/or modify it under the terms of the GNU General
+ * Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * The changes and additions by Saverio Russo are free software: you can
+ * redistribute them and/or modify them under the terms of the GNU Affero
+ * General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ * Section 13 of both licences permits the combination.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see http://www.gnu.org/licenses/
+ * GNU General Public License and the GNU Affero General Public License
+ * for more details.
  *
+ * You should have received a copy of both licences along with this
+ * program.  If not, see http://www.gnu.org/licenses/
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #ifndef MAPPER_H
 #define MAPPER_H
 
 #include "definitions.h"
+#include "IDebugEventProvider.h"
 #include <iostream>
+#include <utility>
 
 class Cartridge;
 
-class Mapper
+class Mapper : public IDebugEventProvider
 {
 public:
     Mapper(Cartridge* pCartridge) : m_pCartridge(pCartridge) { }
@@ -34,6 +45,7 @@ public:
     virtual void Reset() = 0;
     virtual u8 Read(u16 address) = 0;
     virtual void Write(u16 address, u8 value) = 0;
+    virtual void WriteIO(u8 port, u8 value) { (void)port; (void)value; }
     virtual void SaveState(std::ostream& stream) = 0;
     virtual void LoadState(std::istream& stream) = 0;
 
@@ -49,9 +61,32 @@ public:
     virtual u8 GetRomBank() { return 0; }
     virtual u32 GetRomBankAddress() { return 0; }
     virtual u8 GetBankReg(int) { return 0; }
+    void SetDebugParentKey(const std::string& key) { m_debugParentKey = key; }
+
+protected:
+    DebugDeviceDefinition DescribeBankedMapper(const char* suffix,
+        const char* typeKey, const char* name) const
+    {
+        DebugDeviceDefinition device;
+        device.key = m_debugParentKey + ".mapper." + suffix;
+        device.parentKey = m_debugParentKey;
+        device.typeKey = typeKey;
+        device.name = name;
+        DebugSpaceDefinition state;
+        state.id = DebugCommonSpace::State;
+        state.key = "state";
+        state.name = "Mapper State";
+        state.supportedAccesses = DebugEventAccess_Event;
+        state.beforeValueAccesses = DebugEventAccess_Event;
+        state.afterValueAccesses = DebugEventAccess_Event;
+        state.targets.push_back({0, "ROM Bank", 8});
+        device.spaces.push_back(std::move(state));
+        return device;
+    }
 
 protected:
     Cartridge* m_pCartridge;
+    std::string m_debugParentKey = "event.sc3000.memory";
 };
 
 #endif /* MAPPER_H */

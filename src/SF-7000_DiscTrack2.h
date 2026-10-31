@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025  Saverio Russo
 const int SF7000_Track2_size = 11818;
 
 const unsigned char SF7000_Track2_data[SF7000_Track2_size] = {

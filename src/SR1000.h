@@ -1,58 +1,26 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
 #pragma once
+#include "IDebugEventProvider.h"
+#include "TapeRecorder.h"
 
-#include <string>
-#include "Tape.h"
-#include "TapeMotor.h"
-#include "SegaBasicBitTape.h"
-#include "SegaBasicWavTape.h"
-#include "Audio.h"
-
+class Audio;
 class Memory;
+struct SR1000DebugConfiguration {
+    std::string key;
+    std::string parentKey;
+    std::string name;
+};
 
-class SR1000
+// Sega adapter: source/bit formats, legacy motor policy, monitor and debug route.
+class SR1000 : public TapeRecorder, public IDebugEventProvider
 {
-private:
-	Tape* Cassette;
-	TapeMotor *CassetteMotor;
-
-	int MasterClock;
-	float TapeSpeedPercent;
-	bool MotorRequested;
-
-	Audio* m_pAudio;
-	Memory* m_pDebugMemory;
-
-
 public:
-	void Init();
-	void Reset(int masterClock);
-	void Tick(int cycles);
-
-	bool LoadBitTape(std::string filename);
-	void Eject();
-
-	void Play();
-	void Rec();
-	void Stop();
-	void Rewind();
-
-	uint8_t GetSignal(bool updateSpeaker = true);
-	void SetMotor(bool onoff);
-	bool IsMotorOn();
-	bool IsMotorRequested() const { return MotorRequested; }
-
-	bool IsLoaded();
-	bool IsPlaying();
-
-	float GetPositionPercentage();
-
-	float GetCounter();
-	float GetCounterMax();
-	void SetTapeSpeedPercent(float percent);
-	float GetTapeSpeedPercent() const { return TapeSpeedPercent; }
-	float GetEffectiveTapeSpeedPercent() const;
-	std::string GetInfo();
-
-	SR1000(Audio* pAudio, Memory* pDebugMemory = nullptr);
-	~SR1000();
+    SR1000(Audio* audio, Memory* memory = nullptr);
+    SR1000(Audio* audio, Memory* memory, SR1000DebugConfiguration debug);
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+    bool LoadTape(std::string filename) override;
+    bool LoadBitTape(std::string filename) { return LoadTape(std::move(filename)); }
+private:
+    SR1000DebugConfiguration m_debug;
 };

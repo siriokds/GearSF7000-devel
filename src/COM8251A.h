@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 // ===========================================================================
 // COM8251A.h  —  Intel 8251A USART emulator for SF-7000
 // ===========================================================================
@@ -64,9 +66,21 @@
 #include <thread>
 #include <atomic>
 #include <iosfwd>
+#include <string>
+#include "IDebugEventProvider.h"
 
+class DebugDeviceRegistry;
+class Memory;
 
-class COM8251A
+struct COM8251ADebugConfiguration
+{
+    std::string key;
+    std::string parentKey;
+    std::string name;
+    std::uint16_t ioPortBase = 0xE8;
+};
+
+class COM8251A : public IDebugEventProvider
 {
 public:
     // DSW1 external clock frequencies (Hz) at each jumper position.
@@ -76,6 +90,9 @@ public:
 
     COM8251A();
     ~COM8251A();
+    void ConfigureDebug(COM8251ADebugConfiguration debug);
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+    void BindDebugEvents(const DebugDeviceRegistry& registry, Memory* memory);
 
     // -----------------------------------------------------------------------
     // Init — initialise the chip and set the CPU clock rate.
@@ -178,6 +195,20 @@ public:
     void LoadState(std::istream& stream);
 
 private:
+    enum DebugRegister : uint8_t
+    {
+        DebugData = 0,
+        DebugStatus,
+        DebugControl
+    };
+
+    void PublishRegisterAccess(DebugRegister reg, uint8_t access,
+                               uint8_t beforeValue, bool beforeKnown,
+                               uint8_t afterValue, bool afterKnown);
+
+    COM8251ADebugConfiguration m_debug;
+    Memory* m_debugMemory;
+    DebugDeviceId m_debugDevice;
     // -----------------------------------------------------------------------
     // 8251A init-state machine
     // -----------------------------------------------------------------------

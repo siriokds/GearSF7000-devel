@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 // ===========================================================================
 // COM8251A.cpp  —  Intel 8251A USART emulator for SF-7000
 // ===========================================================================
@@ -32,6 +34,7 @@ using WSADATA = int;
 #endif
 
 #include "COM8251A.h"
+#include "Memory.h"
 
 #include <cstdio>
 #include <cstring>
@@ -40,6 +43,7 @@ using WSADATA = int;
 #include <ostream>
 #include <istream>
 #include <chrono>
+#include <utility>
 
 #ifdef _DEBUG
 #  define DBG(fmt, ...) printf("[COM8251A] " fmt "\n", ##__VA_ARGS__)
@@ -69,7 +73,9 @@ static const uintptr_t INVALID_SOCK = (uintptr_t)INVALID_SOCKET;
 // ===========================================================================
 
 COM8251A::COM8251A()
-    : m_initState(InitState::EXPECT_MODE)
+    : m_debug()
+    , m_debugMemory(nullptr), m_debugDevice(0)
+    , m_initState(InitState::EXPECT_MODE)
     , m_modeWord(0), m_commandWord(0)
     , m_dataBits(8), m_baudFactor(16), m_bitsPerFrame(10)
     , m_parityEnable(false), m_parityEven(false)
@@ -99,6 +105,71 @@ COM8251A::~COM8251A()
 {
     StopBackend();
     WSACleanup();
+}
+
+void COM8251A::ConfigureDebug(COM8251ADebugConfiguration debug)
+{
+    m_debug = std::move(debug);
+}
+
+DebugDeviceDefinition COM8251A::DescribeDebugDevice() const
+{
+    DebugDeviceDefinition device;
+    device.key = m_debug.key;
+    device.parentKey = m_debug.parentKey;
+    device.typeKey = "intel.8251";
+    device.name = m_debug.name.empty() ? "8251 USART" : m_debug.name;
+
+    const u8 readWrite = DebugEventAccess_Read | DebugEventAccess_Write;
+    DebugSpaceDefinition ports;
+    ports.id = DebugCommonSpace::IoPorts;
+    ports.key = "io_ports";
+    ports.name = "I/O Ports";
+    ports.targetMin = m_debug.ioPortBase;
+    ports.targetMax = m_debug.ioPortBase + 1u;
+    ports.supportedAccesses = readWrite;
+    ports.afterValueAccesses = readWrite;
+    ports.capabilities = DebugDescriptorCapability_None;
+    ports.targets.push_back({m_debug.ioPortBase, "Data", 8});
+    ports.targets.push_back({m_debug.ioPortBase + 1u, "Status / Control", 8});
+    device.spaces.push_back(std::move(ports));
+
+    DebugSpaceDefinition registers;
+    registers.id = DebugCommonSpace::Registers;
+    registers.key = "registers";
+    registers.name = "Registers";
+    registers.targetMax = 2;
+    registers.supportedAccesses = readWrite;
+    registers.beforeValueAccesses = readWrite;
+    registers.afterValueAccesses = readWrite;
+    registers.capabilities = DebugDescriptorCapability_EventsPublished |
+                             DebugDescriptorCapability_SnapshotReadable;
+    registers.targets.push_back({0, "Data", 8});
+    registers.targets.push_back({1, "Status", 8});
+    registers.targets.push_back({2, "Mode / Command", 8});
+    device.spaces.push_back(std::move(registers));
+    return device;
+}
+
+void COM8251A::BindDebugEvents(const DebugDeviceRegistry& registry,
+                               Memory* memory)
+{
+    const DebugDeviceDescriptor* device =
+        registry.FindDevice(m_debug.key.c_str());
+    m_debugDevice = device != nullptr ? device->id : 0;
+    m_debugMemory = memory;
+}
+
+void COM8251A::PublishRegisterAccess(
+    DebugRegister reg, uint8_t access,
+    uint8_t beforeValue, bool beforeKnown,
+    uint8_t afterValue, bool afterKnown)
+{
+    if (m_debugMemory == nullptr || m_debugDevice == 0)
+        return;
+    m_debugMemory->CheckDeviceAccess(
+        {m_debugDevice, DebugCommonSpace::Registers, reg}, access,
+        beforeValue, beforeKnown, afterValue, afterKnown);
 }
 
 // ===========================================================================
@@ -194,7 +265,7 @@ void COM8251A::SetSpeed(uint32_t baud)
     }
     m_baudRate = best;
     UpdateTiming();
-    DBG("SetSpeed: requested %u → actual %u baud (%u clocks/frame)", baud, m_baudRate, m_clocksPerFrame);
+    DBG("SetSpeed: requested %u -> actual %u baud (%u clocks/frame)", baud, m_baudRate, m_clocksPerFrame);
 }
 
 // ===========================================================================
@@ -290,13 +361,18 @@ uint8_t COM8251A::ReadData()
 {
     uint8_t val = m_rxData;
     m_rxReady   = false;
+    PublishRegisterAccess(DebugData, DebugEventAccess_Read,
+                          val, true, val, true);
     DBG("RX data: $%02X  ('%c')", val, (val >= 0x20 && val < 0x7F) ? (char)val : '.');
     return val;
 }
 
 uint8_t COM8251A::ReadStatus()
 {
-    return BuildStatus();
+    const uint8_t status = BuildStatus();
+    PublishRegisterAccess(DebugStatus, DebugEventAccess_Read,
+                          status, true, status, true);
+    return status;
 }
 
 void COM8251A::WriteData(uint8_t v)
@@ -306,12 +382,16 @@ void COM8251A::WriteData(uint8_t v)
         return;
     }
 
+    const uint8_t before = m_txShiftByte;
+
     // Load into shift register, start countdown
     m_txShiftByte  = v;
     m_txPending    = true;
     m_txReady      = false;   // data register busy
     m_txEmpty      = false;
     m_txClocksLeft = (int32_t)m_clocksPerFrame;
+    PublishRegisterAccess(DebugData, DebugEventAccess_Write,
+                          before, true, v, true);
 
     DBG("TX start: $%02X  ('%c')  [%u baud, %u clocks]",
         v, (v >= 0x20 && v < 0x7F) ? (char)v : '.', m_baudRate, m_clocksPerFrame);
@@ -319,6 +399,8 @@ void COM8251A::WriteData(uint8_t v)
 
 void COM8251A::WriteControl(uint8_t v)
 {
+    const uint8_t before = m_initState == InitState::EXPECT_MODE
+        ? m_modeWord : m_commandWord;
     if (m_initState == InitState::EXPECT_COMMAND && (v & 0x40)) {
         // IR bit in a command word — internal reset → expect MODE next
         DBG("CMD_RESET (IR bit set)");
@@ -332,6 +414,8 @@ void COM8251A::WriteControl(uint8_t v)
         m_rxPollAccum  = 0;
         m_rxReady      = false;
         m_pe = m_oe = m_fe = false;
+        PublishRegisterAccess(DebugControl, DebugEventAccess_Write,
+                              before, true, v, true);
         return;
     }
 
@@ -341,6 +425,8 @@ void COM8251A::WriteControl(uint8_t v)
     } else {
         ParseCommandWord(v);
     }
+    PublishRegisterAccess(DebugControl, DebugEventAccess_Write,
+                          before, true, v, true);
 }
 
 // ===========================================================================

@@ -1,10 +1,19 @@
+// SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+// Copyright (C) 2021  Ignacio Sanchez
+// Copyright (C) 2026  Saverio Russo
+// Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+// and additions by Saverio Russo are AGPL-3.0-or-later.
 #include "mcp_config.h"
 
 #if GEARSF7000_ENABLE_MCP
 
 #include "mcp_tool_definitions.h"
 
-void AddMcpToolDefinitionsInput(json& tools)
+// Split into several functions because one function with dozens of nested
+// nlohmann::json initializer-lists blows past MSVC's C1060 compiler heap
+// limit (each part below compiles fine on its own).
+
+static void AddMcpToolDefinitionsInput_BasicAndKeyboard(json& tools)
 {
     // Controller input tools
     tools.push_back({
@@ -119,16 +128,15 @@ void AddMcpToolDefinitionsInput(json& tools)
 
     tools.push_back({
         {"name", "keyboard_key"},
-        {"title", "SC-3000 Non-Printable Key"},
-        {"description", "Press/release a single SK-1100 keyboard matrix key that keyboard_text can't type - cursor keys, Ins/Del, Home/Clear, Func - not the joystick port. Send press, let at least one frame pass, then release - like controller_button, this cannot hold a key across the two edges itself."},
+        {"title", "Machine Keyboard Key"},
+        {"description", "Press/release a keyboard matrix key on the active machine. SK-1100 accepts non-printable labels; MSX International also accepts letters, digits, punctuation, Shift, Ctrl, Graph, Code, Caps, F1-F5, Esc, Tab, Stop, Select, Home, Insert and Delete. Send press, let at least one frame pass, then release - like controller_button, this cannot hold a key across the two edges itself."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", false}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
                 {"key", {
                     {"type", "string"},
-                    {"description", "Matrix key label."},
-                    {"enum", json::array({"Up", "Down", "Left", "Right", "Ins/Del", "Home/Clear", "Func"})}
+                    {"description", "Matrix key label for the active machine; MSX labels include A-Z, 0-9, Space, Return, Shift, Ctrl, Graph, Code, Caps, F1-F5, Esc, Tab, Stop, Select, Home, Insert, Delete and Backspace."}
                 }},
                 {"action", {
                     {"type", "string"},
@@ -139,11 +147,24 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"key", "action"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_ControllerAndSprites(json& tools)
+{
+    json controller_buttons = json::array({"up", "down", "left", "right", "left_button", "right_button", "fire1", "fire2", "button1", "button2", "yellow", "red", "fire", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "keypad_0", "keypad_1", "keypad_2", "keypad_3", "keypad_4", "keypad_5", "keypad_6", "keypad_7", "keypad_8", "keypad_9", "keypad_asterisk", "keypad_hash"});
+    std::string controller_button_description = "Press/release one controller input for players 1-2: four directions and two fire buttons on every board; on the ColecoVision also the keypad keys 0-9, * and # (or keypad_0..keypad_9, keypad_asterisk, keypad_hash), which other boards refuse by name - get_system_info says whether the board has a keypad. See get_input_state for what can be read back.";
+#if GEARSF7000_ENABLE_SMS || GEARSF7000_ENABLE_GAMEGEAR
+    controller_buttons.push_back("start");
+#endif
+#if GEARSF7000_ENABLE_SMS
+    for (const char* button : {"a", "b", "c", "x", "y", "z", "mode"})
+        controller_buttons.push_back(button);
+    controller_button_description += " On a Master System or Mark III port holding a Mega Drive pad (set_controller_device) also a, b, c, start, x, y, z and mode (b and c are buttons 1 and 2).";
+#endif
     tools.push_back({
         {"name", "controller_button"},
         {"title", "Controller Button"},
-        {"description", "Press/release one SC-3000 joystick input for players 1-2: four directions and two fire buttons. The ColecoVision keypad (0-9, *, #, blue, purple) does not exist on this machine and is not accepted - see get_input_state for what can be read back."},
+        {"description", controller_button_description},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", false}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -156,8 +177,8 @@ void AddMcpToolDefinitionsInput(json& tools)
                 }},
                 {"button", {
                     {"type", "string"},
-                    {"description", "Direction, or a fire button by any of its aliases."},
-                    {"enum", json::array({"up", "down", "left", "right", "left_button", "right_button", "fire1", "fire2", "button1", "button2", "yellow", "red", "fire"})}
+                    {"description", "Direction, a fire button by any of its aliases, or a ColecoVision keypad key."},
+                    {"enum", controller_buttons}
                 }},
                 {"action", {
                     {"type", "string"},
@@ -198,10 +219,28 @@ void AddMcpToolDefinitionsInput(json& tools)
         {"inputSchema", {{"type", "object"}, {"properties", controller_macro_properties}, {"required", json::array({"commands"})}, {"additionalProperties", false}}}
     });
 
+#if GEARSF7000_ENABLE_SMS
+    tools.push_back({
+        {"name", "set_controller_device"},
+        {"title", "Set Controller Device"},
+        {"description", "What a Master System or Mark III controller port holds: sms_pad (the default), md3 (Mega Drive pad, three buttons: a 74HC157 multiplexer on TH) or md6 (six buttons: phase counted on TH rising edges, reset 1.5 ms after one). Modelled on MAME's sms_ctrl mdpad/md6bt. Each is its own debugger device, event.sms.pad1/pad2, publishing the lines read, TH, its buttons and phase. Saved in the configuration. Other boards refuse it."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"player", {{"type", "integer"}, {"description", "Port: 1 (A) or 2 (B)."}, {"minimum", 1}, {"maximum", 2}}},
+                {"device", {{"type", "string"}, {"enum", json::array({"sms_pad", "md3", "md6"})}}}
+            }},
+            {"required", json::array({"player", "device"})},
+            {"additionalProperties", false}
+        }}
+    });
+#endif
+
     tools.push_back({
         {"name", "get_input_state"},
         {"title", "Get Input State"},
-        {"description", "The six joystick bits per player, read back from the SK-1100 matrix: up, down, left, right, button1, button2. These are exactly what controller_button can set."},
+        {"description", "On MSX returns the International keyboard matrix (11 active-low rows) and pressed key labels. On Sega returns the six joystick bits per player, read back from the SK-1100 matrix: up, down, left, right, button1, button2. On a Master System or Mark III also the device in each port and, for a Mega Drive pad, a, start, x, y, z, mode and (six buttons) the phase."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -213,7 +252,7 @@ void AddMcpToolDefinitionsInput(json& tools)
     tools.push_back({
         {"name", "get_keyboard_mode"},
         {"title", "Get Keyboard Mode"},
-        {"description", "Whether the SK-1100 keyboard matrix is answering the PPI. With it off the same port reads as the joystick, which is what a cartridge game expects."},
+        {"description", "Whether host keyboard mode is enabled. On MSX it routes host keys to the International matrix; on SK-1100 it selects keyboard versus joystick input."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -225,7 +264,7 @@ void AddMcpToolDefinitionsInput(json& tools)
     tools.push_back({
         {"name", "set_keyboard_mode"},
         {"title", "Set Keyboard Mode"},
-        {"description", "Turn the SK-1100 keyboard matrix on or off. Turn it off to let a cartridge game read the joystick on the same PPI port."},
+        {"description", "Enable or disable host keyboard mode. On MSX disabling releases held inputs; the physical PPI keyboard remains present. On SK-1100 this selects keyboard versus joystick input."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -240,15 +279,15 @@ void AddMcpToolDefinitionsInput(json& tools)
     tools.push_back({
         {"name", "list_sprites"},
         {"title", "List Sprites"},
-        {"description", "List hardware sprites, including TMS9918 early-clock/effective X and, when the requested line is the line currently held by the VDP, which four sprites were selected and which fifth sprite caused overflow."},
+        {"description", "List the sprites and fields published by a sprite-debug source of the active video device, including visual state, atlas geometry and screen bounds when available."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
-                {"line", {{"type", "integer"}, {"minimum", 0}, {"maximum", 312},
-                          {"description", "Optional raster line. Omit for the current render line. Per-line selection is valid only while the VDP still holds that line."}}},
-                {"source", {{"type", "string"}, {"enum", json::array({"live", "rendered"})},
-                            {"description", "live reads the current SAT; rendered reports rows actually fetched for the last complete frame."}}}
+                {"line", {{"type", "integer"}, {"minimum", 0},
+                          {"description", "Optional source parameter, commonly a raster line. The selected source publishes its valid range."}}},
+                {"source", {{"type", "string"},
+                            {"description", "Provider source code, or the compatibility aliases live and rendered. Omit for the provider's first source."}}}
             }},
             {"additionalProperties", false}
         }}
@@ -257,17 +296,20 @@ void AddMcpToolDefinitionsInput(json& tools)
     tools.push_back({
         {"name", "get_sprite_image"},
         {"title", "Get Sprite Image"},
-        {"description", "Capture one hardware sprite as PNG from the live SAT or from rows actually fetched for the last complete frame."},
+        {"description", "Capture one sprite atlas item published by the active video device as PNG, with its provider-defined fields and screen bounds."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
                 {"sprite_index", {
                     {"type", "integer"},
-                    {"description", "Sprite index 0-31."}
+                    {"minimum", 0},
+                    {"description", "Provider sprite index; valid indices are returned by list_sprites."}
                 }},
-                {"source", {{"type", "string"}, {"enum", json::array({"live", "rendered"})},
-                            {"description", "live reads current SAT/SPRPAT; rendered uses the timed fetch-latch capture."}}}
+                {"source", {{"type", "string"},
+                            {"description", "Provider source code, or the compatibility aliases live and rendered."}}},
+                {"line", {{"type", "integer"}, {"minimum", 0},
+                          {"description", "Optional source parameter, commonly a raster line; valid limits are provider-defined."}}}
             }},
             {"required", json::array({"sprite_index"})},
             {"additionalProperties", false}
@@ -297,7 +339,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_Disassembler(json& tools)
+{
     // Disassembler tools
     tools.push_back({
         {"name", "debug_run_to_cursor"},
@@ -399,7 +444,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"bank", "address"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_MemoryEditorBookmarks(json& tools)
+{
     // Memory editor tools
     tools.push_back({
         {"name", "select_memory_range"},
@@ -492,7 +540,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"area", "address"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_Watches(json& tools)
+{
     tools.push_back({
         {"name", "watch_add"},
         {"title", "Add Watch"},
@@ -570,6 +621,23 @@ void AddMcpToolDefinitionsInput(json& tools)
         }}
     });
 
+    // Nested via local json variables, not a single literal, to keep MSVC's
+    // compiler heap (C1060) from choking on too-deep initializer-list nesting.
+    json watch_condition_item_properties = json::object();
+    watch_condition_item_properties["id"] = {{"type", "integer"}, {"description", "Watch id."}};
+    watch_condition_item_properties["op"] = {{"type", "string"}, {"enum", {"==", "!=", ">", "<", ">=", "<=", "changed", "increased", "decreased"}}};
+    watch_condition_item_properties["value"] = {{"description", "Comparison value; required for ==, !=, >, <, >=, <=, omit for changed/increased/decreased."}};
+
+    json watch_condition_item = json::object();
+    watch_condition_item["type"] = "object";
+    watch_condition_item["properties"] = watch_condition_item_properties;
+    watch_condition_item["required"] = json::array({"id", "op"});
+
+    json watch_conditions_schema = json::object();
+    watch_conditions_schema["type"] = "array";
+    watch_conditions_schema["description"] = "List of {id, op, value?}, one per watch to test. value is required for ==, !=, >, <, >=, <= and ignored/omitted for changed, increased, decreased.";
+    watch_conditions_schema["items"] = watch_condition_item;
+
     tools.push_back({
         {"name", "watch_set_condition"},
         {"title", "Set Watch Trigger Condition"},
@@ -578,19 +646,7 @@ void AddMcpToolDefinitionsInput(json& tools)
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
-                {"conditions", {
-                    {"type", "array"},
-                    {"description", "List of {id, op, value?}, one per watch to test. value is required for ==, !=, >, <, >=, <= and ignored/omitted for changed, increased, decreased."},
-                    {"items", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"id", {{"type", "integer"}, {"description", "Watch id."}}},
-                            {"op", {{"type", "string"}, {"enum", {"==", "!=", ">", "<", ">=", "<=", "changed", "increased", "decreased"}}}},
-                            {"value", {{"description", "Comparison value; required for ==, !=, >, <, >=, <=, omit for changed/increased/decreased."}}}
-                        }},
-                        {"required", json::array({"id", "op"})}
-                    }}
-                }},
+                {"conditions", watch_conditions_schema},
                 {"mode", {
                     {"type", "string"},
                     {"description", "Combine all conditions with AND or OR."},
@@ -624,7 +680,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_SymbolsAndSearch(json& tools)
+{
     tools.push_back({
         {"name", "list_disassembler_bookmarks"},
         {"title", "List Disassembler Bookmarks"},
@@ -849,7 +908,10 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"area", "pattern"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsInput_Tracing(json& tools)
+{
     // Tracing tools
     tools.push_back({
         {"name", "get_trace_log"},
@@ -910,7 +972,17 @@ void AddMcpToolDefinitionsInput(json& tools)
             {"required", json::array({"enabled"})}
         }}
     });
+}
 
+void AddMcpToolDefinitionsInput(json& tools)
+{
+    AddMcpToolDefinitionsInput_BasicAndKeyboard(tools);
+    AddMcpToolDefinitionsInput_ControllerAndSprites(tools);
+    AddMcpToolDefinitionsInput_Disassembler(tools);
+    AddMcpToolDefinitionsInput_MemoryEditorBookmarks(tools);
+    AddMcpToolDefinitionsInput_Watches(tools);
+    AddMcpToolDefinitionsInput_SymbolsAndSearch(tools);
+    AddMcpToolDefinitionsInput_Tracing(tools);
 }
 
 #endif /* GEARSF7000_ENABLE_MCP */

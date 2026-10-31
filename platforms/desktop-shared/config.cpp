@@ -1,22 +1,33 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026  Saverio Russo
-
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2024-2026  Saverio Russo
+ *
+ * Derived from Gearcoleco by Ignacio Sanchez. His code is free software: you
+ * can redistribute it and/or modify it under the terms of the GNU General
+ * Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * The changes and additions by Saverio Russo are free software: you can
+ * redistribute them and/or modify them under the terms of the GNU Affero
+ * General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ * Section 13 of both licences permits the combination.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see http://www.gnu.org/licenses/
+ * GNU General Public License and the GNU Affero General Public License
+ * for more details.
  *
+ * You should have received a copy of both licences along with this
+ * program.  If not, see http://www.gnu.org/licenses/
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
+#include <algorithm>
+#include <fstream>
 #include <SDL3/SDL.h>
 #include "../../src/gearsf7000.h"
 
@@ -26,6 +37,26 @@
 #define CONFIG_IMPORT
 #include "config.h"
 #include "sk1100_keyboard_layout.h"
+#include "coleco_keypad_layout.h"
+#include "md_pad_layout.h"
+#include "ConfigProfiles.h"
+#include "DiagnosticLog.h"
+
+static std::unique_ptr<config_storage::Repository> config_repository;
+static std::string config_storage_error, config_storage_notice;
+const std::string& config_get_storage_error() { return config_storage_error; }
+const std::string& config_get_storage_notice() { return config_storage_notice; }
+bool config_storage_writable() { return config_repository && config_repository->writable(); }
+
+config_SaveResult config_get_storage_result() {
+    return {config_storage_error.empty(), config_storage_writable(),
+        config_repository ? config_repository->file : config_emu_file_path,
+        config_repository ? config_repository->operation : "init",
+        config_storage_error};
+}
+
+// Version 3: global settings plus machines/<family>.ini.
+static const int config_format_version = config_storage::globalVersion;
 
 static bool check_portable(void);
 static int read_int(const char* group, const char* key, int default_value);
@@ -39,14 +70,132 @@ static void write_string(const char* group, const char* key, std::string value);
 static config_Hotkey read_hotkey(const char* key, config_Hotkey default_value);
 static void write_hotkey(const char* key, const config_Hotkey& hotkey);
 static void build_config_path(char* destination, size_t destination_size, const char* filename);
-#if defined(_WIN32)
-static void migrate_legacy_windows_config(void);
-static void copy_file_if_missing(const char* source_path, const char* destination_path);
-#endif
 
-void config_init(void)
+
+// Joypad defaults. Player 2 sits on the numeric keypad where one exists; Mac
+// laptops have none, so on macOS it gets I/J/K/L with U and O, clear of player
+// 1's arrows and A/S. Only defaults: a saved configuration keeps its keys.
+static const SDL_Scancode kDefaultKeys[2][6] = {
+    {SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN,
+     SDL_SCANCODE_A, SDL_SCANCODE_S},
+#if defined(__APPLE__)
+    {SDL_SCANCODE_J, SDL_SCANCODE_L, SDL_SCANCODE_I, SDL_SCANCODE_K,
+     SDL_SCANCODE_U, SDL_SCANCODE_O},
+#else
+    {SDL_SCANCODE_KP_1, SDL_SCANCODE_KP_3, SDL_SCANCODE_KP_5, SDL_SCANCODE_KP_2,
+     SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6},
+#endif
+};
+
+bool config_default_key_binding(const SDL_Scancode* binding, SDL_Scancode* value)
 {
+    for (int player = 0; player < 2; ++player)
+    {
+        const config_Input& input = config_input[player];
+        const SDL_Scancode* keys[6] = {&input.key_left, &input.key_right, &input.key_up,
+                                       &input.key_down, &input.key_left_button, &input.key_right_button};
+        for (int i = 0; i < 6; ++i)
+            if (keys[i] == binding)
+            {
+                *value = kDefaultKeys[player][i];
+                return true;
+            }
+        for (int key = 0; key < SK1100_KEYBOARD_KEY_COUNT; ++key)
+            if (&input.sk1100_key[key] == binding)
+            {
+                *value = sk1100_keyboard_layout[key].default_scancode;
+                return true;
+            }
+        for (int key = 0; key < COLECO_KEYPAD_KEY_COUNT; ++key)
+            if (&input.keypad_key[key] == binding)
+            {
+                *value = coleco_keypad_layout[key].default_scancode[player];
+                return true;
+            }
+    }
+    return false;
+}
+
+bool config_default_button_binding(const int* binding, int* value)
+{
+    for (int player = 0; player < 2; ++player)
+    {
+        if (binding == &config_input[player].gamepad_left_button)
+        {
+            *value = SDL_GAMEPAD_BUTTON_SOUTH;
+            return true;
+        }
+        if (binding == &config_input[player].gamepad_right_button)
+        {
+            *value = SDL_GAMEPAD_BUTTON_EAST;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The headless instance keeps its settings in a headless/ folder beside the
+// main ones, so a GUI and a headless instance open together never overwrite
+// each other's file on exit. The first time, the folder starts as a copy of
+// the main settings (BIOS paths, mappers, projects root); after that the two
+// live apart.
+void config_init_headless(void)
+{
+    char* main_root = nullptr;
     if (check_portable())
+        main_root = SDL_strdup(SDL_GetBasePath());
+#if defined(__APPLE__)
+    else
+        main_root = SDL_GetPrefPath("siriokds", "GearSF7000");
+#else
+    else
+        main_root = SDL_GetPrefPath("Geardome", "GearSF7000");
+#endif
+    if (!main_root)
+    {
+        config_init();
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    const fs::path from = config_storage::utf8Path(main_root);
+    const fs::path to = from / "headless";
+    SDL_free(main_root);
+
+    std::error_code ec;
+    if (!fs::exists(to / "gearconfig.ini", ec))
+    {
+        fs::create_directories(to / "machines", ec);
+        // Paths into the main folder (save files, save states) are moved
+        // into headless/ so the two never share a battery save or a state.
+        std::ifstream in(from / "gearconfig.ini", std::ios::binary);
+        if (in)
+        {
+            std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const std::string old_root = config_storage::utf8String(from / "");
+            const std::string new_root = config_storage::utf8String(to / "");
+            for (size_t at = text.find(old_root); at != std::string::npos;
+                 at = text.find(old_root, at + new_root.size()))
+                text.replace(at, old_root.size(), new_root);
+            std::ofstream(to / "gearconfig.ini", std::ios::binary) << text;
+        }
+        for (const auto& entry : fs::directory_iterator(from / "machines", ec))
+            if (entry.path().extension() == ".ini")
+                fs::copy_file(entry.path(), to / "machines" / entry.path().filename(), ec);
+    }
+
+    config_init(config_storage::utf8String(to).c_str());
+}
+
+void config_init(const char* settings_root)
+{
+    if (settings_root) {
+        std::string path = settings_root;
+        if (path.empty()) path = "./";
+        if (path.back() != '/' && path.back() != '\\') path += '/';
+        config_root_path = SDL_strdup(path.c_str());
+    }
+    else if (check_portable())
         config_root_path = SDL_strdup(SDL_GetBasePath());
 #if defined(__APPLE__)
     else
@@ -62,20 +211,27 @@ void config_init(void)
         config_root_path = SDL_strdup("./");
     }
 
-    build_config_path(config_emu_file_path, sizeof(config_emu_file_path), "config.ini");
+    build_config_path(config_emu_file_path, sizeof(config_emu_file_path), "gearconfig.ini");
     build_config_path(config_imgui_file_path, sizeof(config_imgui_file_path), "imgui.ini");
 
-#if defined(_WIN32)
-    if (!check_portable())
-        migrate_legacy_windows_config();
-#endif
 
-    config_input[0].key_left = SDL_SCANCODE_LEFT;
-    config_input[0].key_right = SDL_SCANCODE_RIGHT;
-    config_input[0].key_up = SDL_SCANCODE_UP;
-    config_input[0].key_down = SDL_SCANCODE_DOWN;
-    config_input[0].key_left_button = SDL_SCANCODE_A;
-    config_input[0].key_right_button = SDL_SCANCODE_S;
+
+    for (int player = 0; player < 2; ++player)
+    {
+        config_Input& input = config_input[player];
+        SDL_Scancode* keys[6] = {&input.key_left, &input.key_right, &input.key_up,
+                                 &input.key_down, &input.key_left_button, &input.key_right_button};
+        for (SDL_Scancode* key : keys)
+            config_default_key_binding(key, key);
+        // A Mega Drive pad's extra buttons: unbound. Zero would be the south
+        // gamepad button, hence -1.
+        input.controller_device = 0;
+        for (int button = 0; button < 6; ++button)
+        {
+            input.md_key[button] = SDL_SCANCODE_UNKNOWN;
+            input.gamepad_md_button[button] = -1;
+        }
+    }
     //config_input[0].key_blue = SDL_SCANCODE_D;
     //config_input[0].key_purple = SDL_SCANCODE_F;
     //config_input[0].key_0 = SDL_SCANCODE_KP_0;
@@ -112,12 +268,6 @@ void config_init(void)
     //config_input[0].gamepad_asterisk = SDL_CONTROLLER_BUTTON_START;
     //config_input[0].gamepad_hash = SDL_CONTROLLER_BUTTON_BACK;
 
-    config_input[1].key_up = SDL_SCANCODE_KP_5;
-    config_input[1].key_down = SDL_SCANCODE_KP_2;
-    config_input[1].key_left = SDL_SCANCODE_KP_1;
-    config_input[1].key_right = SDL_SCANCODE_KP_3;
-    config_input[1].key_left_button = SDL_SCANCODE_KP_4;
-    config_input[1].key_right_button = SDL_SCANCODE_KP_6;
     //config_input[1].key_blue = SDL_SCANCODE_J;
     //config_input[1].key_purple = SDL_SCANCODE_K;
     //config_input[1].key_0 = SDL_SCANCODE_NONUSBACKSLASH;
@@ -161,25 +311,58 @@ void config_init(void)
     for (int hotkey = 0; hotkey < config_HotkeyIndex_COUNT; ++hotkey)
         config_hotkeys[hotkey] = config_default_hotkey((config_HotkeyIndex)hotkey);
 
-    config_ini_file = new mINI::INIFile(config_emu_file_path);
+    config_repository.reset(new config_storage::Repository(
+        config_storage::utf8Path(config_root_path), {}, config_profiles::migrate));
+}
+
+// The projects folder for a config that names none: the one that fits the
+// host, and from then on written to config.ini and shown in Debug > Analysis
+// rather than left implicit. It is where a person looks for their own work,
+// and SDL knows where that is on each system:
+//   macOS    ~/Documents/GearSF7000 Projects
+//   Windows  C:\Users\<name>\Documents\GearSF7000 Projects
+//   Linux    $XDG_DOCUMENTS_DIR, or ~/Documents, whichever the desktop set up
+// When the system names no Documents folder (a bare Linux account) the home
+// folder stands in, and only if that fails too the settings folder, which
+// always exists. Portable mode keeps everything beside the program, as it
+// does for the settings.
+std::string config_default_projects_dir(void)
+{
+    const std::string beside_settings =
+        std::string(config_root_path ? config_root_path : "./") + "projects/";
+    if (check_portable())
+        return beside_settings;
+    const char* base = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    if (!base || !base[0])
+        base = SDL_GetUserFolder(SDL_FOLDER_HOME);
+    if (!base || !base[0])
+        return beside_settings;
+    std::string path = base;
+#if defined(_WIN32)
+    const char separator = '\\';
+#else
+    const char separator = '/';
+#endif
+    if (path.back() != '/' && path.back() != '\\')
+        path += separator;
+    path += "GearSF7000 Projects";
+    path += separator;
+    return path;
 }
 
 void config_destroy(void)
 {
-    SafeDelete(config_ini_file)
+    config_repository.reset();
     SDL_free(config_root_path);
 }
 
 void config_read(void)
 {
-    if (!config_ini_file->read(config_ini_data))
-    {
-        Log("Unable to load settings from %s; using defaults", config_emu_file_path);
-    }
-    else
-    {
-        Log("Loading settings from %s", config_emu_file_path);
-    }
+    config_repository->load(config_ini_data);
+    config_storage_error = config_repository->error;
+    config_storage_notice = config_repository->notice;
+    if (!config_storage_error.empty()) Log("Configuration error: %s", config_storage_error.c_str());
+    if (!config_storage_notice.empty()) Log("%s", config_storage_notice.c_str());
 
 #if GEARSF7000_ENABLE_DEBUG_TOOLS
     config_debug.debug = read_bool("Debug", "Debug", false);
@@ -190,9 +373,15 @@ void config_read(void)
     config_debug.show_screen = read_bool("Debug", "Screen", true);
     config_debug.show_memory = read_bool("Debug", "Memory", true);
     config_debug.show_processor = read_bool("Debug", "Processor", true);
-    config_debug.show_video = read_bool("Debug", "Video", false);
-    config_debug.show_video_registers = read_bool("Debug", "VideoRegisters", false);
+    config_debug.show_pattern_table = read_bool("Debug", "PatternTable",
+        read_bool("Debug", "Video", false));
+    config_debug.show_sprites = read_bool("Debug", "Sprites", false);
+    config_debug.show_nametable = read_bool("Debug", "NameTable", false);
+    config_debug.show_video_register_explorer = read_bool("Debug", "VideoRegisterExplorer", false);
     config_debug.show_psg = read_bool("Debug", "PSG", false);
+#if GEARSF7000_ENABLE_YM2413
+    config_debug.show_ym2413 = read_bool("Debug", "YM2413", false);
+#endif
     
     config_debug.show_cassette = read_bool("Debug", "Cassette", false);
     config_debug.show_rewind = read_bool("Debug", "Rewind", false);
@@ -207,6 +396,15 @@ void config_read(void)
     config_debug.show_ppi_registers = read_bool("Debug", "PPI8255A", false);
     config_debug.show_sf7000 = read_bool("Debug", "SF7000", false);
     config_debug.show_events = read_bool("Debug", "Events", false);
+    config_debug.show_rom_map = read_bool("Debug", "RomMap", false);
+    config_debug.show_disassembler_new = read_bool("Debug", "DisassemblerNew", false);
+    config_debug.show_deep_search = read_bool("Debug", "DeepSearch", false);
+    config_debug.show_to_check = read_bool("Debug", "ToCheck", false);
+    config_debug.show_palettes = read_bool("Debug", "Palettes", false);
+    config_debug.rom_map_enabled = read_bool("Debug", "RomMapEnabled", false);
+    config_debug.projects_dir = read_string("Debug", "ProjectsDir");
+    if (config_debug.projects_dir.empty())
+        config_debug.projects_dir = config_default_projects_dir();
     config_debug.events_category_filter = read_int("Debug", "EventsCategoryFilter", -1);
     config_debug.events_newest_first = read_bool("Debug", "EventsNewestFirst", true);
     config_debug.events_group_by_pc = read_bool("Debug", "EventsGroupByPc", false);
@@ -218,9 +416,28 @@ void config_read(void)
     config_debug.vram_tiles_area_scale = read_float("Debug", "VramTilesAreaScale", 2.0f);
     config_debug.vram_sprites_area_scale = read_float("Debug", "VramSpritesAreaScale", 4.0f);
     config_debug.vram_sprites_preview_area_scale = read_float("Debug", "VramSpritesPreviewAreaScale", 1.0f);
-    config_debug.vram_sprites_source = read_int("Debug", "VramSpritesSource", 0);
+    config_debug.vram_sprites_source_code = read_string("Debug", "VramSpritesSourceCode");
+    if (config_debug.vram_sprites_source_code.empty())
+    {
+        static const char* legacySources[] = {
+            "live-sat", "last-rendered-frame", "current-scanline-fetch",
+            "last-frame-scanline"
+        };
+        const int legacySource = std::clamp(
+            read_int("Debug", "VramSpritesSource", 0), 0, 3);
+        config_debug.vram_sprites_source_code = legacySources[legacySource];
+    }
     config_debug.vram_sprites_scanline = read_int("Debug", "VramSpritesScanline", 0);
+    config_debug.vram_sprites_hidden_preview_parts = read_string(
+        "Debug", "VramSpritesHiddenPreviewParts");
+    config_debug.vram_sprites_disabled_preview_options = read_string(
+        "Debug", "VramSpritesDisabledPreviewOptions");
+    config_debug.vram_pattern_disabled_layer_options = read_string(
+        "Debug", "VramPatternDisabledLayerOptions");
+    config_debug.gray_inactive_sprite_attributes = read_bool(
+        "Debug", "GrayInactiveSpriteAttributes", true);
     config_debug.show_grid_background = read_bool("Debug", "ShowGridBackground", true);
+    config_debug.show_viewport_background = read_bool("Debug", "ShowViewportBackground", true);
     config_debug.show_regions_background = read_bool("Debug", "ShowRegionsBackground", false);
     config_debug.show_grid_tiles = read_bool("Debug", "ShowGridTiles", true);
     config_debug.show_crt_test_pass = read_bool("Debug", "CrtTestPass", false);
@@ -266,21 +483,68 @@ void config_read(void)
 
     config_emulator.fullscreen = read_bool("Emulator", "FullScreen", false);
     config_emulator.show_menu = read_bool("Emulator", "ShowMenu", true);
-    config_emulator.keyboard_mode = read_bool("Input", "KeyboardMode", true);
+    config_emulator.keyboard_mode = read_bool("Machine.SK1100", "KeyboardMode", true);
     config_emulator.ffwd_speed = read_int("Emulator", "FFWD", 1);
     config_emulator.save_slot = read_int("Emulator", "SaveSlot", 0);
     config_emulator.start_paused = read_bool("Emulator", "StartPaused", false);
-    // Region was the old UI name. Preserve existing user preferences while
-    // migrating new configurations to an explicit VDP selection.
-    config_emulator.vdp = read_int("Emulator", "VDP",
-                                   read_int("Emulator", "Region", 0));
-    if (config_emulator.vdp < 0 || config_emulator.vdp > 2)
-        config_emulator.vdp = 0;
-    config_emulator.mapper_mode = read_int("Emulator", "MapperMode", 0);
-    config_emulator.mapper_type = read_int("Emulator", "MapperType",
-        (int)Cartridge::SC3000_FLAT64K);
-    config_emulator.mapper_fallback = read_int("Emulator", "MapperFallback",
-        (int)Cartridge::SG1000_16K);
+    config_emulator.machine = read_int("Emulator", "Machine",
+                                       (int)SystemModel::SC3000Export);
+    config_emulator.last_sega_machine = read_int("Emulator", "LastSegaMachine",
+        config_emulator.last_sega_machine);
+    config_emulator.coleco_sgm = read_bool("Machine.Coleco", "SGM", HasSGM(static_cast<SystemModel>(config_emulator.machine)));
+    if (config_emulator.machine < 0 || config_emulator.machine > static_cast<int>(SystemModel::GameGearExport) ||
+        !IsValidSystemModel(static_cast<SystemModel>(config_emulator.machine)))
+        config_emulator.machine = (int)SystemModel::SC3000Export;
+    for (const auto& group : GetMachineMenuGroups()) {
+        const int saved = read_int("Emulator", (std::string("Board.") + group.code).c_str(), static_cast<int>(group.defaultModel));
+        config_emulator.last_board_by_machine[group.code] = MachineGroupContains(group, static_cast<SystemModel>(saved))
+            ? saved : static_cast<int>(group.defaultModel);
+    }
+    for (const auto& p : config_profiles::profiles) {
+        int value = read_int(p.section, p.key, 0);
+        if (value && !GetVideoCatalog().IsDeclared(p.model, config_resolve_video_option(value, {}))) value = 0;
+        const std::string optionKey = std::string(p.key) + ".Option";
+        const std::string savedOption = read_string(p.section, optionKey.c_str());
+        std::string optionCode;
+        if (savedOption == "default") value = 0;
+        else if (!savedOption.empty()) {
+            const auto* option = GetVideoCatalog().FindOption(savedOption);
+            if (option && GetVideoCatalog().IsDeclared(p.model, savedOption)) {
+                value = option->legacyConfig;
+                optionCode = savedOption;
+            } else {
+                Log("Unknown or incompatible video option '%s'; using machine default", savedOption.c_str());
+                value = 0;
+            }
+        } else optionCode = config_resolve_video_option(value, {});
+        config_emulator.video_option_by_model[static_cast<int>(p.model)] = optionCode;
+        config_emulator.vdp_by_model[static_cast<int>(p.model)] = value;
+    }
+    config_emulator.vdp = config_emulator.vdp_by_model[config_emulator.machine];
+    config_emulator.video_option = config_emulator.video_option_by_model[config_emulator.machine];
+    for (int f = 0; f < config_MapperFamily_COUNT; ++f) {
+        const SystemModel fallback = static_cast<SystemModel>(config_emulator.last_model_by_family[f]);
+        const int value = read_int(config_profiles::familySection(fallback), "LastModel", static_cast<int>(fallback));
+        const SystemModel model = static_cast<SystemModel>(value);
+        if (value >= 0 && value <= static_cast<int>(SystemModel::GameGearExport) && IsValidSystemModel(model) &&
+            config_mapper_family(model) == f) config_emulator.last_model_by_family[f] = value;
+    }
+    {
+        // Legacy global mapper keys have already been routed by the migrator.
+        static const char* const kFamilySections[config_MapperFamily_COUNT] = {
+            "Machine.SG1000", "Machine.SMS", "Machine.Coleco", "Machine.MSX", "Machine.SordM5", "Machine.GameGear"};
+        const config_MapperFamily current =
+            config_mapper_family(static_cast<SystemModel>(config_emulator.machine));
+        for (int f = 0; f < config_MapperFamily_COUNT; f++)
+        {
+            config_emulator.mapper_mode_by_family[f] = read_int(kFamilySections[f],
+                "MapperMode", 0);
+            config_emulator.mapper_type_by_family[f] = read_int(kFamilySections[f],
+                "MapperType", config_emulator.mapper_type_by_family[f]);
+        }
+        config_emulator.mapper_mode = config_emulator.mapper_mode_by_family[current];
+        config_emulator.mapper_type = config_emulator.mapper_type_by_family[current];
+    }
 #if GEARSF7000_ENABLE_MCP
     config_emulator.mcp_tcp_port = read_int("Emulator", "MCPTCPPort", 7777);
     config_emulator.mcp_http_address = read_string("Emulator", "MCPHTTPAddress");
@@ -289,32 +553,30 @@ void config_read(void)
 #endif
 
 
-    config_emulator.cassette_path = read_string("SR-1000", "CassettePath");
-    config_emulator.cassette_write_protected = read_bool("SR-1000", "CassetteWriteProtected", true);
-    for (int i = 0; i < config_max_recent_cassettes; i++)
-    {
-        std::string item = "RecentCassette" + std::to_string(i);
-        config_emulator.recent_cassettes[i] = read_string("SR-1000", item.c_str());
-
-        // Compatibility with the typo written by builds before the macOS
-        // configuration audit. It is migrated in memory and saved under the
-        // canonical singular key on the next configuration write.
-        if (config_emulator.recent_cassettes[i].empty())
-        {
-            const std::string legacy_item = "RecentCassettes" + std::to_string(i);
-            config_emulator.recent_cassettes[i] = read_string("SR-1000", legacy_item.c_str());
+    const auto readTape = [](const char* section, config_Tape& tape) {
+        tape.path = read_string(section, "CassettePath");
+        tape.write_protected = read_bool(section, "CassetteWriteProtected", true);
+        for (int i = 0; i < config_max_recent_cassettes; ++i) {
+            const std::string key = "RecentCassette" + std::to_string(i);
+            tape.recent[i] = read_string(section, key.c_str());
         }
-    }
+    };
+    readTape("Machine.SR1000", config_emulator.sr1000_tape);
+    readTape("Machine.MSXTape", config_emulator.msx_tape);
 
-
-    config_emulator.bios_path = read_string("SF-7000", "BiosPath");
-    config_emulator.disc_path = read_string("SF-7000", "DiscPath");
-    config_emulator.disc_write_protected = read_bool("SF-7000", "DiscWriteProtected", true);
+    config_emulator.bios_path = read_string("Machine.SF7000", "BiosPath");
+    config_emulator.coleco_bios_path = read_string("Machine.Coleco", "BiosPath");
+    config_emulator.m5_bios_path = read_string("Machine.SordM5", "BiosPath");
+    config_emulator.m5_em5_installed = read_bool("Machine.SordM5", "EM5Installed", false);
+    config_emulator.msx_bios_path = read_string("Machine.MSX", "BiosPath");
+    config_emulator.msx_use_cbios = read_bool("Machine.MSX", "UseCBios", config_emulator.msx_bios_path.empty());
+    config_emulator.disc_path = read_string("Machine.SF7000", "DiscPath");
+    config_emulator.disc_write_protected = read_bool("Machine.SF7000", "DiscWriteProtected", true);
 
     for (int i = 0; i < config_max_recent_discs; i++)
     {
         std::string item = "RecentDISC" + std::to_string(i);
-        config_emulator.recent_discs[i] = read_string("SF-7000", item.c_str());
+        config_emulator.recent_discs[i] = read_string("Machine.SF7000", item.c_str());
     }
 
     
@@ -406,28 +668,19 @@ void config_read(void)
     config_debug.video.advanced_scaling_edge_radius = read_float("DebugVideo", "AdvancedScalingEdgeRadius", config_debug.video.advanced_scaling_edge_radius);
 #endif
     config_video.palette = read_int("Video", "Palette", 0);
-
-    for (int i = 0; i < 16; i++)
-    {
-        char pal_label_r[32];
-        char pal_label_g[32];
-        char pal_label_b[32];
-        sprintf(pal_label_r, "CustomPalette%dR", i);
-        sprintf(pal_label_g, "CustomPalette%dG", i);
-        sprintf(pal_label_b, "CustomPalette%dB", i);
-        config_video.color[i].red = read_int("Video", pal_label_r, config_video.color[i].red);
-        config_video.color[i].green = read_int("Video", pal_label_g, config_video.color[i].green);
-        config_video.color[i].blue = read_int("Video", pal_label_b, config_video.color[i].blue);
-    }
+    config_video.sms_tms_palette = read_int("Video", "SmsTmsPalette", 0);
 
     config_video.pacing = config_video_pacing_from_name(
         read_string("Video", "Pacing").c_str(), PACING_GAMING_VSYNC);
     
     config_audio.enable = read_bool("Audio", "Enable", true);
 #if GEARSF7000_ENABLE_AY
-    config_audio.ay_enable = read_bool("Audio", "AYEnable", false);
-    config_audio.ay_chip = read_int("Audio", "AYChip", 0);
-    config_audio.ay_port_base = read_int("Audio", "AYPortBase", 0x20);
+    config_audio.ay_enable = read_bool("Machine.SegaAudio", "AYEnable", false);
+    config_audio.ay_chip = read_int("Machine.SegaAudio", "AYChip", 0);
+    config_audio.ay_port_base = read_int("Machine.SegaAudio", "AYPortBase", 0x20);
+#endif
+#if GEARSF7000_ENABLE_YM2413
+    config_audio.ym2413_enable = read_bool("Machine.SMS", "YM2413Enable", false);
 #endif
 
     config_input[0].key_left = (SDL_Scancode)read_int("InputA", "KeyLeft", SDL_SCANCODE_LEFT);
@@ -525,10 +778,39 @@ void config_read(void)
     for (int key = 0; key < SK1100_KEYBOARD_KEY_COUNT; ++key)
     {
         config_input[0].sk1100_key[key] = (SDL_Scancode)read_int(
-            "SK1100", sk1100_keyboard_layout[key].id,
+            "Machine.SK1100", sk1100_keyboard_layout[key].id,
             sk1100_keyboard_layout[key].default_scancode);
         config_input[1].sk1100_key[key] = config_input[0].sk1100_key[key];
     }
+
+    for (int player = 0; player < 2; ++player)
+        for (int key = 0; key < COLECO_KEYPAD_KEY_COUNT; ++key)
+        {
+            const std::string item = std::string(player == 0 ? "KeypadA_" : "KeypadB_")
+                + coleco_keypad_layout[key].id;
+            config_input[player].keypad_key[key] = (SDL_Scancode)read_int(
+                "Machine.Coleco", item.c_str(),
+                coleco_keypad_layout[key].default_scancode[player]);
+        }
+
+    for (int player = 0; player < 2; ++player)
+    {
+        const std::string pad = player == 0 ? "PadA" : "PadB";
+        const int device = read_int("Machine.SMS", pad.c_str(), 0);
+        config_input[player].controller_device = IsValidControllerDevice(device) ? device : 0;
+        for (int button = 0; button < MD_PAD_BUTTON_COUNT; ++button)
+        {
+            const std::string id = md_pad_layout[button].id;
+            config_input[player].md_key[button] = (SDL_Scancode)read_int(
+                "Machine.SMS", (pad + "_Key" + id).c_str(), SDL_SCANCODE_UNKNOWN);
+            config_input[player].gamepad_md_button[button] = read_int(
+                "Machine.SMS", (pad + "_Gamepad" + id).c_str(), -1);
+        }
+    }
+    config_input[0].gg_start_key = static_cast<SDL_Scancode>(read_int(
+        "Machine.GameGear", "KeyStart", SDL_SCANCODE_RETURN));
+    config_input[0].gamepad_gg_start_button = read_int(
+        "Machine.GameGear", "GamepadStart", SDL_GAMEPAD_BUTTON_START);
 
     for (int hotkey = 0; hotkey < config_HotkeyIndex_COUNT; ++hotkey)
         config_hotkeys[hotkey] = read_hotkey(
@@ -555,21 +837,36 @@ void config_read(void)
     Log("Settings loaded");
 }
 
-void config_write(void)
+config_SaveResult config_write(void)
 {
     Log("Saving settings to %s", config_emu_file_path);
+    write_int("Config", "Version", config_format_version);
 
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
     write_bool("Debug", "Debug", config_debug.debug);
+#endif
     write_bool("Debug", "Disassembler", config_debug.show_disassembler);
     write_bool("Debug", "Screen", config_debug.show_screen);
     write_bool("Debug", "Memory", config_debug.show_memory);
     write_bool("Debug", "Processor", config_debug.show_processor);
-    write_bool("Debug", "Video", config_debug.show_video);
-    write_bool("Debug", "VideoRegisters", config_debug.show_video_registers);
+    write_bool("Debug", "PatternTable", config_debug.show_pattern_table);
+    write_bool("Debug", "Sprites", config_debug.show_sprites);
+    write_bool("Debug", "NameTable", config_debug.show_nametable);
+    write_bool("Debug", "VideoRegisterExplorer", config_debug.show_video_register_explorer);
     write_bool("Debug", "PSG", config_debug.show_psg);
+#if GEARSF7000_ENABLE_YM2413
+    write_bool("Debug", "YM2413", config_debug.show_ym2413);
+#endif
     write_bool("Debug", "PPI8255A", config_debug.show_ppi_registers);
     write_bool("Debug", "SF7000", config_debug.show_sf7000);
     write_bool("Debug", "Events", config_debug.show_events);
+    write_bool("Debug", "RomMap", config_debug.show_rom_map);
+    write_bool("Debug", "DisassemblerNew", config_debug.show_disassembler_new);
+    write_bool("Debug", "DeepSearch", config_debug.show_deep_search);
+    write_bool("Debug", "ToCheck", config_debug.show_to_check);
+    write_bool("Debug", "Palettes", config_debug.show_palettes);
+    write_bool("Debug", "RomMapEnabled", config_debug.rom_map_enabled);
+    write_string("Debug", "ProjectsDir", config_debug.projects_dir);
     write_int("Debug", "EventsCategoryFilter", config_debug.events_category_filter);
     write_bool("Debug", "EventsNewestFirst", config_debug.events_newest_first);
     write_bool("Debug", "EventsGroupByPc", config_debug.events_group_by_pc);
@@ -581,9 +878,19 @@ void config_write(void)
     write_float("Debug", "VramTilesAreaScale", config_debug.vram_tiles_area_scale);
     write_float("Debug", "VramSpritesAreaScale", config_debug.vram_sprites_area_scale);
     write_float("Debug", "VramSpritesPreviewAreaScale", config_debug.vram_sprites_preview_area_scale);
-    write_int("Debug", "VramSpritesSource", config_debug.vram_sprites_source);
+    write_string("Debug", "VramSpritesSourceCode",
+        config_debug.vram_sprites_source_code);
     write_int("Debug", "VramSpritesScanline", config_debug.vram_sprites_scanline);
+    write_string("Debug", "VramSpritesHiddenPreviewParts",
+        config_debug.vram_sprites_hidden_preview_parts);
+    write_string("Debug", "VramSpritesDisabledPreviewOptions",
+        config_debug.vram_sprites_disabled_preview_options);
+    write_string("Debug", "VramPatternDisabledLayerOptions",
+        config_debug.vram_pattern_disabled_layer_options);
+    write_bool("Debug", "GrayInactiveSpriteAttributes",
+        config_debug.gray_inactive_sprite_attributes);
     write_bool("Debug", "ShowGridBackground", config_debug.show_grid_background);
+    write_bool("Debug", "ShowViewportBackground", config_debug.show_viewport_background);
     write_bool("Debug", "ShowRegionsBackground", config_debug.show_regions_background);
     write_bool("Debug", "ShowGridTiles", config_debug.show_grid_tiles);
     write_bool("Debug", "CrtTestPass", config_debug.show_crt_test_pass);
@@ -608,45 +915,83 @@ void config_write(void)
     write_bool("Debug", "MultiViewport", config_debug.multi_viewport);
     write_bool("Debug", "Cassette", config_debug.show_cassette);
     write_bool("Debug", "Rewind", config_debug.show_rewind);
+#if GEARSF7000_ENABLE_RECORDER
     write_bool("Debug", "RecorderEnabled", config_debug.rewind_enabled);
+#endif
     write_int("Debug", "LogLevel", config_debug.log_level);
     write_int("Debug", "LogMaxMB", config_debug.log_max_mb);
     write_int("Debug", "RewindSeconds", config_debug.rewind_seconds);
 
     write_bool("Emulator", "FullScreen", config_emulator.fullscreen);
     write_bool("Emulator", "ShowMenu", config_emulator.show_menu);
-    write_bool("Input", "KeyboardMode", config_emulator.keyboard_mode);
+    write_bool("Machine.SK1100", "KeyboardMode", config_emulator.keyboard_mode);
     write_int("Emulator", "FFWD", config_emulator.ffwd_speed);
     write_int("Emulator", "SaveSlot", config_emulator.save_slot);
     write_bool("Emulator", "StartPaused", config_emulator.start_paused);
-    write_int("Emulator", "VDP", config_emulator.vdp);
-    write_int("Emulator", "MapperMode", config_emulator.mapper_mode);
-    write_int("Emulator", "MapperType", config_emulator.mapper_type);
-    write_int("Emulator", "MapperFallback", config_emulator.mapper_fallback);
+    write_int("Emulator", "Machine", config_emulator.machine);
+    write_int("Emulator", "LastSegaMachine", config_emulator.last_sega_machine);
+    write_bool("Machine.Coleco", "SGM", config_emulator.coleco_sgm);
+    config_emulator.vdp_by_model[config_emulator.machine] = config_emulator.vdp;
+    config_emulator.last_board_by_machine[GetMachineMenuGroup(static_cast<SystemModel>(config_emulator.machine)).code] = config_emulator.machine;
+    for (const auto& group : GetMachineMenuGroups()) {
+        const auto saved = config_emulator.last_board_by_machine.find(group.code);
+        write_int("Emulator", (std::string("Board.") + group.code).c_str(),
+            saved == config_emulator.last_board_by_machine.end() ? static_cast<int>(group.defaultModel) : saved->second);
+    }
+    config_emulator.video_option_by_model[config_emulator.machine] = config_selected_video_option();
+    config_emulator.last_model_by_family[config_mapper_family(static_cast<SystemModel>(config_emulator.machine))] = config_emulator.machine;
+    for (const auto& p : config_profiles::profiles) {
+        const int index = static_cast<int>(p.model);
+        const int legacy = config_emulator.vdp_by_model[index];
+        const auto code = config_resolve_video_option(legacy, config_emulator.video_option_by_model[index]);
+        write_int(p.section, p.key, legacy);
+        write_string(p.section, (std::string(p.key) + ".Option").c_str(), code.empty() ? "default" : code);
+    }
+    for (int f = 0; f < config_MapperFamily_COUNT; ++f)
+        write_int(config_profiles::familySection(static_cast<SystemModel>(config_emulator.last_model_by_family[f])),
+                  "LastModel", config_emulator.last_model_by_family[f]);
+    config_mapper_store();
+    config_ini_data["Emulator"].remove("MapperMode");
+    config_ini_data["Emulator"].remove("MapperType");
+    {
+        static const char* const kFamilySections[config_MapperFamily_COUNT] = {
+            "Machine.SG1000", "Machine.SMS", "Machine.Coleco", "Machine.MSX", "Machine.SordM5", "Machine.GameGear"};
+        for (int f = 0; f < config_MapperFamily_COUNT; f++)
+        {
+            write_int(kFamilySections[f], "MapperMode", config_emulator.mapper_mode_by_family[f]);
+            write_int(kFamilySections[f], "MapperType", config_emulator.mapper_type_by_family[f]);
+        }
+    }
 #if GEARSF7000_ENABLE_MCP
     write_int("Emulator", "MCPTCPPort", config_emulator.mcp_tcp_port);
     write_string("Emulator", "MCPHTTPAddress", config_emulator.mcp_http_address);
 #endif
 
 
-    write_string("SR-1000", "CassettePath", config_emulator.cassette_path);
-    write_bool("SR-1000", "CassetteWriteProtected", config_emulator.cassette_write_protected);
+    const auto writeTape = [](const char* section, const config_Tape& tape) {
+        write_string(section, "CassettePath", tape.path);
+        write_bool(section, "CassetteWriteProtected", tape.write_protected);
+        for (int i = 0; i < config_max_recent_cassettes; ++i) {
+            const std::string key = "RecentCassette" + std::to_string(i);
+            write_string(section, key.c_str(), tape.recent[i]);
+        }
+    };
+    writeTape("Machine.SR1000", config_emulator.sr1000_tape);
+    writeTape("Machine.MSXTape", config_emulator.msx_tape);
 
-    for (int i = 0; i < config_max_recent_cassettes; i++)
-    {
-        std::string item = "RecentCassette" + std::to_string(i);
-        write_string("SR-1000", item.c_str(), config_emulator.recent_cassettes[i]);
-    }
-
-
-    write_string("SF-7000", "BiosPath", config_emulator.bios_path);
-    write_string("SF-7000", "DiscPath", config_emulator.disc_path);
-    write_bool("SF-7000", "DiscWriteProtected", config_emulator.disc_write_protected);
+    write_string("Machine.SF7000", "BiosPath", config_emulator.bios_path);
+    write_string("Machine.Coleco", "BiosPath", config_emulator.coleco_bios_path);
+    write_string("Machine.SordM5", "BiosPath", config_emulator.m5_bios_path);
+    write_bool("Machine.SordM5", "EM5Installed", config_emulator.m5_em5_installed);
+    write_string("Machine.MSX", "BiosPath", config_emulator.msx_bios_path);
+    write_bool("Machine.MSX", "UseCBios", config_emulator.msx_use_cbios);
+    write_string("Machine.SF7000", "DiscPath", config_emulator.disc_path);
+    write_bool("Machine.SF7000", "DiscWriteProtected", config_emulator.disc_write_protected);
 
     for (int i = 0; i < config_max_recent_discs; i++)
     {
         std::string item = "RecentDISC" + std::to_string(i);
-        write_string("SF-7000", item.c_str(), config_emulator.recent_discs[i]);
+        write_string("Machine.SF7000", item.c_str(), config_emulator.recent_discs[i]);
     }
 
     write_int("Emulator", "SaveFilesDirOption", config_emulator.savefiles_dir_option);
@@ -710,25 +1055,17 @@ void config_write(void)
     write_float("DebugVideo", "AdvancedScalingEdgeRadius", config_debug.video.advanced_scaling_edge_radius);
 #endif
     write_int("Video", "Palette", config_video.palette);
-    for (int i = 0; i < 16; i++)
-    {
-        char pal_label_r[32];
-        char pal_label_g[32];
-        char pal_label_b[32];
-        sprintf(pal_label_r, "CustomPalette%dR", i);
-        sprintf(pal_label_g, "CustomPalette%dG", i);
-        sprintf(pal_label_b, "CustomPalette%dB", i);
-        write_int("Video", pal_label_r, config_video.color[i].red);
-        write_int("Video", pal_label_g, config_video.color[i].green);
-        write_int("Video", pal_label_b, config_video.color[i].blue);
-    }
+    write_int("Video", "SmsTmsPalette", config_video.sms_tms_palette);
     write_string("Video", "Pacing", config_video_pacing_name());
 
     write_bool("Audio", "Enable", config_audio.enable);
 #if GEARSF7000_ENABLE_AY
-    write_bool("Audio", "AYEnable", config_audio.ay_enable);
-    write_int("Audio", "AYChip", config_audio.ay_chip);
-    write_int("Audio", "AYPortBase", config_audio.ay_port_base);
+    write_bool("Machine.SegaAudio", "AYEnable", config_audio.ay_enable);
+    write_int("Machine.SegaAudio", "AYChip", config_audio.ay_chip);
+    write_int("Machine.SegaAudio", "AYPortBase", config_audio.ay_port_base);
+#endif
+#if GEARSF7000_ENABLE_YM2413
+    write_bool("Machine.SMS", "YM2413Enable", config_audio.ym2413_enable);
 #endif
 
     write_int("InputA", "KeyLeft", config_input[0].key_left);
@@ -820,21 +1157,43 @@ void config_write(void)
     //write_int("InputB", "GamepadHash", config_input[1].gamepad_hash);
 
     for (int key = 0; key < SK1100_KEYBOARD_KEY_COUNT; ++key)
-        write_int("SK1100", sk1100_keyboard_layout[key].id,
+        write_int("Machine.SK1100", sk1100_keyboard_layout[key].id,
                   config_input[0].sk1100_key[key]);
+
+    for (int player = 0; player < 2; ++player)
+        for (int key = 0; key < COLECO_KEYPAD_KEY_COUNT; ++key)
+        {
+            const std::string item = std::string(player == 0 ? "KeypadA_" : "KeypadB_")
+                + coleco_keypad_layout[key].id;
+            write_int("Machine.Coleco", item.c_str(), config_input[player].keypad_key[key]);
+        }
+
+    for (int player = 0; player < 2; ++player)
+    {
+        const std::string pad = player == 0 ? "PadA" : "PadB";
+        write_int("Machine.SMS", pad.c_str(), config_input[player].controller_device);
+        for (int button = 0; button < MD_PAD_BUTTON_COUNT; ++button)
+        {
+            const std::string id = md_pad_layout[button].id;
+            write_int("Machine.SMS", (pad + "_Key" + id).c_str(),
+                      config_input[player].md_key[button]);
+            write_int("Machine.SMS", (pad + "_Gamepad" + id).c_str(),
+                      config_input[player].gamepad_md_button[button]);
+        }
+    }
+    write_int("Machine.GameGear", "KeyStart", config_input[0].gg_start_key);
+    write_int("Machine.GameGear", "GamepadStart",
+              config_input[0].gamepad_gg_start_button);
 
     for (int hotkey = 0; hotkey < config_HotkeyIndex_COUNT; ++hotkey)
         write_hotkey(config_hotkey_name((config_HotkeyIndex)hotkey),
                      config_hotkeys[hotkey]);
 
-    if (config_ini_file->write(config_ini_data, true))
-    {
-        Log("Settings saved");
-    }
-    else
-    {
-        Log("Unable to save settings to %s", config_emu_file_path);
-    }
+    const bool saved = config_repository->save(config_ini_data);
+    config_storage_error = config_repository->error;
+    if (saved) DiagInfo("config", "Settings saved (format 3)");
+    else DiagError("config", "Settings not saved: %s", config_storage_error.c_str());
+    return {saved, config_repository->writable(), config_repository->file, config_repository->operation, config_storage_error};
 }
 
 static void build_config_path(char* destination, size_t destination_size, const char* filename)
@@ -851,80 +1210,7 @@ static void build_config_path(char* destination, size_t destination_size, const 
     }
 }
 
-#if defined(_WIN32)
-static void copy_file_if_missing(const char* source_path, const char* destination_path)
-{
-    FILE* destination = fopen(destination_path, "rb");
-    if (destination)
-    {
-        fclose(destination);
-        return;
-    }
 
-    FILE* source = fopen(source_path, "rb");
-    if (!source)
-        return;
-
-    destination = fopen(destination_path, "wb");
-    if (!destination)
-    {
-        Log("Unable to migrate settings file to %s", destination_path);
-        fclose(source);
-        return;
-    }
-
-    char buffer[8192];
-    bool failed = false;
-    size_t read_count = 0;
-    while ((read_count = fread(buffer, 1, sizeof(buffer), source)) > 0)
-    {
-        if (fwrite(buffer, 1, read_count, destination) != read_count)
-        {
-            failed = true;
-            break;
-        }
-    }
-
-    failed = failed || ferror(source) || ferror(destination);
-    fclose(source);
-    fclose(destination);
-
-    if (failed)
-        Log("Unable to completely migrate settings file from %s", source_path);
-    else
-        Log("Migrated settings file from %s", source_path);
-}
-
-static void migrate_legacy_windows_config(void)
-{
-    FILE* config_file = fopen(config_emu_file_path, "rb");
-    FILE* imgui_file = fopen(config_imgui_file_path, "rb");
-    const bool config_exists = config_file != nullptr;
-    const bool imgui_exists = imgui_file != nullptr;
-
-    if (config_file)
-        fclose(config_file);
-    if (imgui_file)
-        fclose(imgui_file);
-    if (config_exists && imgui_exists)
-        return;
-
-    char* legacy_root_path = SDL_GetPrefPath("Geardome", "GearSystem");
-    if (!legacy_root_path)
-        return;
-
-    char legacy_config_path[4096];
-    char legacy_imgui_path[4096];
-    const int config_length = SDL_snprintf(legacy_config_path, sizeof(legacy_config_path), "%sconfig.ini", legacy_root_path);
-    const int imgui_length = SDL_snprintf(legacy_imgui_path, sizeof(legacy_imgui_path), "%simgui.ini", legacy_root_path);
-    SDL_free(legacy_root_path);
-
-    if (config_length >= 0 && static_cast<size_t>(config_length) < sizeof(legacy_config_path))
-        copy_file_if_missing(legacy_config_path, config_emu_file_path);
-    if (imgui_length >= 0 && static_cast<size_t>(imgui_length) < sizeof(legacy_imgui_path))
-        copy_file_if_missing(legacy_imgui_path, config_imgui_file_path);
-}
-#endif
 
 static bool check_portable(void)
 {
@@ -950,13 +1236,15 @@ static int read_int(const char* group, const char* key, int default_value)
 {
     int ret = default_value;
 
-    std::string value = config_ini_data[group][key];
+    std::string value = config_ini_data.get(group).get(key);
 
     if (!value.empty())
     {
         try
         {
-        ret = std::stoi(value);
+        size_t end = 0;
+        ret = std::stoi(value, &end);
+        if (end != value.size()) ret = default_value;
         }
         catch (...)
         {
@@ -1076,7 +1364,7 @@ static float read_float(const char* group, const char* key, float default_value)
 {
     float ret = 0.0f;
 
-    std::string value = config_ini_data[group][key];
+    std::string value = config_ini_data.get(group).get(key);
 
     if(value.empty())
         ret = default_value;
@@ -1098,17 +1386,13 @@ static bool read_bool(const char* group, const char* key, bool default_value)
 {
     bool ret = default_value;
 
-    std::string value = config_ini_data[group][key];
+    std::string value = config_ini_data.get(group).get(key);
 
     if (!value.empty())
     {
-        std::istringstream parser(value);
-        parser >> std::boolalpha >> ret;
-        if (parser.fail())
-        {
-            ret = default_value;
-            Log("Invalid boolean setting: [%s][%s]=%s; using default", group, key, value.c_str());
-        }
+        if (value == "true") ret = true;
+        else if (value == "false") ret = false;
+        else Log("Invalid boolean setting: [%s][%s]=%s; using default", group, key, value.c_str());
     }
 
     Log("Load setting: [%s][%s]=%s", group, key, ret ? "true" : "false");
@@ -1127,7 +1411,7 @@ static void write_bool(const char* group, const char* key, bool boolean)
 
 static std::string read_string(const char* group, const char* key)
 {
-    std::string ret = config_ini_data[group][key];
+    std::string ret = config_ini_data.get(group).get(key);
     Log("Load setting: [%s][%s]=%s", group, key, ret.c_str());
     return ret;
 }

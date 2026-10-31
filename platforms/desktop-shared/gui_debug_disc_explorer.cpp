@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "gui_debug_disc_explorer.h"
@@ -14,7 +16,7 @@
 
 #include "imgui/imgui.h"
 #include "imgui/colors.h"
-#include "nfd/nfd.h"
+#include "nfd_parented.h"
 #include "config.h"
 #include "emu.h"
 #include "gui.h"
@@ -120,8 +122,8 @@ void browse_button(const char* id, char* buf, size_t size, bool save)
         ScopedAudioPause audioPause;
         nfdchar_t* out = nullptr;
         nfdresult_t result = save
-            ? NFD_SaveDialog(&out, nullptr, 0, nullptr, nullptr)
-            : NFD_OpenDialog(&out, nullptr, 0, nullptr);
+            ? NFD_SaveDialogParented(&out, nullptr, 0, nullptr, nullptr)
+            : NFD_OpenDialogParented(&out, nullptr, 0, nullptr);
         if (result == NFD_OKAY)
         {
             strncpy(buf, out, size - 1);
@@ -365,7 +367,7 @@ void draw_actions(void)
             {
                 ScopedAudioPause audioPause;
                 nfdchar_t* chosen = nullptr;
-                if (NFD_SaveDialog(&chosen, nullptr, 0, nullptr, name.c_str()) == NFD_OKAY)
+                if (NFD_SaveDialogParented(&chosen, nullptr, 0, nullptr, name.c_str()) == NFD_OKAY)
                 {
                     snprintf(out, sizeof(out), "%s", chosen);
                     NFD_FreePath(chosen);
@@ -506,7 +508,7 @@ void draw_fat(void)
 void gui_debug_disc_explorer_window(void)
 {
     ImGui::SetNextWindowPos(ImVec2(120, 90), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(760, 620), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(42.2f, 34.4f);
 
     if (!ImGui::Begin("Disc Explorer", &config_debug.show_disc_explorer))
     {

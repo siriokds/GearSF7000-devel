@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - CLK Z80 internal state serialization
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "cpu/clk/CLKZ80StateAccess.h"
@@ -10,6 +10,14 @@
 #include "SaveStateStream.h"
 
 namespace CPU::Z80 {
+
+void GearSF7000StateAccess::ClearMachineInterruptRequests(ProcessorStorage& storage)
+{
+    const auto mask = ProcessorStorage::Interrupt::IRQ | ProcessorStorage::Interrupt::NMI;
+    storage.request_status_ &= ~mask;
+    storage.last_request_status_ &= ~mask;
+    storage.irq_line_ = storage.nmi_line_ = false;
+}
 
 namespace {
 

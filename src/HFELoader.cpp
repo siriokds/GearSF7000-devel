@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /*
 ** HFELoader.cpp — HxC Floppy Emulator v1 (HXCPICFE) loader + MFM decoder
 **

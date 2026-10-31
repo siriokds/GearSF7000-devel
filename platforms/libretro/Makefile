@@ -1,3 +1,4 @@
+.DEFAULT_GOAL := all
 STATIC_LINKING := 0
 AR             ?= ar
 
@@ -355,7 +356,6 @@ endif
 
 include Makefile.common
 
-OBJECTS := $(SOURCES_C:.c=.o) $(SOURCES_CXX:.cpp=.o)
 
 INCLUDES += -I$(CORE_DIR) -I$(SOURCE_DIR) -I$(SOURCE_DIR)/../third_party/clk
 
@@ -364,16 +364,22 @@ CORE_DEFINES := -D__LIBRETRO__ \
 	-DGEARSF7000_ENABLE_DEBUG_TOOLS=0 \
 	-DGEARSF7000_ENABLE_RECORDER=0 \
 	-DGEARSF7000_ENABLE_MCP=0 \
-	-DGEARSF7000_ENABLE_AY=0 \
+	-DGEARSF7000_ENABLE_AY=0 -DGEARSF7000_ENABLE_YM2413=0 \
 	-DGEARSF7000_ENABLE_SF7000=0 \
 	-DGEARSF7000_ENABLE_SR1000=0 \
-	-DGEARSF7000_ENABLE_SP400=0 \
+	-DGEARSF7000_ENABLE_PICO9918=0 \
 	-DGEARSF7000_ENABLE_SDL_INPUT=0 \
 	-DGEARSF7000_DISABLE_DISASSEMBLER \
 	-DGC_AUDIO_SAMPLE_RATE=48000
 
 CFLAGS   += -Wall $(CORE_DEFINES) $(INCLUDES) $(fpic)
 CXXFLAGS += -Wall $(CORE_DEFINES) $(INCLUDES) $(fpic)
+
+# Keep ABI/architecture variants out of src/ and away from one another.
+BUILD_SIGNATURE := $(shell printf '%s' '$(CC)|$(CXX)|$(CFLAGS)|$(CXXFLAGS)|$(LDFLAGS)|$(STATIC_LINKING)' | cksum | cut -d' ' -f1)
+OBJ_DIR := build/$(platform)/$(BUILD_CONFIG)/$(BUILD_SIGNATURE)
+OBJECTS := $(addprefix $(OBJ_DIR)/,$(addsuffix .o,$(patsubst $(PROJECT_ROOT)/%,%,$(abspath $(SOURCES_C) $(SOURCES_CXX)))))
+-include $(OBJECTS:.o=.d)
 
 all: $(TARGET)
 	@echo Build complete: $(TARGET_NAME) $(BUILD_CONFIG) - $(GIT_VERSION) - $(platform)
@@ -385,11 +391,13 @@ else
 	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS)
 endif
 
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -std=c++20 -c -o $@ $<
+$(OBJ_DIR)/%.cpp.o: $(PROJECT_ROOT)/%.cpp
+	@mkdir -p "$(@D)"
+	$(CXX) $(CXXFLAGS) -MMD -MP -std=c++20 -c -o $@ $<
 
-%.o: %.c
-	$(CC) $(CFLAGS) -std=gnu99 -c -o $@ $<
+$(OBJ_DIR)/%.c.o: $(PROJECT_ROOT)/%.c
+	@mkdir -p "$(@D)"
+	$(CC) $(CFLAGS) -MMD -MP -std=gnu99 -c -o $@ $<
 
 clean:
 	rm -f $(OBJECTS) $(TARGET)
@@ -403,3 +411,9 @@ uninstall:
 	rm $(DESTDIR)$(libdir)/$(LIBRETRO_INSTALL_DIR)/$(TARGET_NAME).libretro
 
 .PHONY: clean install uninstall
+
+# The JSON files are the source of truth; embed them once for every frontend.
+VIDEO_CATALOG_HEADER = $(SOURCE_DIR)/VideoCatalogData.h
+$(VIDEO_CATALOG_HEADER): $(wildcard $(SOURCE_DIR)/video_*.json) ../../tools/generate_video_catalog.py ../../tools/validate_video_catalog.py
+	python3 ../../tools/generate_video_catalog.py
+$(OBJECTS): | $(VIDEO_CATALOG_HEADER)

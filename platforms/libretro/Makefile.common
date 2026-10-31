@@ -3,27 +3,52 @@ SOURCES_C := $(SOURCE_DIR)/miniz/miniz.c
 SOURCES_CXX := $(CORE_DIR)/libretro.cpp \
                $(SOURCE_DIR)/build_info.cpp \
                $(SOURCE_DIR)/Audio.cpp \
+               $(SOURCE_DIR)/audio/OneBitAudioDevice.cpp \
                $(SOURCE_DIR)/COM8251A.cpp \
+               $(SOURCE_DIR)/Intel8255.cpp \
+               $(SOURCE_DIR)/Z80CTC.cpp \
                $(SOURCE_DIR)/BasicProgramLoader.cpp \
                $(SOURCE_DIR)/Cartridge.cpp \
                $(SOURCE_DIR)/MachineIOPorts.cpp \
+               $(SOURCE_DIR)/SC3000SerialPrinterPort.cpp \
+               $(SOURCE_DIR)/SegaCassettePort.cpp \
+    $(SOURCE_DIR)/ControllerDevice.cpp \
+    $(SOURCE_DIR)/SystemBusColeco.cpp \
+    $(SOURCE_DIR)/SystemBusSMS.cpp \
+    $(SOURCE_DIR)/SystemBusGG.cpp \
+    $(SOURCE_DIR)/GameGearInternalBusHandler.cpp \
+    $(SOURCE_DIR)/SystemBusMSX.cpp \
+    $(SOURCE_DIR)/MSXSlotMapper.cpp \
+    $(SOURCE_DIR)/M5MemoryMapper.cpp \
+    $(SOURCE_DIR)/M5Input.cpp \
+    $(SOURCE_DIR)/SystemBusM5.cpp \
+               $(SOURCE_DIR)/SystemBusSC3000.cpp \
+               $(SOURCE_DIR)/SystemBusSG1000.cpp \
+               $(SOURCE_DIR)/TMS99xxDebugEvents.cpp \
+               $(SOURCE_DIR)/SN76489DebugEvents.cpp \
                $(SOURCE_DIR)/cpu/clk/CLKZ80Processor.cpp \
                $(SOURCE_DIR)/cpu/clk/CLKZ80StateAccess.cpp \
                $(SOURCE_DIR)/cpu/clk/GearSF7000ClockDomains.cpp \
                $(SOURCE_DIR)/cpu/clk/GearSF7000BusHandler.cpp \
                $(SOURCE_DIR)/DebugEvents.cpp \
+               $(SOURCE_DIR)/DebugEventCatalog.cpp \
                $(SOURCE_DIR)/DiagnosticLog.cpp \
                $(SOURCE_DIR)/GearSF7000Core.cpp \
+               $(SOURCE_DIR)/VideoDeviceFactory.cpp \
+    $(SOURCE_DIR)/VideoCatalog.cpp \
                $(SOURCE_DIR)/Input.cpp \
-               $(SOURCE_DIR)/Led.cpp \
                $(SOURCE_DIR)/Memory.cpp \
                $(SOURCE_DIR)/SystemClock.cpp \
-               $(SOURCE_DIR)/TMS9918CpuAccessTiming.cpp \
-               $(SOURCE_DIR)/TMS9918VramSlotSchedule.cpp \
-               $(SOURCE_DIR)/TMS9918VramSequencer.cpp \
-               $(SOURCE_DIR)/Video.cpp \
+               $(SOURCE_DIR)/TMS99xxCpuAccessTiming.cpp \
+               $(SOURCE_DIR)/TMS99xxVramSlotSchedule.cpp \
+               $(SOURCE_DIR)/TMS99xxVramSequencer.cpp \
+               $(SOURCE_DIR)/TMS99xx.cpp \
+               $(SOURCE_DIR)/TMS9918B.cpp \
+               $(SOURCE_DIR)/tms9918b/TMS9918BAnalysis.cpp \
+               $(SOURCE_DIR)/tms9918b/TMS9918BCalendar.cpp \
                $(SOURCE_DIR)/WAVUtils.cpp \
-               $(SOURCE_DIR)/sk1100.cpp \
+               $(SOURCE_DIR)/SegaKeyboard.cpp \
+    $(SOURCE_DIR)/MSXKeyboard.cpp \
                $(SOURCE_DIR)/audio/Blip_Buffer.cpp \
                $(SOURCE_DIR)/audio/Effects_Buffer.cpp \
                $(SOURCE_DIR)/audio/Sms_Apu.cpp \

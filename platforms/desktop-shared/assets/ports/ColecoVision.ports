@@ -1,0 +1,21 @@
+; ColecoVision port names for the Disassembler window, in Emulicious' .ports
+; format: <hex port> <name> [in|out]; without a direction the name serves
+; both. A file of the same name in a project's folder takes its place.
+; The Super Game Module's ports are here too: without the module they are
+; simply never used.
+
+80 Port_KeypadSelect out
+C0 Port_JoystickSelect out
+FC Port_Controller1 in
+FF Port_Controller2 in
+FF Port_PSG out
+
+BE Port_VDPData
+BF Port_VDPAddress out
+BF Port_VDPStatus in
+
+50 Port_AYAddress out
+51 Port_AYData out
+52 Port_AYRead in
+53 Port_SGMUpper out
+7F Port_SGMLower out

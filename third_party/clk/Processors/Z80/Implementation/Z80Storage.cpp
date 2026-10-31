@@ -4,6 +4,8 @@
 //
 //  Created by Thomas Harte on 04/09/2017.
 //  Copyright 2017 Thomas Harte. All rights reserved.
+//  Changes for GearSF7000 Copyright (C) 2026  Saverio Russo, under the
+//  same licence as the rest of this file (MIT, see README-GearSF7000.md).
 //
 
 #include "Processors/Z80/Z80.hpp"

@@ -1,4 +1,6 @@
 // AY-3-8910 sound chip emulator
+// Changes for GearSF7000 Copyright (C) 2026  Saverio Russo, under the
+// same licence as the rest of this file (LGPL-2.1-or-later).
 
 // Game_Music_Emu https://bitbucket.org/mpyne/game-music-emu/
 //
@@ -16,37 +18,53 @@
 //     later Blargg revision that defines blip_long/blip_ulong itself instead
 //     of pulling in <stdint.h>, so uint32_t/int32_t are not in scope by
 //     accident the way they were upstream.
-//   - set_clock_divider() makes the tone/noise/envelope prescaler runtime
-//     configurable. See the comment on that method.
+//   - set_timebase_divider() makes the tone/noise/envelope host-timebase
+//     scaling configurable. See the comment on that method.
 #ifndef AY_APU_H
 #define AY_APU_H
 
 #include "blargg_common.h"
 #include "Blip_Buffer.h"
+#include "IAYPorts.h"
+#include "../IDebugEventProvider.h"
 
 #include <cstdint>
 #include <iosfwd>
+#include <string>
 
-class Ay_Apu {
+struct AyApuDebugConfiguration
+{
+	std::string key;
+	std::string parentKey;
+	std::string name;
+	std::uint16_t ioPortBase = 0x20;
+	bool publishesIo = false;
+};
+
+class Ay_Apu : public IDebugEventProvider {
 public:
 	enum class Chip_Type { ay_3_8910, ym2149 };
 
-	// Ratio between the Blip time domain and the AY's own clock.
+	DebugDeviceDefinition DescribeDebugDevice() const override;
+	void SetDebugIoPortBase( std::uint16_t base ) { debug_.ioPortBase = base; }
+	void SetDebugConfiguration(AyApuDebugConfiguration config) { debug_ = std::move(config); }
+
+	// Ratio between the Blip time domain and the renderer's native timebase,
+	// which is twice the AY's physical input clock.
 	//
-	// Upstream assumes blip_time_t is counted in AY clocks and hardwires a
-	// prescaler of 16. GearSF7000 runs a single Blip time domain for the whole
-	// machine, clocked at the Z80 rate, and Stereo_Buffer has exactly three
-	// fixed Blip_Buffers - so a second chip cannot be given a time domain of
-	// its own, it has to share this one.
+	// The inherited renderer toggles a tone every 16 of its input ticks, so a
+	// complete wave takes 32. AY documentation specifies a complete-wave
+	// divider of 16; consequently the renderer is intentionally driven at
+	// twice the physical AY clock. GearSF7000 runs one Blip time domain for
+	// the whole machine, clocked at the Z80 rate, and Stereo_Buffer has three
+	// fixed Blip_Buffers, so the AY must share that time domain.
 	//
-	// An SGM-style expansion derives the AY clock by halving the 3.58 MHz CPU
-	// clock, which is also what MSX does (3.579545 / 2 = 1.7897725 MHz). Pass
-	// 2 for that: dividing 3.58 MHz by 32 is exactly dividing 1.79 MHz by 16,
-	// so tone, noise and envelope all land on the right frequencies without a
-	// second clock domain. Pass 1 if the chip is ever wired to the full CPU
-	// clock. Call before writing registers; it takes effect on the next
-	// period reload.
-	void set_clock_divider( int divider );
+	// The SGM/MSX arrangement feeds the AY at half the 3.58 MHz CPU clock.
+	// Therefore the CPU time domain already equals twice the AY clock and the
+	// divider here is 1. Use a larger integer only if the host time domain is
+	// an additional integer multiple of twice the physical AY clock. Call
+	// before reset or register writes.
+	void set_timebase_divider( int divider );
 
 	// Selects which chip's DAC/envelope characteristics to emulate
 	// (ZX Spectrum: ay_3_8910; most MSX: ym2149). Call before writing any
@@ -71,6 +89,18 @@ public:
 	// leaves them unconnected, so they read back as written rather than
 	// floating.
 	int read( int addr ) const { return regs [addr & 0x0F]; }
+
+	// Non-owning connection; null preserves legacy latch-only behaviour.
+	// Binding/detaching does not call the device. Detach before destroying it.
+	void SetPorts( IAYPorts* ports ) { ports_ = ports; }
+	IAYPorts* GetPorts() const { return ports_; }
+	// Bus reads resolve external pins only for ports configured as inputs.
+	// The one-argument read() above remains a pure latch inspection API.
+	int read( int addr, blip_time_t time ) const;
+	int peek( int addr, blip_time_t time ) const;
+	// Explicitly publish current output levels after binding or committing a
+	// restored machine. LoadState never calls external devices during validation.
+	void SyncPorts( blip_time_t time );
 
 	// Run sound to specified time, end current time frame, then start a new
 	// time frame at time 0. Time frames have no effect on emulation and each
@@ -139,8 +169,11 @@ public:
 
 public:
 	Ay_Apu();
+	explicit Ay_Apu( AyApuDebugConfiguration debug );
 	typedef unsigned char byte;
 private:
+	IAYPorts* ports_ = nullptr;
+	void UpdatePorts( int addr, int previousMixer, blip_time_t time );
 	struct osc_t
 	{
 		blip_time_t period;
@@ -180,8 +213,9 @@ private:
 	Blip_Buffer debug_bufs_[osc_count];
 
 	Chip_Type chip_type_ = Chip_Type::ay_3_8910;
-	// Blip clocks per AY internal tick; 16 * clock divider. See
-	// set_clock_divider().
+	AyApuDebugConfiguration debug_;
+	// Host Blip clocks per renderer half-wave tick; 16 * timebase divider.
+	// See set_timebase_divider().
 	int period_factor_ = 16;
 
 	void run_until( blip_time_t );
@@ -199,7 +233,9 @@ inline void Ay_Apu::treble_eq( blip_eq_t const& eq ) { synth_.treble_eq( eq ); }
 inline void Ay_Apu::write( blip_time_t time, int addr, int data )
 {
 	run_until( time );
+	const int previousMixer = regs [7];
 	write_data_( addr, data );
+	if ( ports_ ) UpdatePorts( addr, previousMixer, time );
 }
 
 inline void Ay_Apu::osc_output( int i, Blip_Buffer* buf )

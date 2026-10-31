@@ -1,4 +1,6 @@
 // Band-limited sound synthesis buffer
+// Changes for GearSF7000 Copyright (C) 2024-2026  Saverio Russo, under the
+// same licence as the rest of this file (LGPL-2.1-or-later).
 
 // Blip_Buffer 0.4.1
 #ifndef BLIP_BUFFER_H

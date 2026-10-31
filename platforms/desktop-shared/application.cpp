@@ -1,20 +1,29 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026  Saverio Russo
-
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2024-2026  Saverio Russo
+ *
+ * Derived from Gearcoleco by Ignacio Sanchez. His code is free software: you
+ * can redistribute it and/or modify it under the terms of the GNU General
+ * Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * The changes and additions by Saverio Russo are free software: you can
+ * redistribute them and/or modify them under the terms of the GNU Affero
+ * General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ * Section 13 of both licences permits the combination.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see http://www.gnu.org/licenses/
+ * GNU General Public License and the GNU Affero General Public License
+ * for more details.
  *
+ * You should have received a copy of both licences along with this
+ * program.  If not, see http://www.gnu.org/licenses/
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include <SDL3/SDL.h>
@@ -25,7 +34,6 @@
 #include "gui.h"
 #include "gui_debug.h"
 #include "gui_debug_rewind.h"
-#include "Video.h"
 #include "rewind.h"
 #include "DiagnosticLog.h"
 #include <typeinfo>
@@ -33,6 +41,15 @@
 #include "renderer.h"
 #include "scheduler.h"
 #include "sk1100_keyboard_layout.h"
+#include "msx_keyboard_layout.h"
+#include "m5_keyboard_layout.h"
+#include "coleco_keypad_layout.h"
+#include "md_pad_layout.h"
+#include "ISystemBus.h"
+#include "SystemBusSC3000.h"
+#include <fstream>
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 
 #define APPLICATION_IMPORT
@@ -56,7 +73,105 @@ static void save_window_size(void);
 static void push_recent_rom(const char* path);
 static void push_recent_disc(const char* path);
 static void push_recent_cassette(const char* path);
-static Cartridge::CartridgeRegions application_cartridge_region(int index);
+
+static bool path_has_extension(const char* path, const char* expected)
+{
+    if (!path || !expected)
+        return false;
+    std::string extension = std::filesystem::path(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == expected;
+}
+
+static void select_rom_profile(const char* path)
+{
+    const SystemModel current = static_cast<SystemModel>(config_emulator.machine);
+    if (path_has_extension(path, ".asls"))
+    {
+        if (current != SystemModel::SC3000)
+            config_select_machine(SystemModel::SC3000);
+        return;
+    }
+#if GEARSF7000_ENABLE_GAMEGEAR
+    if (path_has_extension(path, ".gg"))
+    {
+        // A Game Gear cartridge selects its own board. Keep an explicitly
+        // selected Japan/Export model when loading another Game Gear image.
+        if (!IsGameGearSystem(current))
+            config_select_machine(static_cast<SystemModel>(
+                config_emulator.last_model_by_family[config_MapperFamily_GameGear]));
+        return;
+    }
+#endif
+    if (path_has_extension(path, ".mx1"))
+    {
+        if (!IsMSXSystem(current)) { config_select_machine(static_cast<SystemModel>(config_emulator.last_model_by_family[config_MapperFamily_MSX])); }
+        return;
+    }
+    if ((IsMSXSystem(current) || IsM5System(current)) && (path_has_extension(path, ".rom") ||
+        path_has_extension(path, ".bin") || path_has_extension(path, ".zip"))) return;
+    const bool onColeco = IsValidSystemModel(current) && IsColecoSystem(current);
+    const bool generic = path_has_extension(path, ".rom")
+        || path_has_extension(path, ".bin") || path_has_extension(path, ".zip");
+    bool colecoContent = false;
+    if (generic)
+    {
+        // Reuse Cartridge's ZIP extraction and content detection. Do not
+        // infer the board from a generic suffix or a directory name.
+        Cartridge probe;
+        if (probe.LoadFromFile(path))
+        {
+            colecoContent = probe.GetType() == Cartridge::COLECO_MEGACART;
+            if (probe.GetROMSize() >= 2 && probe.GetROMSize() <= 0x8000)
+            {
+                const u8* bytes = probe.GetROM();
+                colecoContent = (bytes[0] == 0x55 && bytes[1] == 0xAA)
+                    || (bytes[0] == 0xAA && bytes[1] == 0x55);
+            }
+        }
+    }
+    if (colecoContent || path_has_extension(path, ".col") || path_has_extension(path, ".cv"))
+    {
+        // A ColecoVision image is only meaningful on that board. Remember
+        // the Sega model it displaces, to come back to it.
+        if (!onColeco)
+        {
+            if (IsValidSystemModel(current) && !IsMSXSystem(current) && !IsM5System(current))
+                config_emulator.last_sega_machine = config_emulator.machine;
+            config_select_machine(config_emulator.coleco_sgm
+                ? SystemModel::ColecoVisionSGM : SystemModel::ColecoVision);
+        }
+        return;
+    }
+
+    if ((onColeco || IsMSXSystem(current) || IsM5System(current)) && !generic)
+    {
+        // Any other image is a Sega one: back to the board it was chosen for.
+        SystemModel back = static_cast<SystemModel>(config_emulator.last_sega_machine);
+        if (!IsValidSystemModel(back) || IsColecoSystem(back) || IsMSXSystem(back) || IsM5System(back))
+            back = SystemModel::SC3000Export;
+        config_select_machine(back);
+    }
+
+#if GEARSF7000_ENABLE_SMS
+    if (!path_has_extension(path, ".sms"))
+        return;
+
+    SystemModel requested = static_cast<SystemModel>(config_emulator.machine);
+    if (!IsValidSystemModel(requested) || !IsSMSSystem(requested))
+    {
+        // Mark III is the direct-cartridge, NTSC starting point. Once an SMS
+        // profile is already selected, keep its region/BIOS choice.
+        const SystemModel previous = static_cast<SystemModel>(
+            config_emulator.last_model_by_family[config_MapperFamily_SMS]);
+        config_select_machine(IsSMSSystem(previous) ? previous : SystemModel::SegaMarkIII);
+    }
+    // The mapper choice follows the family: config_select_machine() brought
+    // back the SMS one, so nothing retained from an SG-1000 session can
+    // describe this cartridge, and the SG-1000 choice waits for its return.
+#endif
+}
 
 #ifdef __AVX2__
 #include <iostream>
@@ -101,7 +216,8 @@ int application_init(const char* rom_file, const char* symbol_file)
 
     Log("\n%s", GEARSF7000_TITLE_ASCII);
     Log("%s %s Desktop App", GEARSF7000_TITLE, build_info_version());
-    // First line of every log: which binary is actually running.
+    Log("Build: %s", build_info_revision());
+    // Together with the revision above, this identifies the exact binary.
     Log("Compiled: %s", build_info_timestamp());
     Log("By Saverio Russo");
 
@@ -118,7 +234,7 @@ int application_init(const char* rom_file, const char* symbol_file)
 
     // Opened as early as the configuration allows, because the interesting
     // failures are the ones that happen before anyone is watching. It lives
-    // next to config.ini - SDL's preferences directory, or the application's
+    // next to gearconfig.ini - SDL's preferences directory, or the application's
     // own folder in portable mode - so it travels with the settings.
     if (DiagnosticLogOpen(config_root_path, "gearsf7000.log"))
     {
@@ -127,6 +243,8 @@ int application_init(const char* rom_file, const char* symbol_file)
             static_cast<std::size_t>(config_debug.log_max_mb) * 1024u * 1024u);
         DiagInfo("app", "GearSF7000 %s starting", build_info_full());
         DiagInfo("app", "log at %s", DiagnosticLogPath());
+        if (!config_get_storage_notice().empty()) DiagInfo("config", "%s", config_get_storage_notice().c_str());
+        if (!config_get_storage_error().empty()) DiagError("config", "%s", config_get_storage_error().c_str());
     }
 
     int ret = sdl_init();
@@ -169,8 +287,16 @@ void application_destroy(void)
 {
     DiagInfo("app", "GearSF7000 shutting down");
     save_window_size();
+    emu_prepare_shutdown();
     config_write();
     config_destroy();
+
+    // The SDL3 platform backend stores the native window handle on ImGui's
+    // main viewport even when multi-viewport is disabled. Clear all viewport
+    // backend data while both backends are still alive; DestroyContext()
+    // asserts in Debug builds if a PlatformHandle or backend user pointer is
+    // left behind.
+    ImGui::DestroyPlatformWindows();
     renderer_destroy();
     ImGui_ImplSDL3_Shutdown();
     gui_destroy();
@@ -196,10 +322,8 @@ static void application_log_machine_context(void)
         const CpuStateSnapshot cpu =
             emu_get_core()->GetCpuStateAccess()->GetCpuStateSnapshot();
         Log("  pc                 : %04X", cpu.pc);
-        if (Video* video = emu_get_core()->GetVideo())
-            Log("  frame serial       : %llu",
-                (unsigned long long)
-                    video->GetFrameRenderDiagnostics().frameSerial);
+        Log("  frame serial       : %llu",
+            (unsigned long long)emu_get_core()->GetVideoFrameSerial());
     }
 
     Log("  recorder           : %s, %d frames held",
@@ -294,12 +418,39 @@ void application_apply_startup_media(void)
                                config_emulator.disc_write_protected);
     }
 
-    if (!config_emulator.cassette_path.empty())
+    const auto& tape = emu_get_core()->GetMachineType() == MachineType::MSX
+        ? config_emulator.msx_tape : config_emulator.sr1000_tape;
+    if (emu_get_core()->HasCassetteInterface() && !tape.path.empty())
+        application_load_tape(tape.path.c_str());
+}
+
+// The board's own names, on top of the cartridge's: the ColecoVision OS 7
+// jump table and routines ($0000-$1FFF), shipped with the application. They
+// never collide with a cartridge, which starts at $8000, so they are added
+// to whatever the cartridge's .sym brought.
+static void load_board_symbols(void)
+{
+    if (!IsColecoSystem(emu_get_core()->GetSystemModel()))
+        return;
+    const char* base_path = SDL_GetBasePath();
+    const char* relative_paths[] = {
+        "../Resources/coleco_os7.sym",
+        "../../desktop-shared/assets/coleco_os7.sym",
+        "../desktop-shared/assets/coleco_os7.sym",
+        "coleco_os7.sym"
+    };
+    for (const char* relative : relative_paths)
     {
-        DiagInfo("media", "loading configured cassette: %s",
-                 config_emulator.cassette_path.c_str());
-        application_load_tape(config_emulator.cassette_path.c_str());
+        std::string file = base_path ? base_path : "";
+        file += relative;
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(std::filesystem::path(file), error))
+            continue;
+        const int added = gui_debug_load_symbols_file_counted(file.c_str());
+        Log("ColecoVision OS 7 symbols: %d from %s", added, file.c_str());
+        return;
     }
+    Log("ColecoVision OS 7 symbols not found next to the application");
 }
 
 bool application_load_rom(const char* path)
@@ -316,8 +467,17 @@ bool application_load_rom(const char* path)
 
     Log("application_load_rom %s", path);
 
+    // A machine left out of this build has no file type either.
+    if ((!GEARSF7000_ENABLE_SMS && path_has_extension(path, ".sms")) ||
+        (!GEARSF7000_ENABLE_GAMEGEAR && path_has_extension(path, ".gg")))
+    {
+        Log("application_load_rom unsupported file type: %s", path);
+        return false;
+    }
+
+    select_rom_profile(path);
+
     Cartridge::ForceConfiguration config;
-    config.region = application_cartridge_region(config_emulator.vdp);
     config.type = config_forced_cartridge_type();
     config.fallbackType = config_fallback_cartridge_type();
 
@@ -325,7 +485,8 @@ bool application_load_rom(const char* path)
     // moved here only so every front-end reaches the same code path.
     const bool wasPaused = emu_is_paused();
     emu_resume();
-    if (!emu_load_rom(path, config, config_emulator.start_paused))
+    const bool startPaused = config_emulator.start_paused && emu_debug_runtime_requested();
+    if (!emu_load_rom(path, config, startPaused))
     {
         Log("application_load_rom failed: %s", path);
         if (wasPaused)
@@ -339,15 +500,17 @@ bool application_load_rom(const char* path)
     symbolPath = symbolPath.substr(0, symbolPath.find_last_of("."));
     symbolPath += ".sym";
     gui_debug_load_symbols_file(symbolPath.c_str());
+    load_board_symbols();
 
-    if (config_emulator.start_paused)
+    if (startPaused)
         emu_clear_video_buffer();
 
-    return !emu_is_empty();
+    return emu_get_core()->GetCartridge()->IsReady();
 }
 
 bool application_load_tape(const char* path)
 {
+    if (!emu_get_core()->HasCassetteInterface()) return false;
     if (!path || !path[0])
         return false;
 
@@ -365,8 +528,10 @@ bool application_load_tape(const char* path)
         return false;
     }
 
-    config_emulator.cassette_path = path;
-    config_emulator.cassette_write_protected = readOnly;
+    auto& tape = emu_get_core()->GetMachineType() == MachineType::MSX
+        ? config_emulator.msx_tape : config_emulator.sr1000_tape;
+    tape.path = path;
+    tape.write_protected = readOnly;
     emu_writeprotect_cassette(readOnly);
     push_recent_cassette(path);
     config_write();
@@ -405,34 +570,21 @@ bool application_mount_disk(const char* path, bool write_protected)
 
 bool application_start_sf7000(void)
 {
-    if (!emu_is_bios_loaded())
+    // Validate the intended IPL before switching boards. A loaded Coleco BIOS
+    // has the same size, but must never be reused as SF-7000 firmware.
+    std::ifstream ipl(config_emulator.bios_path, std::ios::binary | std::ios::ate);
+    if (!ipl || ipl.tellg() != static_cast<std::streamoff>(SystemBusSC3000::IplSize))
     {
-        if (config_emulator.bios_path.empty())
-        {
-            Log("application_start_sf7000: no IPL configured");
-            return false;
-        }
-
-        std::error_code pathError;
-        if (!std::filesystem::is_regular_file(std::filesystem::path(config_emulator.bios_path), pathError))
-        {
-            Log("application_start_sf7000 invalid IPL path: %s", config_emulator.bios_path.c_str());
-            return false;
-        }
-
-        emu_load_bios(config_emulator.bios_path.c_str());
-        if (!emu_is_bios_loaded())
-        {
-            Log("application_start_sf7000 failed to load IPL: %s", config_emulator.bios_path.c_str());
-            return false;
-        }
+        Log("application_start_sf7000: missing or invalid configured IPL");
+        return false;
     }
 
     emu_resume();
-    emu_start_sf7000(config_emulator.start_paused);
+    const bool startPaused = config_emulator.start_paused && emu_debug_runtime_requested();
+    emu_start_sf7000(startPaused);
 
     gui_debug_reset();
-    if (config_emulator.start_paused)
+    if (startPaused)
         emu_clear_video_buffer();
     return emu_is_bios_loaded();
 }
@@ -466,25 +618,9 @@ static void push_recent_disc(const char* path)
 
 static void push_recent_cassette(const char* path)
 {
-    const std::string value(path);
-    int slot = 0;
-    for (; slot < config_max_recent_cassettes; ++slot)
-        if (config_emulator.recent_cassettes[slot] == value)
-            break;
-    slot = std::min(slot, config_max_recent_cassettes - 1);
-    for (int i = slot; i > 0; --i)
-        config_emulator.recent_cassettes[i] = config_emulator.recent_cassettes[i - 1];
-    config_emulator.recent_cassettes[0] = value;
-}
-
-static Cartridge::CartridgeRegions application_cartridge_region(int index)
-{
-    switch (index)
-    {
-    case 1: return Cartridge::CartridgeNTSC;
-    case 2: return Cartridge::CartridgePAL;
-    default: return Cartridge::CartridgeUnknownRegion;
-    }
+    auto& tape = emu_get_core()->GetMachineType() == MachineType::MSX
+        ? config_emulator.msx_tape : config_emulator.sr1000_tape;
+    tape.Remember(path);
 }
 
 // SDL_WINDOWPOS_CENTERED centers the client area and ignores the window frame,
@@ -643,8 +779,11 @@ static void sdl_events(void)
 
         ImGui_ImplSDL3_ProcessEvent(&event);
 
-        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST)
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
             gui_sk1100_release_virtual_keys();
+            if (emu_get_core()->GetMachineType() == MachineType::MSX || emu_get_core()->GetMachineType() == MachineType::SordM5)
+                emu_clear_matrix_host_input();
+        }
 
         // Binding capture sees raw SDL events even while the modal owns the
         // GUI. A consumed key must never leak into BASIC or a debugger
@@ -652,6 +791,13 @@ static void sdl_events(void)
         if (gui_input_capture_event(&event))
             continue;
 
+        // A release must still reach a held MSX contact if a menu opened
+        // after its key-down. Releasing an unheld contact is harmless.
+        if (event.type == SDL_EVENT_KEY_UP &&
+            (emu_get_core()->GetMachineType() == MachineType::MSX || emu_get_core()->GetMachineType() == MachineType::SordM5)) {
+            keyboard_event_to_machine(event.key.scancode, false);
+            continue;
+        }
         if (!gui_in_use)
         {
             // Frontend hotkeys own an exact key+modifier chord. Dispatch
@@ -700,6 +846,8 @@ static void sdl_events_emu(const SDL_Event* event)
         {
             for (int i = 0; i < 2; i++)
             {
+                if (i == 1 && emu_get_core()->GetMachineType() == MachineType::GameGear)
+                    continue;
                 GC_Controllers controller = (i == 0) ? Controller_1 : Controller_2;
                 if (!application_gamepad[i])
                     continue;
@@ -715,6 +863,14 @@ static void sdl_events_emu(const SDL_Event* event)
                     emu_joy_pressed(controller, Key_Left_Button);
                 else if (event->gbutton.button == config_input[i].gamepad_right_button)
                     emu_joy_pressed(controller, Key_Right_Button);
+                if (i == 0 && emu_get_core()->GetMachineType() == MachineType::GameGear &&
+                    event->gbutton.button == config_input[0].gamepad_gg_start_button)
+                    emu_joy_pressed(controller, Key_GG_Start);
+                if (emu_get_core()->GetMachineType() == MachineType::SMS)
+                    for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+                        if (config_input[i].gamepad_md_button[b] >= 0 &&
+                            event->gbutton.button == config_input[i].gamepad_md_button[b])
+                            emu_joy_pressed(controller, md_pad_layout[b].action);
 
                 if (config_input[i].gamepad_directional == 1)
                     continue;
@@ -735,6 +891,8 @@ static void sdl_events_emu(const SDL_Event* event)
         {
             for (int i = 0; i < 2; i++)
             {
+                if (i == 1 && emu_get_core()->GetMachineType() == MachineType::GameGear)
+                    continue;
                 GC_Controllers controller = (i == 0) ? Controller_1 : Controller_2;
                 if (!application_gamepad[i])
                     continue;
@@ -750,6 +908,14 @@ static void sdl_events_emu(const SDL_Event* event)
                     emu_joy_released(controller, Key_Left_Button);
                 else if (event->gbutton.button == config_input[i].gamepad_right_button)
                     emu_joy_released(controller, Key_Right_Button);
+                if (i == 0 && emu_get_core()->GetMachineType() == MachineType::GameGear &&
+                    event->gbutton.button == config_input[0].gamepad_gg_start_button)
+                    emu_joy_released(controller, Key_GG_Start);
+                if (emu_get_core()->GetMachineType() == MachineType::SMS)
+                    for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+                        if (config_input[i].gamepad_md_button[b] >= 0 &&
+                            event->gbutton.button == config_input[i].gamepad_md_button[b])
+                            emu_joy_released(controller, md_pad_layout[b].action);
 
                 if (config_input[i].gamepad_directional == 1)
                     continue;
@@ -853,13 +1019,15 @@ static void sdl_events_emu(const SDL_Event* event)
 
 
 
-            if (key == SDL_SCANCODE_F1 && !config_emulator.keyboard_mode)
+            if (key == SDL_SCANCODE_F1 && !emu_get_keyboard_mode())
             {
                 emu_pause_key_pressed();
                 //config_emulator.capture_mouse = !config_emulator.capture_mouse;
                 break;
             }
 
+            if ((emu_get_core()->GetMachineType() == MachineType::MSX || emu_get_core()->GetMachineType() == MachineType::SordM5) &&
+                (event->key.mod & SDL_KMOD_GUI)) break;
             keyboard_event_to_machine((SDL_Scancode)key, true);
 
             //for (int i = 0; i < 2; i++)
@@ -968,7 +1136,32 @@ static void sdl_events_emu(const SDL_Event* event)
 
 static void keyboard_event_to_machine(SDL_Scancode scancode, bool pressed)
 {
-    if (config_emulator.keyboard_mode)
+    // The effective mode, not the saved choice: on a machine without a
+    // keyboard (a bare SG-1000) the saved choice may still say "on" from an
+    // SC-3000 session, and host keys went to a keyboard that is not there -
+    // the joypads stopped responding.
+    if (emu_get_core()->GetMachineType() == MachineType::SordM5 && emu_get_keyboard_mode()) {
+        if (const auto* key = M5HostBinding(scancode)) {
+            int count = 0;
+            const bool* held = SDL_GetKeyboardState(&count);
+            emu_keyboard_matrix_key(key->row, key->mask,
+                pressed || M5HostContactHeld(key->row, key->mask, held, count));
+        }
+        return;
+    }
+    // MSX in keyboard mode: the International matrix. With keyboard mode off
+    // the keys drive the joysticks through the profiles below, as on Sega.
+    if (emu_get_core()->GetMachineType() == MachineType::MSX && emu_get_keyboard_mode())
+    {
+        if (const auto* key = MSXHostBinding(scancode)) {
+            int count = 0;
+            const bool* held = SDL_GetKeyboardState(&count);
+            emu_keyboard_matrix_key(key->row, key->mask,
+                pressed || MSXHostContactHeld(key->row, key->mask, held, count));
+        }
+        return;
+    }
+    if (emu_get_keyboard_mode())
     {
         for (int key = 0; key < SK1100_KEYBOARD_KEY_COUNT; ++key)
         {
@@ -992,11 +1185,23 @@ static void keyboard_event_to_machine(SDL_Scancode scancode, bool pressed)
         return;
     }
 
+    if (emu_get_core()->GetMachineType() == MachineType::GameGear &&
+        scancode == config_input[0].gg_start_key)
+    {
+        if (pressed)
+            emu_joy_pressed(Controller_1, Key_GG_Start);
+        else
+            emu_joy_released(Controller_1, Key_GG_Start);
+        return;
+    }
+
     // In joystick mode the keyboard profiles address the same six active-low
     // bits as a physical controller. These settings existed in the menu for
     // years, but their event path was commented out and therefore inert.
     for (int player = 0; player < 2; ++player)
     {
+        if (player == 1 && emu_get_core()->GetMachineType() == MachineType::GameGear)
+            continue;
         const GC_Controllers controller = player == 0 ? Controller_1 : Controller_2;
         const config_Input& input = config_input[player];
         const GC_Keys actions[6] = {
@@ -1016,6 +1221,35 @@ static void keyboard_event_to_machine(SDL_Scancode scancode, bool pressed)
             else
                 emu_joy_released(controller, actions[action]);
         }
+
+        // A Mega Drive pad's extra buttons, when one is plugged into a Master
+        // System port; elsewhere nothing reads them.
+        if (emu_get_core()->GetMachineType() == MachineType::SMS &&
+            input.controller_device != static_cast<int>(SystemControllerDevice::SmsPad))
+            for (int b = 0; b < MD_PAD_BUTTON_COUNT; ++b)
+            {
+                if (input.md_key[b] == SDL_SCANCODE_UNKNOWN || input.md_key[b] != scancode)
+                    continue;
+                if (pressed)
+                    emu_joy_pressed(controller, md_pad_layout[b].action);
+                else
+                    emu_joy_released(controller, md_pad_layout[b].action);
+            }
+
+        // The keypad is part of the same controller on a board that has one
+        // (ColecoVision); elsewhere those keys mean nothing to the machine.
+        const ISystemBus* bus = emu_get_core()->GetSystemBus();
+        if (!bus || !bus->DescribeInput().joypadKeypad)
+            continue;
+        for (int key = 0; key < COLECO_KEYPAD_KEY_COUNT; ++key)
+        {
+            if (input.keypad_key[key] != scancode)
+                continue;
+            if (pressed)
+                emu_joy_pressed(controller, coleco_keypad_layout[key].action);
+            else
+                emu_joy_released(controller, coleco_keypad_layout[key].action);
+        }
     }
 }
 
@@ -1031,6 +1265,16 @@ static bool sdl_shortcuts_gui(const SDL_Event* event)
     if (raw & (SDL_KMOD_LALT | SDL_KMOD_RALT)) mods = (SDL_Keymod)(mods | SDL_KMOD_ALT);
     if (raw & (SDL_KMOD_LGUI | SDL_KMOD_RGUI)) mods = (SDL_Keymod)(mods | SDL_KMOD_GUI);
 
+    // MSX Control combinations belong to the machine. On macOS Command
+    // provides the existing Ctrl-based application shortcuts instead.
+    if ((emu_get_core()->GetMachineType() == MachineType::MSX || emu_get_core()->GetMachineType() == MachineType::SordM5) && emu_get_keyboard_mode()) {
+        if (!(mods & SDL_KMOD_GUI) && (emu_get_core()->GetMachineType() == MachineType::SordM5 ? M5HostBinding(event->key.scancode) != nullptr : MSXHostBinding(event->key.scancode) != nullptr))
+            return false;
+#ifdef __APPLE__
+        if (mods & SDL_KMOD_GUI)
+            mods = static_cast<SDL_Keymod>((mods & ~SDL_KMOD_GUI) | SDL_KMOD_CTRL);
+#endif
+    }
     int match = -1;
     for (int i = 0; i < config_HotkeyIndex_COUNT; ++i)
     {
@@ -1087,7 +1331,8 @@ static constexpr double kFfwdBudgetMs = 12.0;
 
 static void run_emulator(void)
 {
-    if (!emu_is_empty())
+    // The running board is always in the title, cartridge or not: it is the
+    // one fact you would otherwise open Emulator > System to learn.
     {
         static int i = 0;
         i++;
@@ -1097,7 +1342,15 @@ static void run_emulator(void)
             i = 0;
 
             char title[256];
-            snprintf(title, sizeof(title), "%s %s - %s", GEARSF7000_TITLE, build_info_version(), emu_get_core()->GetCartridge()->GetFileName());
+            const char* machine = GetSystemModelName(
+                emu_get_core()->GetSystemModel());
+            if (emu_is_empty())
+                snprintf(title, sizeof(title), "%s %s [%s]", GEARSF7000_TITLE,
+                         build_info_version(), machine);
+            else
+                snprintf(title, sizeof(title), "%s %s [%s] - %s", GEARSF7000_TITLE,
+                         build_info_version(), machine,
+                         emu_get_core()->GetCartridge()->GetFileName());
             SDL_SetWindowTitle(sdl_window, title);
         }
     }

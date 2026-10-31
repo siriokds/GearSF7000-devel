@@ -1,24 +1,38 @@
+#include "../../src/SystemBusMSX.h"
+#include "../../src/CBiosData.h"
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026  Saverio Russo
-
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2024-2026  Saverio Russo
+ *
+ * Derived from Gearcoleco by Ignacio Sanchez. His code is free software: you
+ * can redistribute it and/or modify it under the terms of the GNU General
+ * Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * The changes and additions by Saverio Russo are free software: you can
+ * redistribute them and/or modify them under the terms of the GNU Affero
+ * General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ * Section 13 of both licences permits the combination.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see http://www.gnu.org/licenses/
+ * GNU General Public License and the GNU Affero General Public License
+ * for more details.
  *
+ * You should have received a copy of both licences along with this
+ * program.  If not, see http://www.gnu.org/licenses/
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
+#include <cstring>
+#include <set>
+#include <string>
 #include "../../src/gearsf7000.h"
-#include "../../src/sk1100.h"
+#include "../../src/SegaKeyboard.h"
 #if GEARSF7000_ENABLE_AY
 // For SetAyPortBase(): the AY window is decoded in the I/O port layer, which
 // gearsf7000.h does not pull in.
@@ -26,9 +40,11 @@
 #endif
 #include "../audio-shared/sound_queue.h"
 #include "config.h"
+#include "VideoOutputSettings.h"
+#include "application.h"
 #include "renderer.h"
 #include "crt_signal_dump.h"
-#include "../../src/TMS9918RasterTiming.h"
+#include "../../src/IVideoDevice.h"
 #include "../../src/Z80Disassembler.h"
 #include "../../src/BasicProgramLoader.h"
 
@@ -39,7 +55,16 @@
 
 #define EMU_IMPORT
 #include "emu.h"
+
+namespace
+{
+// See emu_resync_host_input(): defined with the host input list below.
+void resync_if_stale(void);
+}
 #include "rewind.h"
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+#include "rom_map_project.h"
+#endif
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #ifdef _WIN32
@@ -59,26 +84,21 @@ static bool debug_step = false;
 static bool debug_line_pending = false;
 static int debug_frames_pending = 0;
 static unsigned long long machine_generation = 0;
-static size_t emu_frame_buffer_capacity = 0;
+static u8* blank_frame_buffer = nullptr;
+static size_t blank_frame_buffer_capacity = 0;
+static bool video_output_blanked = false;
 #if GEARSF7000_ENABLE_MCP
 static McpManager* mcp_manager = NULL;
 #endif
 
-u16* debug_background_buffer;
-u16* debug_tile_buffer;
-u16* debug_sprite_buffers[64];
-
 static void save_ram(void);
 static void load_ram(void);
-static const char* get_mapper(Cartridge::CartridgeTypes type);
 static void init_debug(void);
 static void destroy_debug(void);
 static void update_audio_pause_state(void);
-static void update_debug(void);
-static void update_debug_background_buffer(void);
-static void update_debug_tile_buffer(void);
-static void update_debug_sprite_buffers(void);
-static void ensure_video_frame_buffer_capacity(void);
+static void ensure_blank_frame_buffer_capacity(void);
+static void apply_configured_video_device(void);
+static void apply_configured_video_output(void);
 
 void emu_init(bool enable_audio)
 {
@@ -87,11 +107,20 @@ void emu_init(bool enable_audio)
 #endif
 
     gearsf7000 = new GearSF7000Core();
+    if (!gearsf7000->SetSystemModel(static_cast<SystemModel>(config_emulator.machine))) {
+        Log("Configured machine is unavailable in this build; using %s", GetSystemModelName(gearsf7000->GetSystemModel()));
+        config_select_machine(gearsf7000->GetSystemModel());
+    }
+    gearsf7000->SetM5EM5Installed(config_emulator.m5_em5_installed);
+    apply_configured_video_device();
     gearsf7000->Init();
     rewind_init();
-    gearsf7000->SetKeyboardMode(config_emulator.keyboard_mode);
-    ensure_video_frame_buffer_capacity();
-
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+    rom_map_project_init();
+#endif
+    gearsf7000->SetKeyboardMode(
+        gearsf7000->GetMachineType() == MachineType::SC3000 &&
+        config_emulator.keyboard_mode);
 #if GEARSF7000_ENABLE_AY
     // Stage the persisted expansion settings here, before anything resets the
     // machine. Doing it later - from gui_init(), which runs after emu_init() -
@@ -100,6 +129,11 @@ void emu_init(bool enable_audio)
     emu_set_ay_config(config_audio.ay_enable, config_audio.ay_chip,
                       config_audio.ay_port_base);
 #endif
+#if GEARSF7000_ENABLE_YM2413
+    emu_set_ym2413_config(config_audio.ym2413_enable);
+#endif
+    for (int player = 0; player < 2; ++player)
+        emu_set_controller_device(player, config_input[player].controller_device);
 
 #if GEARSF7000_ENABLE_MCP
     mcp_manager = new McpManager();
@@ -126,12 +160,21 @@ void emu_init(bool enable_audio)
     emu_audio_sync = true;
     emu_debug_disable_breakpoints_cpu = false;
     emu_debug_disable_breakpoints_mem = false;
-    emu_debug_disable_breakpoints_vram = false;
     emu_debug_tile_palette = 0;
     emu_savefiles_dir_option = 0;
     emu_savestates_dir_option = 0;
     emu_savefiles_path[0] = 0;
     emu_savestates_path[0] = 0;
+}
+
+void emu_prepare_shutdown(void)
+{
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+    // The project folder hangs off config_root_path, which config_destroy()
+    // frees: saving from emu_destroy() used a dangling pointer and lost the
+    // final save. Found on the first real play session, 23/09/2026.
+    rom_map_project_shutdown();
+#endif
 }
 
 void emu_destroy(void)
@@ -143,19 +186,95 @@ void emu_destroy(void)
     SafeDeleteArray(audio_buffer);
     SafeDelete(sound_queue);
     SafeDelete(gearsf7000);
-    SafeDeleteArray(emu_frame_buffer);
-    emu_frame_buffer_capacity = 0;
+    SafeDeleteArray(blank_frame_buffer);
+    blank_frame_buffer_capacity = 0;
 #if GEARSF7000_ENABLE_DEBUG_TOOLS
     destroy_debug();
 #endif
 }
 
+// One BIOS slot in Memory, one file per board: the SF-7000 IPL or the
+// ColecoVision console ROM, from that machine's own section of the
+// settings. A board without a configured BIOS gets an empty slot, never the
+// other board's file.
+static std::string machine_start_error;
+static std::string applied_msx_main;
+static bool applied_msx_cbios = false;
+const char* emu_get_cbios_license() { return CBios::License; }
+bool emu_is_cbios_active()
+{
+    return gearsf7000->GetMachineType() == MachineType::MSX &&
+        gearsf7000->GetMemory()->IsBiosLoaded() && applied_msx_cbios;
+}
+bool emu_has_pending_msx_firmware()
+{
+    return applied_msx_cbios != config_emulator.msx_use_cbios ||
+        (!config_emulator.msx_use_cbios && applied_msx_main != config_emulator.msx_bios_path);
+}
+const std::string& emu_get_machine_start_error() { return machine_start_error; }
+static void apply_machine_bios(void)
+{
+    machine_start_error.clear();
+    const SystemModel model = gearsf7000->GetSystemModel();
+    Memory* memory = gearsf7000->GetMemory();
+    applied_msx_cbios = false;
+    if (IsMSXSystem(model)) {
+        auto& bus = *static_cast<SystemBusMSX*>(const_cast<ISystemBus*>(gearsf7000->GetSystemBus()));
+        std::string error;
+        if (config_emulator.msx_use_cbios) {
+            const bool pal = model == SystemModel::MSX1PAL;
+            memory->LoadBiosFromBuffer(pal ? CBios::MainPAL : CBios::MainNTSC,
+                sizeof(CBios::MainNTSC), pal ? "cbios_main_msx1_eu.rom" : "cbios_main_msx1.rom");
+            bus.LoadOptionalFirmwareFromBuffers(std::vector<u8>(std::begin(CBios::Logo), std::end(CBios::Logo)), {}, error);
+            applied_msx_cbios = memory->IsBiosLoaded();
+        } else {
+            memory->LoadBios(config_emulator.msx_bios_path.c_str());
+            bus.LoadOptionalFirmwareFromBuffers({}, {}, error);
+            if (!memory->IsBiosLoaded()) machine_start_error =
+                "Missing or invalid MSX BIOS. Choose a readable 32 KB BIOS + BASIC image, or enable Use C-BIOS.";
+        }
+        applied_msx_main = config_emulator.msx_bios_path;
+    } else if (memory->GetBiosSize()) {
+        const auto& path = IsM5System(model) ? config_emulator.m5_bios_path : IsColecoSystem(model) ? config_emulator.coleco_bios_path : config_emulator.bios_path;
+        memory->LoadBios(path.c_str());
+        if (!memory->IsBiosLoaded()) machine_start_error = IsColecoSystem(model)
+            ? "Missing or invalid ColecoVision BIOS. Choose a readable 8 KB BIOS image."
+            : IsM5System(model) ? "Missing or invalid Sord M5 BIOS. Choose a readable 8 KB BIOS image."
+            : "Missing or invalid SF-7000 IPL. Choose a readable 8 KB IPL image.";
+    }
+    if (!machine_start_error.empty()) DiagWarn("app", "%s", machine_start_error.c_str());
+}
+
+void emu_reload_machine_firmware()
+{
+    // Replacing firmware invalidates execution and recorder history. Prepare
+    // the reset vector paused; Start or F5 is the explicit execution action.
+    Cartridge::ForceConfiguration config;
+    config.type = gearsf7000->GetCartridge()->GetType();
+    emu_reset(config, true);
+    gearsf7000->Pause(true);
+}
+
 bool emu_load_rom(const char* file_path, Cartridge::ForceConfiguration config, bool pauseAtResetVector)
 {
     save_ram();
-    // A normal cartridge load disconnects the external SF-7000 I/O cartridge
-    // mapping, just as physically removing that external configuration would.
-    gearsf7000->GetMemory()->EnableSF7000(false);
+    // A normal cartridge and the SF-7000 I/O cartridge occupy the same slot.
+    // Apply the model currently selected in the UI, rather than retaining the
+    // previously running motherboard until a separate Reset. Only the
+    // SF-7000 attachment is removed when a cartridge is inserted.
+    SystemModel requested = static_cast<SystemModel>(config_emulator.machine);
+    if (!IsValidSystemModel(requested))
+        requested = gearsf7000->GetSystemModel();
+    const SystemModel cartridgeSystem = WithoutSF7000(requested);
+    if (gearsf7000->GetMachineType() == MachineType::MSX || gearsf7000->GetMachineType() == MachineType::SordM5 || IsMSXSystem(cartridgeSystem) || IsM5System(cartridgeSystem))
+        emu_clear_matrix_host_input();
+    config_select_machine(cartridgeSystem);
+    if (!gearsf7000->ApplySystemModelAtReset(cartridgeSystem)) {
+        config_select_machine(gearsf7000->GetSystemModel());
+        return false;
+    }
+    apply_configured_video_device();
+    apply_machine_bios();
     bool loaded = false;
 
     if (file_path != 0)
@@ -171,6 +290,7 @@ bool emu_load_rom(const char* file_path, Cartridge::ForceConfiguration config, b
     }
     if (loaded)
     {
+        apply_configured_video_output();
         ++machine_generation;
         // Recorded before anything else touches the new machine, and with the
         // debugger state as the *outgoing* run left it: a bulk step still
@@ -186,6 +306,9 @@ bool emu_load_rom(const char* file_path, Cartridge::ForceConfiguration config, b
                  rewind_get_snapshot_count());
 
         load_ram();
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+        rom_map_project_on_media_changed();
+#endif
         // A recording belongs to the machine that produced it: snapshots of
         // the outgoing cartridge cannot be applied to this one, and the state
         // header would refuse them anyway.
@@ -199,6 +322,7 @@ bool emu_load_rom(const char* file_path, Cartridge::ForceConfiguration config, b
         // frames of a machine that had just been rebuilt underneath it.
         debugging = pauseAtResetVector;
         debug_step = false;
+        debug_line_pending = false;
         debug_frames_pending = 0;
 
         // gearsf7000->Reset() already left the machine paused at the reset
@@ -209,8 +333,8 @@ bool emu_load_rom(const char* file_path, Cartridge::ForceConfiguration config, b
     return loaded;
 }
 
-// Runs one frame and leaves the picture in emu_frame_buffer, without
-// touching the debugger's run state. The recorder uses it so that a seek
+// Runs one frame without touching the debugger's run state. The recorder
+// uses it so that a seek updates the device-owned presentation surface:
 // updates the screen: a snapshot holds the machine, not an image, and the
 // only faithful way to see a frame - raster splits included - is to let the
 // beam draw it.
@@ -219,7 +343,7 @@ void emu_render_current_frame(void)
     if (emu_is_empty())
         return;
 
-    ensure_video_frame_buffer_capacity();
+    ensure_blank_frame_buffer_capacity();
 
     // RunToVBlank does nothing while the core is paused, and a seek is always
     // made from a paused machine - so without lifting the pause here the
@@ -231,8 +355,8 @@ void emu_render_current_frame(void)
         gearsf7000->Pause(false);
 
     int sampleCount = 0;
-    gearsf7000->RunToVBlank(emu_frame_buffer, audio_buffer, &sampleCount,
-                            false, false);
+    gearsf7000->RunToVBlank(audio_buffer, &sampleCount, false, false);
+    video_output_blanked = false;
 
     if (was_paused)
         gearsf7000->Pause(true);
@@ -319,8 +443,6 @@ int emu_debug_step_frames_now(int frames, bool* breakpoint_hit)
     if (emu_is_empty() || frames < 1)
         return 0;
 
-    ensure_video_frame_buffer_capacity();
-
     DiagInfo("debug", "synchronous step of %d frames (generation %llu)",
              frames, machine_generation);
 
@@ -342,8 +464,11 @@ int emu_debug_step_frames_now(int frames, bool* breakpoint_hit)
     for (int i = 0; i < frames; ++i)
     {
         int sampleCount = 0;
+        resync_if_stale();
         const GC_RunResult result = gearsf7000->RunToVBlank(
-            emu_frame_buffer, audio_buffer, &sampleCount, false, true);
+            audio_buffer, &sampleCount, false, true);
+        if (result.DidRun())
+            video_output_blanked = false;
 
         // Recorded exactly as the main loop would, so a burst and a run leave
         // the same history behind. The samples are dropped: hundreds of frames
@@ -402,18 +527,12 @@ void emu_apply_startup_config(void)
     config_debug.rewind_enabled = false;
 #endif
 
-    if (!config_emulator.bios_path.empty())
-    {
-        DiagInfo("app", "BIOS: %s", config_emulator.bios_path.c_str());
-        emu_load_bios(config_emulator.bios_path.c_str());
-    }
+    if (gearsf7000->GetMachineType() == MachineType::MSX || gearsf7000->GetMachineType() == MachineType::Coleco || gearsf7000->GetMachineType() == MachineType::SordM5)
+        emu_reload_machine_firmware();
     else
-    {
-        DiagWarn("app", "no BIOS configured; a machine that needs one will "
-                        "boot to the NO BIOS screen");
-    }
+        apply_machine_bios();
 
-    const config_VideoOutput& startup_video = config_video_output_for_mode(config_debug.debug);
+    const auto startup_video = emu_get_effective_video_output(config_debug.debug);
     if (startup_video.overscan == 4)
         emu_set_full_raster_debug_enabled(true);
     else
@@ -427,10 +546,7 @@ void emu_apply_startup_config(void)
     // frame buffer, not how they are drawn on screen, so a headless capture
     // gets the same picture the window would - which is the whole point of
     // being able to take one without a window.
-    if (config_video.palette == 3)
-        emu_palette(config_video.color);
-    else
-        emu_predefined_palette(config_video.palette);
+    emu_predefined_palette(*emu_palette_setting());
 
     emu_writeprotect_disc(config_emulator.disc_write_protected);
 }
@@ -453,15 +569,13 @@ void emu_apply_startup_config(void)
 // crystal frequency: if the VDP clock is ever corrected - the PAL figure in
 // particular is a hardware question, not a derived one - everything follows
 // instead of quietly disagreeing with the emulation.
-// Serial of the frame currently in emu_frame_buffer. Advances only when the
+// Serial of the frame currently exposed by the video device. Advances only when the
 // beam actually drew one, so a consumer can tell a fresh frame from the same
 // one being presented again - which the scheduler does whenever the display
 // runs faster than the machine.
 unsigned long long emu_get_frame_serial(void)
 {
-    if (!gearsf7000 || !gearsf7000->GetVideo())
-        return 0;
-    return gearsf7000->GetVideo()->GetFrameRenderDiagnostics().frameSerial;
+    return gearsf7000 ? gearsf7000->GetVideoFrameSerial() : 0;
 }
 
 void emu_set_target_frame_rate(double fps)
@@ -483,22 +597,12 @@ void emu_set_audio_clock_trim(double ratio)
 
 double emu_get_machine_fps(void)
 {
-    constexpr double kMasterClocksPerLine =
-        TMS9918RasterTiming::DotsPerLine * 2.0;
     constexpr double kFallbackNtsc = 59.9226;
 
-    if (!gearsf7000 || !gearsf7000->GetVideo())
+    if (!gearsf7000)
         return kFallbackNtsc;
-
-    const double vdpMasterHz =
-        static_cast<double>(gearsf7000->GetClockDomains().GetRates().vdpMasterHz);
-    if (vdpMasterHz <= 0.0)
-        return kFallbackNtsc;
-
-    const double lines = gearsf7000->GetVideo()->IsPAL() ? GC_LINES_PER_FRAME_PAL
-                                                         : GC_LINES_PER_FRAME_NTSC;
-
-    return vdpMasterHz / (kMasterClocksPerLine * lines);
+    const double fps = gearsf7000->GetEffectiveFrameRate();
+    return fps > 1.0 ? fps : kFallbackNtsc;
 }
 
 // Split out of emu_update so the scheduler can keep servicing the host on
@@ -506,12 +610,26 @@ double emu_get_machine_fps(void)
 // emulator is paused or waiting for its next frame - a debugger that stops
 // responding whenever the machine is stopped is not a debugger - so this
 // half runs every iteration of the main loop, unconditionally.
+bool emu_debug_runtime_requested(void)
+{
+    // A remote debugger is an explicit consumer even with the local UI off.
+    bool debug_runtime = config_debug.debug;
+#if GEARSF7000_ENABLE_MCP
+    debug_runtime = debug_runtime || (mcp_manager && mcp_manager->IsRunning());
+#endif
+    return debug_runtime;
+}
+
 void emu_pump_host(void)
 {
+    if (gearsf7000)
+        gearsf7000->SetDebugRuntimeActive(emu_debug_runtime_requested());
 #if GEARSF7000_ENABLE_MCP
     if (mcp_manager)
         mcp_manager->PumpCommands();
 #endif
+    if (gearsf7000)
+        gearsf7000->ApplyPendingDebugEventCommands();
     update_audio_pause_state();
 }
 
@@ -521,14 +639,12 @@ void emu_run_frame(void)
 {
     if (!emu_is_empty())
     {
-        ensure_video_frame_buffer_capacity();
         int sampleCount = 0;
 
         // These GUI toggles now filter only their corresponding legacy lists;
         // they cannot silence unrelated types or common/MCP DebugEvent rules.
         gearsf7000->GetMemory()->SetLegacyCpuBreakpointsEnabled(!emu_debug_disable_breakpoints_cpu);
         gearsf7000->GetMemory()->SetLegacyMemoryBreakpointsEnabled(!emu_debug_disable_breakpoints_mem);
-        gearsf7000->GetMemory()->SetLegacyVRAMBreakpointsEnabled(!emu_debug_disable_breakpoints_vram);
 
         if (!debugging || debug_step || debug_line_pending || debug_frames_pending > 0)
         {
@@ -536,9 +652,12 @@ void emu_run_frame(void)
             // path active for MCP/common rules and Run To Cursor.
             bool breakpoints = true;
 
+            resync_if_stale();
             const GC_RunResult runResult = gearsf7000->RunToVBlank(
-                emu_frame_buffer, audio_buffer, &sampleCount,
-                debug_step, breakpoints, debug_line_pending);
+                audio_buffer, &sampleCount, debug_step, breakpoints,
+                debug_line_pending);
+            if (runResult.DidRun())
+                video_output_blanked = false;
             if (runResult.BreakpointHit())
             {
                 if (debug_frames_pending > 0)
@@ -573,7 +692,8 @@ void emu_run_frame(void)
             // Freezes/trigger condition run every frame regardless of
             // whether an MCP client is connected right now, so a freeze set
             // up earlier keeps holding and a condition can still fire.
-            if (mcp_manager && mcp_manager->GetAdapter() && mcp_manager->GetAdapter()->WatchTick())
+            if (gearsf7000->GetDebugEventManager()->IsRuntimeActive() &&
+                mcp_manager && mcp_manager->GetAdapter() && mcp_manager->GetAdapter()->WatchTick())
             {
                 debugging = true;
                 debug_frames_pending = 0;
@@ -581,12 +701,12 @@ void emu_run_frame(void)
 #endif
         }
 
-#if GEARSF7000_ENABLE_DEBUG_TOOLS
-        update_debug();
-#endif
         // RunToVBlank may itself enter a pause/breakpoint state.
         update_audio_pause_state();
         crt_signal_dump_tick();
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+        rom_map_project_tick();
+#endif
 
         if ((sampleCount > 0) && !audio_output_paused && sound_queue)
         {
@@ -607,7 +727,8 @@ void emu_pause_key_pressed()
 {
     gearsf7000->PauseKeyPressed();
 #if GEARSF7000_ENABLE_SR1000
-    gearsf7000->GetCassette()->SetMotor(false);
+    if (gearsf7000->HasCassetteInterface() && gearsf7000->GetMachineType() != MachineType::MSX)
+        gearsf7000->GetCassette()->SetMotor(false);
 #endif
     update_audio_pause_state();
 }
@@ -656,7 +777,7 @@ void emu_keyboard_text_timing(int press_polls, int release_polls, int newline_po
 
 bool emu_keyboard_can_type(char character)
 {
-    return SK1100::CanTypeChar(character);
+    return SegaKeyboard::CanTypeChar(character);
 }
 
 
@@ -671,11 +792,13 @@ void emu_set_keyboard_mode(bool enabled)
     // machine is actually doing rather than what the menu was last set to.
     config_emulator.keyboard_mode = enabled;
     gearsf7000->SetKeyboardMode(enabled);
+    if (!enabled && (gearsf7000->GetMachineType() == MachineType::MSX || gearsf7000->GetMachineType() == MachineType::SordM5)) emu_clear_matrix_host_input();
 }
 
 bool emu_get_keyboard_mode(void)
 {
-    return config_emulator.keyboard_mode;
+    return gearsf7000->HasKeyboardInterface() &&
+        config_emulator.keyboard_mode;
 }
 
 //void emu_key_pressed(GC_Controllers controller, GC_Keys key)
@@ -700,23 +823,114 @@ void emu_input_pause(void)
 }
 
 
+// What is plugged into a Master System controller port. Kept in the
+// configuration too, so the choice survives a restart.
+bool emu_set_controller_device(int player, int device)
+{
+    if ((player != 0 && player != 1) || !IsValidControllerDevice(device))
+        return false;
+    config_input[player].controller_device = device;
+    return gearsf7000->SetControllerDevice(player == 0 ? Controller_1 : Controller_2,
+                                           static_cast<SystemControllerDevice>(device));
+}
+
+// What the host holds now, from every source that reaches the machine through
+// here: keyboard and gamepad events, the on-screen SK-1100 keyboard and the MCP
+// (controller_button, keyboard_key). A loaded state carries the inputs held when
+// it was saved, and every source sends only changes, so a key released since
+// would stay down in the machine. emu_resync_host_input() puts back this list.
+namespace
+{
+bool host_joy[2][32] = {};
+u16 host_matrix[8] = {};
+u8 matrix_host_input[11] = {};
+std::set<std::string> host_labels;
+// A Recorder snapshot was loaded and still carries its own inputs; the next frame
+// the machine actually runs puts back the host's first.
+bool host_input_stale = false;
+
+void resync_if_stale(void)
+{
+    if (host_input_stale)
+        emu_resync_host_input();
+}
+}
+
+void emu_mark_host_input_stale(void)
+{
+    host_input_stale = true;
+}
+
+void emu_clear_matrix_host_input(void)
+{
+    for (auto& row : matrix_host_input) row = 0;
+    host_labels.clear();
+    gearsf7000->ReleaseHostInput();
+}
+
+void emu_release_host_input(void)
+{
+    gearsf7000->ReleaseHostInput();
+}
+
+// After a state is loaded and live play takes over from it: release everything
+// the state held, then press again what the host holds now. Scrubbing the
+// Recorder does not come here - a snapshot being inspected shows its own inputs.
+void emu_resync_host_input(void)
+{
+    host_input_stale = false;
+    gearsf7000->ReleaseHostInput();
+    for (int c = 0; c < 2; ++c)
+        for (int key = 0; key < 32; ++key)
+            if (host_joy[c][key])
+                gearsf7000->JoystickPressed(static_cast<GC_Controllers>(c), static_cast<GC_Keys>(key));
+    if (gearsf7000->GetMachineType() == MachineType::MSX || gearsf7000->GetMachineType() == MachineType::SordM5) {
+        for (int row = 0; row < 11; ++row)
+            if (matrix_host_input[row]) gearsf7000->KeyboardMatrixKey(row, matrix_host_input[row], true);
+    }
+    else for (int row = 0; row < 8; ++row)
+        if (host_matrix[row])
+            gearsf7000->KeyboardMatrixKey(row, host_matrix[row], true);
+    for (const std::string& label : host_labels)
+        gearsf7000->KeyboardKey(label.c_str(), true);
+}
+
 void emu_joy_pressed(GC_Controllers controller, GC_Keys key)
 {
+    if (key >= 0 && key < 32)
+        host_joy[controller & 1][key] = true;
     gearsf7000->JoystickPressed(controller, key);
 }
 
 void emu_joy_released(GC_Controllers controller, GC_Keys key)
 {
+    if (key >= 0 && key < 32)
+        host_joy[controller & 1][key] = false;
     gearsf7000->JoystickReleased(controller, key);
 }
 
 bool emu_keyboard_key(const char* label, bool pressed)
 {
-    return gearsf7000->KeyboardKey(label, pressed);
+    const bool known = gearsf7000->KeyboardKey(label, pressed);
+    if (known && label != nullptr)
+    {
+        if (pressed)
+            host_labels.insert(label);
+        else
+            host_labels.erase(label);
+    }
+    return known;
 }
 
 void emu_keyboard_matrix_key(int row, int mask, bool pressed)
 {
+    if (gearsf7000->GetMachineType() == MachineType::MSX || gearsf7000->GetMachineType() == MachineType::SordM5) {
+        if (row >= 0 && row < 11 && mask > 0 && mask <= 255)
+            matrix_host_input[row] = pressed ? matrix_host_input[row] | mask : matrix_host_input[row] & ~mask;
+    }
+    else if (row >= 0 && row < 8)
+        host_matrix[row] = static_cast<u16>(pressed ? (host_matrix[row] | mask)
+                                                    : (host_matrix[row] & ~mask));
     gearsf7000->KeyboardMatrixKey(row, mask, pressed);
 }
 
@@ -760,8 +974,22 @@ bool emu_is_bios_loaded(void)
 void emu_start_sf7000(bool pauseAtResetVector)
 {
     save_ram();
+    config_select_machine(WithSF7000(gearsf7000->GetSystemModel()));
+    if (!gearsf7000->ApplySystemModelAtReset(
+            static_cast<SystemModel>(config_emulator.machine))) {
+        config_select_machine(gearsf7000->GetSystemModel());
+        return;
+    }
+    apply_configured_video_device();
+    apply_machine_bios();
+    if (!emu_is_bios_loaded())
+        return;
     gearsf7000->StartSF7000(pauseAtResetVector);
+    apply_configured_video_output();
     load_ram();
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+    rom_map_project_on_media_changed();
+#endif
     if (!pauseAtResetVector)
         emu_debug_continue();
 }
@@ -769,13 +997,78 @@ void emu_start_sf7000(bool pauseAtResetVector)
 void emu_reset(Cartridge::ForceConfiguration config, bool pauseAtResetVector)
 {
     save_ram();
-    gearsf7000->ResetROM(&config, pauseAtResetVector);
+    const SystemModel requested = static_cast<SystemModel>(config_emulator.machine);
+    if (gearsf7000->GetMachineType() == MachineType::MSX || gearsf7000->GetMachineType() == MachineType::SordM5 || IsMSXSystem(requested) || IsM5System(requested))
+        emu_clear_matrix_host_input();
+    if (!gearsf7000->ApplySystemModelAtReset(requested))
+    {
+        config_select_machine(gearsf7000->GetSystemModel());
+        Log("System selection could not be applied; keeping the current configuration");
+    }
+    gearsf7000->SetM5EM5Installed(config_emulator.m5_em5_installed);
+    apply_configured_video_device();
+    apply_machine_bios();
+    gearsf7000->SetKeyboardMode(config_emulator.keyboard_mode);
+    if (IsSF7000System(gearsf7000->GetSystemModel()))
+        gearsf7000->StartSF7000(pauseAtResetVector);
+    else if (gearsf7000->GetCartridge()->IsReady() || gearsf7000->IsMachineReady())
+        gearsf7000->ResetROM(&config, pauseAtResetVector);
+    else
+        gearsf7000->EjectCartridge();
+    apply_configured_video_output();
+#if GEARSF7000_ENABLE_SR1000
+    if (gearsf7000->GetMachineType() == MachineType::MSX &&
+        !gearsf7000->GetCassette()->IsLoaded() && !config_emulator.msx_tape.path.empty())
+        application_load_tape(config_emulator.msx_tape.path.c_str());
+#endif
     ++machine_generation;
     DiagInfo("media", "machine reset, generation %llu (paused=%d)",
              machine_generation, pauseAtResetVector ? 1 : 0);
     load_ram();
     // Everything before the reset leads to a machine that no longer exists.
     rewind_reset();
+    debugging = pauseAtResetVector;
+    debug_step = false;
+    debug_line_pending = false;
+    debug_frames_pending = 0;
+}
+
+static void apply_configured_video_device(void)
+{
+    if (config_emulator.vdp == 0)
+    {
+        gearsf7000->SelectDefaultVideoDevice();
+    }
+    else
+    {
+        if (!gearsf7000->SelectVideoOption(config_selected_video_option()))
+        {
+            // A motherboard change can invalidate a previously selected chip.
+            // Fall back visibly to that machine's declared default.
+            config_emulator.vdp = 0;
+            gearsf7000->SelectDefaultVideoDevice();
+        }
+    }
+
+    // Selection is installed by the ensuing reset/load, before output policy is applied.
+}
+
+static void apply_configured_video_output(void)
+{
+    // A machine reset can replace one VDP family with another, where the
+    // concrete device cannot copy private presentation state. Reapply the
+    // persisted semantic options so the Sega NTSC device immediately uses
+    // the same border choice as the rest of the video pipeline.
+    const auto output = emu_get_effective_video_output(config_debug.debug);
+    if (output.overscan == 4)
+        gearsf7000->SetVideoOption(GC_VideoOption::FullRaster, 1);
+    else
+    {
+        gearsf7000->SetVideoOption(GC_VideoOption::FullRaster, 0);
+        gearsf7000->SetVideoOption(GC_VideoOption::Border, output.overscan);
+    }
+    gearsf7000->SetVideoOption(GC_VideoOption::PredefinedPalette,
+                               *emu_palette_setting());
 }
 
 void emu_eject_rom(void)
@@ -787,6 +1080,9 @@ void emu_eject_rom(void)
     gearsf7000->EjectCartridge();
     ++machine_generation;
     DiagInfo("media", "cartridge ejected, generation %llu", machine_generation);
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+    rom_map_project_on_media_changed();
+#endif
     rewind_reset();
 }
 
@@ -820,6 +1116,14 @@ void emu_set_ay_config(bool enabled, int chip, int port_base)
 }
 #endif
 
+#if GEARSF7000_ENABLE_YM2413
+void emu_set_ym2413_config(bool enabled)
+{
+    if (gearsf7000 && gearsf7000->GetAudio())
+        gearsf7000->GetAudio()->SetYm2413Enabled(enabled);
+}
+#endif
+
 void emu_audio_reset(void)
 {
     // No audio device in headless runs.
@@ -841,12 +1145,14 @@ bool emu_start_vgm_recording(const char* file_path)
     if (gearsf7000->GetAudio()->IsVgmRecording())
         emu_stop_vgm_recording();
 
-    // Nominal regional clock, not the live one: SetTargetFrameRate can have
+    // Nominal motherboard clock, not the live one: SetTargetFrameRate can have
     // aligned the machine to the host display, and a VGM player replays
     // writes on the crystal a real machine would carry, not on whatever this
     // session's monitor happened to dictate.
-    const bool isPAL = gearsf7000->GetVideo()->IsPAL();
-    const int clockRate = isPAL ? GC_MASTER_CLOCK_PAL : GC_MASTER_CLOCK_NTSC;
+    const bool isPAL =
+        gearsf7000->GetVideoFrameDescriptor().region == Region_PAL;
+    const int clockRate = static_cast<int>(
+        gearsf7000->GetSystemBus()->GetCpuPsgClockHz());
 
     return gearsf7000->GetAudio()->StartVgmRecording(file_path, clockRate, isPAL);
 #else
@@ -861,6 +1167,44 @@ std::string emu_stop_vgm_recording(void)
     return gearsf7000->GetAudio()->StopVgmRecording();
 #else
     return std::string();
+#endif
+}
+
+bool emu_start_wav_recording(const char* file_path)
+{
+#if GEARSF7000_ENABLE_RECORDER
+    if (!gearsf7000->IsMachineReady())
+        return false;
+
+    if (gearsf7000->GetAudio()->IsRecording())
+        gearsf7000->GetAudio()->StopRecording();
+
+    gearsf7000->GetAudio()->StartRecording(file_path);
+    return gearsf7000->GetAudio()->IsRecording();
+#else
+    (void)file_path;
+    return false;
+#endif
+}
+
+bool emu_stop_wav_recording(void)
+{
+#if GEARSF7000_ENABLE_RECORDER
+    if (!gearsf7000->GetAudio()->IsRecording())
+        return false;
+    gearsf7000->GetAudio()->StopRecording();
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool emu_is_wav_recording(void)
+{
+#if GEARSF7000_ENABLE_RECORDER
+    return gearsf7000->GetAudio()->IsRecording();
+#else
+    return false;
 #endif
 }
 
@@ -955,14 +1299,43 @@ void emu_reset_audio_queue_diagnostics(void)
         sound_queue->ResetDiagnostics();
 }
 
-void emu_palette(GC_Color* palette)
+// The setting the installed VDP's palette list belongs to. The Mark III's
+// VDP lists its TMS-mode colours under "sms." codes and keeps them apart, so
+// the two machines never overwrite each other's choice through the fallback
+// below.
+int* emu_palette_setting(void)
 {
-    gearsf7000->GetVideo()->SetCustomPalette(palette);
+    GC_VideoColorProfileDescriptor first;
+    if (gearsf7000 && gearsf7000->GetVideoColorProfileCount() > 0 &&
+        gearsf7000->DescribeVideoColorProfile(0, first) && first.code &&
+        std::strncmp(first.code, "sms.", 4) == 0)
+        return &config_video.sms_tms_palette;
+    return &config_video.palette;
 }
 
 void emu_predefined_palette(int palette)
 {
-    gearsf7000->GetVideo()->SetPredefinedPalette(palette);
+    const std::size_t count = gearsf7000->GetVideoColorProfileCount();
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        GC_VideoColorProfileDescriptor profile;
+        if (gearsf7000->DescribeVideoColorProfile(index, profile) &&
+            profile.value == palette)
+        {
+            gearsf7000->SetVideoOption(
+                GC_VideoOption::PredefinedPalette, profile.value);
+            return;
+        }
+    }
+
+    // This also migrates the old value 3 used by the removed custom editor.
+    GC_VideoColorProfileDescriptor fallback;
+    if (count > 0 && gearsf7000->DescribeVideoColorProfile(0, fallback))
+    {
+        *emu_palette_setting() = static_cast<int>(fallback.value);
+        gearsf7000->SetVideoOption(
+            GC_VideoOption::PredefinedPalette, fallback.value);
+    }
 }
 
 bool emu_load_basic_program(const char* file_path, int pointer_block, std::string* status)
@@ -1050,8 +1423,20 @@ void emu_load_ram(const char* file_path, Cartridge::ForceConfiguration config)
     {
         save_ram();
         gearsf7000->ResetROM(&config);
+        apply_configured_video_output();
         gearsf7000->LoadRam(file_path, true);
     }
+}
+
+static const char* state_slot_directory()
+{
+    if (emu_savestates_dir_option == 0 && emu_savestates_path[0])
+        return emu_savestates_path;
+    // Built-in firmware has no file directory. Finder may launch with / as
+    // cwd, so the ROM-directory preference must fall back to user settings.
+    if (emu_is_cbios_active() && !gearsf7000->GetCartridge()->IsReady())
+        return config_root_path;
+    return nullptr;
 }
 
 bool emu_save_state_slot(int index)
@@ -1059,10 +1444,7 @@ bool emu_save_state_slot(int index)
     if (emu_is_empty())
         return false;
 
-    if ((emu_savestates_dir_option == 0) && (strcmp(emu_savestates_path, "")))
-        return gearsf7000->SaveState(emu_savestates_path, index);
-
-    return gearsf7000->SaveState(index);
+    return gearsf7000->SaveState(state_slot_directory(), index);
 }
 
 bool emu_load_state_slot(int index)
@@ -1070,13 +1452,13 @@ bool emu_load_state_slot(int index)
     if (emu_is_empty())
         return false;
 
-    const bool loaded =
-        ((emu_savestates_dir_option == 0) && (strcmp(emu_savestates_path, "")))
-            ? gearsf7000->LoadState(emu_savestates_path, index)
-            : gearsf7000->LoadState(index);
+    const bool loaded = gearsf7000->LoadState(state_slot_directory(), index);
 
     if (loaded)
+    {
         rewind_abandon_history();
+        emu_resync_host_input();
+    }
 
     return loaded;
 }
@@ -1097,7 +1479,10 @@ bool emu_load_state_file(const char* file_path)
     const bool loaded = gearsf7000->LoadState(file_path, -1);
 
     if (loaded)
+    {
         rewind_abandon_history();
+        emu_resync_host_input();
+    }
 
     return loaded;
 }
@@ -1113,10 +1498,37 @@ GC_VideoFrameDescriptor emu_get_video_frame_descriptor(void)
                       : GC_VideoFrameDescriptor{};
 }
 
+GC_VideoFrameView emu_get_video_frame_view(void)
+{
+    if (!gearsf7000)
+        return {};
+
+    const GC_VideoFrameDescriptor descriptor =
+        gearsf7000->GetVideoFrameDescriptor();
+    if (!video_output_blanked)
+        return gearsf7000->GetVideoFrameView();
+
+    ensure_blank_frame_buffer_capacity();
+    if (!blank_frame_buffer)
+        return {};
+
+    GC_VideoFrameView view;
+    view.descriptor = descriptor;
+    view.pixels = blank_frame_buffer;
+    view.pixel_format = GC_PIXEL_RGB888;
+    view.row_stride_bytes = descriptor.frame_width * 3;
+    view.frame_serial = gearsf7000->GetVideoFrameSerial();
+    return view;
+}
+
 void emu_clear_video_buffer(void)
 {
-    if (emu_frame_buffer && emu_frame_buffer_capacity > 0)
-        memset(emu_frame_buffer, 0, emu_frame_buffer_capacity);
+    ensure_blank_frame_buffer_capacity();
+    if (blank_frame_buffer && blank_frame_buffer_capacity > 0)
+    {
+        memset(blank_frame_buffer, 0, blank_frame_buffer_capacity);
+        video_output_blanked = true;
+    }
 }
 
 int emu_encode_png_rgba(const u8* pixels, int width, int height,
@@ -1130,7 +1542,7 @@ int emu_encode_png_rgba(const u8* pixels, int width, int height,
     return (*out_buffer != NULL) ? len : 0;
 }
 
-int emu_get_screenshot_png(unsigned char** out_buffer)
+int emu_get_screenshot_png(unsigned char** out_buffer, bool full_frame, GC_VideoRect* out_area)
 {
     // Same readiness condition as GearSF7000Core::IsMachineReady(): SF-7000
     // IPL+RAM alone boot a complete machine with no SC-3000 cartridge
@@ -1138,19 +1550,23 @@ int emu_get_screenshot_png(unsigned char** out_buffer)
     if (!gearsf7000->IsMachineReady())
         return 0;
 
-    // emu_frame_buffer is filled by RunToVBlank every frame regardless of
-    // whether a GUI is presenting it, so this works the same headless.
-    GC_RuntimeInfo runtime;
-    emu_get_runtime(runtime);
+    const GC_VideoFrameView frame = emu_get_video_frame_view();
+    if (!frame.IsValid() || frame.pixel_format != GC_PIXEL_RGB888)
+        return 0;
 
-    const GC_Color_Format format = gearsf7000->GetPixelFormat();
-    const int channels =
-        (format == GC_PIXEL_RGB888 || format == GC_PIXEL_BGR888) ? 3 : 4;
-    const int stride = runtime.screen_width * channels;
+    const GC_VideoFrameDescriptor& descriptor = frame.descriptor;
+    const GC_VideoRect area = full_frame
+        ? GC_VideoRect{0, 0, descriptor.frame_width, descriptor.frame_height}
+        : descriptor.visible_area;
+    const u8* areaPixels = frame.pixels +
+        static_cast<size_t>(area.y) * frame.row_stride_bytes +
+        static_cast<size_t>(area.x) * 3u;
     int len = 0;
 
-    *out_buffer = stbi_write_png_to_mem(emu_frame_buffer, stride,
-        runtime.screen_width, runtime.screen_height, channels, &len);
+    *out_buffer = stbi_write_png_to_mem(areaPixels,
+        frame.row_stride_bytes, area.width, area.height, 3, &len);
+    if (out_area)
+        *out_area = area;
 
     return len;
 }
@@ -1171,7 +1587,11 @@ bool emu_crt_signal_dump_start(const char* file_path, int lines)
 
     crt_signal_dump_path = file_path;
     crt_signal_dump_sink = new CrtSignalDumpSink(lines);
-    gearsf7000->GetVideo()->AttachCrtSignalSink(crt_signal_dump_sink);
+    if (!gearsf7000->AttachVideoCrtSignalSink(crt_signal_dump_sink))
+    {
+        SafeDelete(crt_signal_dump_sink);
+        return false;
+    }
     return true;
 }
 
@@ -1186,7 +1606,7 @@ void crt_signal_dump_tick(void)
         return;
 
     crt_signal_dump_sink->WriteTo(crt_signal_dump_path.c_str());
-    gearsf7000->GetVideo()->AttachCrtSignalSink(NULL);
+    gearsf7000->AttachVideoCrtSignalSink(NULL);
     SafeDelete(crt_signal_dump_sink);
     Log("CRT signal dump written to %s", crt_signal_dump_path.c_str());
 }
@@ -1196,15 +1616,9 @@ void emu_set_full_raster_debug_enabled(bool enabled)
     if (!gearsf7000)
         return;
 
-    gearsf7000->GetVideo()->SetFullRasterDebugEnabled(enabled);
+    if (!gearsf7000->SetVideoOption(GC_VideoOption::FullRaster, enabled))
+        return;
 
-    // Same reason as emu_set_overscan: this changes the output geometry
-    // without advancing the machine, so repack the current frame now.
-    if (gearsf7000->IsMachineReady())
-    {
-        ensure_video_frame_buffer_capacity();
-        gearsf7000->RenderCurrentFrame(emu_frame_buffer);
-    }
 }
 
 int emu_get_full_raster_debug_png(unsigned char** out_buffer)
@@ -1212,34 +1626,32 @@ int emu_get_full_raster_debug_png(unsigned char** out_buffer)
     if (!gearsf7000 || !gearsf7000->IsMachineReady())
         return 0;
 
-    Video* video = gearsf7000->GetVideo();
-    if (!video->IsFullRasterDebugEnabled())
-        return 0;
-
-    int width = 0, height = 0;
-    const u8* buffer = video->GetFullRasterDebugBuffer(width, height);
-    if (!buffer || width <= 0 || height <= 0)
+    const GC_VideoFrameView frame = gearsf7000->GetVideoFrameView();
+    if (!frame.IsValid() || frame.pixel_format != GC_PIXEL_RGB888 ||
+        frame.descriptor.surface_kind != GC_VIDEO_SURFACE_FULL_RASTER_DEBUG)
         return 0;
 
     int len = 0;
-    *out_buffer = stbi_write_png_to_mem(buffer, width * 3, width, height, 3, &len);
+    *out_buffer = stbi_write_png_to_mem(frame.pixels,
+        frame.row_stride_bytes, frame.descriptor.frame_width,
+        frame.descriptor.frame_height, 3, &len);
     return len;
 }
 
-static void ensure_video_frame_buffer_capacity(void)
+static void ensure_blank_frame_buffer_capacity(void)
 {
     const GC_VideoFrameDescriptor descriptor = emu_get_video_frame_descriptor();
     if (!descriptor.IsValid())
         return;
     const size_t required = static_cast<size_t>(descriptor.buffer_width) *
         static_cast<size_t>(descriptor.buffer_height) * 3u;
-    if (required == 0 || required <= emu_frame_buffer_capacity)
+    if (required == 0 || required <= blank_frame_buffer_capacity)
         return;
 
     u8* replacement = new u8[required]();
-    SafeDeleteArray(emu_frame_buffer);
-    emu_frame_buffer = replacement;
-    emu_frame_buffer_capacity = required;
+    SafeDeleteArray(blank_frame_buffer);
+    blank_frame_buffer = replacement;
+    blank_frame_buffer_capacity = required;
 }
 
 void emu_get_info(char* info)
@@ -1251,16 +1663,44 @@ void emu_get_info(char* info)
         gearsf7000->GetRuntimeInfo(runtime);
 
         const char* filename = cart->GetFileName();
-        const char* pal = cart->IsPAL() ? "PAL" : "NTSC";
-        const char* checksum = cart->IsValidROM() ? "VALID" : "FAILED";
-        int rom_banks = cart->GetROMBankCount();
-        const char* mapper = get_mapper(cart->GetType());
+        const char* pal = runtime.region == Region_PAL ? "PAL" : "NTSC";
+        const char* mapper = emu_get_mapper_name(cart->GetType());
+        const char* selection = config_emulator.mapper_mode == 1
+            ? "Manual"
+            : (cart->IsTypeIdentified() ? "Auto (detected)" : "Auto (fallback)");
+        const char* asc16l_signature = cart->GetType() == Cartridge::SC3000_ASC16LS
+            ? ""
+            : cart->HasASC16LSignature()
+                ? "ASC16L Signature: Present at $3FF0\n"
+                : "ASC16L Signature: Not present\n";
+        const int rom_size = cart->GetROMSize();
+        const int rom_pages = cart->GetROMBankCount();
 
-        sprintf(info, "File Name: %s\nMapper: %s\nRefresh Rate: %s\nCartridge Header: %s\nROM Banks: %d\nScreen Resolution: %dx%d", filename, mapper, pal, checksum, rom_banks, runtime.screen_width, runtime.screen_height);
+        if (cart->GetType() == Cartridge::SC3000_SURVIVORS_MULTICART
+            || cart->GetType() == Cartridge::SC3000_SURVIVORS_MEGACART)
+        {
+            snprintf(info, 512,
+                "File Name: %s\nMapper: %s\nMapper Selection: %s\n"
+                "%sCRC32: %08X\nROM Size: %d bytes (%d KiB)\n"
+                "32 KiB ROM Blocks: %d\nRefresh Rate: %s\nScreen Resolution: %dx%d",
+                filename, mapper, selection, asc16l_signature, cart->GetCRC(),
+                rom_size, rom_size / 1024, rom_size / 0x8000, pal,
+                runtime.screen_width, runtime.screen_height);
+        }
+        else
+        {
+            snprintf(info, 512,
+                "File Name: %s\nMapper: %s\nMapper Selection: %s\n"
+                "%sCRC32: %08X\nROM Size: %d bytes (%d KiB)\n"
+                "16 KiB ROM Pages: %d\nRefresh Rate: %s\nScreen Resolution: %dx%d",
+                filename, mapper, selection, asc16l_signature, cart->GetCRC(),
+                rom_size, rom_size / 1024, rom_pages, pal,
+                runtime.screen_width, runtime.screen_height);
+        }
     }
     else
     {
-        sprintf(info, "There is no ROM loaded!");
+        snprintf(info, 512, "There is no ROM loaded!");
     }
 }
 
@@ -1312,12 +1752,12 @@ bool is_z80_call_or_rst(Memory* memory, u16 pc)
     // DD/FD prefixes are ignored by CALL/RST, but are legal and contribute to
     // the return address. Skip them to classify the effective opcode.
     u16 opcodeAddress = pc;
-    u8 opcode = memory->Read(opcodeAddress);
+    u8 opcode = memory->Peek(opcodeAddress);
     for (int prefixes = 0;
          prefixes < 16 && (opcode == 0xdd || opcode == 0xfd);
          ++prefixes)
     {
-        opcode = memory->Read(++opcodeAddress);
+        opcode = memory->Peek(++opcodeAddress);
     }
 
     switch (opcode)
@@ -1336,6 +1776,7 @@ bool is_z80_call_or_rst(Memory* memory, u16 pc)
 
 void emu_debug_step_over(void)
 {
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
     GearSF7000Core* core = emu_get_core();
     const u16 pc = core->GetCpuStateAccess()->GetCpuStateSnapshot().pc;
     Memory* memory = core->GetMemory();
@@ -1350,7 +1791,8 @@ void emu_debug_step_over(void)
         emu_debug_continue();
         return;
     }
-
+#endif
+    // Without the disassembler there is no instruction size to step over.
     emu_debug_step_into();
 }
 
@@ -1369,18 +1811,33 @@ void emu_debug_break(void)
 
 void emu_debug_continue(void)
 {
+    if (gearsf7000->GetMachineType() == MachineType::MSX &&
+        (emu_is_empty() || emu_has_pending_msx_firmware())) {
+        Cartridge::ForceConfiguration config;
+        config.type = Cartridge::MSX_LINEAR;
+        emu_reset(config, true);
+    }
+    if (emu_is_empty()) {
+        if (!machine_start_error.empty()) DiagWarn("app", "%s", machine_start_error.c_str());
+        return;
+    }
+
     // Scrubbing the Recorder is an inspection operation. Continuing must
     // return to the live edge and append there; silently turning the inspected
     // historical frame into a new branch would destroy all newer evidence.
     // Keep rewind_push()'s branch guard as a safety net for low-level callers
     // that bypass the normal Continue path.
-    if (rewind_get_seek_position() > 0 && !rewind_seek(0))
+    if (rewind_get_seek_position() > 0)
     {
-        DiagWarn("recorder", "continue live could not restore the newest frame");
-        return;
+        if (!rewind_seek(0))
+        {
+            DiagWarn("recorder", "continue live could not restore the newest frame");
+            return;
+        }
     }
 
     debugging = debug_step = false;
+    debug_line_pending = false;
     debug_frames_pending = 0;
     gearsf7000->Pause(false);
 }
@@ -1433,12 +1890,15 @@ void emu_writeprotect_disc(bool writeProtected)
 
 bool emu_load_cassette(const char* file_path, bool* isReadOnly)
 {
-    return gearsf7000->CassetteChange(file_path, isReadOnly) != 0;
+    const bool loaded = gearsf7000->CassetteChange(file_path, isReadOnly) != 0;
+    if (loaded) rewind_reset(); // Snapshots reference the currently mounted media.
+    return loaded;
 }
 
 void emu_eject_cassette()
 {
     gearsf7000->CassetteEject();
+    rewind_reset();
 }
 
 void emu_writeprotect_cassette(bool writeProtected)
@@ -1464,39 +1924,17 @@ void emu_cassette_rewind()
 #ifdef SPRITE_EXPANDER
 void emu_video_no_sprite_limit(bool enabled)
 {
-    gearsf7000->GetVideo()->SetNoSpriteLimit(enabled);
+    gearsf7000->SetVideoOption(GC_VideoOption::UnlimitedSprites, enabled);
 }
 #endif
 
 void emu_set_overscan(int overscan)
 {
-    switch (overscan)
-    {
-        case 0:
-            gearsf7000->GetVideo()->SetOverscan(Video::OverscanDisabled);
-            break;
-        case 1:
-            gearsf7000->GetVideo()->SetOverscan(Video::OverscanTopBottom);
-            break;
-        case 2:
-            gearsf7000->GetVideo()->SetOverscan(Video::OverscanFull272);
-            break;
-        case 3:
-            gearsf7000->GetVideo()->SetOverscan(Video::OverscanFull284);
-            break;
-        //case 4:
-        //    gearsf7000->GetVideo()->SetOverscan(Video::OverscanFull320);
-        //    break;
-        default:
-            gearsf7000->GetVideo()->SetOverscan(Video::OverscanDisabled);
-    }
+    if (overscan < GC_VideoBorder::Disabled ||
+        overscan > GC_VideoBorder::Full284)
+        overscan = static_cast<int>(GC_VideoBorder::Disabled);
+    gearsf7000->SetVideoOption(GC_VideoOption::Border, overscan);
 
-    // Changing the output geometry does not advance the emulated machine.
-    // Repack the already-rendered VDP image immediately so a paused machine,
-    // startup configuration, or debugger view never exposes pixels laid out
-    // using the previous descriptor.
-    ensure_video_frame_buffer_capacity();
-    gearsf7000->RenderCurrentFrame(emu_frame_buffer);
 }
 
 void emu_save_screenshot(const char* file_path)
@@ -1504,12 +1942,19 @@ void emu_save_screenshot(const char* file_path)
     if (!gearsf7000->IsMachineReady())
         return;
 
-    GC_RuntimeInfo runtime;
-    emu_get_runtime(runtime);
+    const GC_VideoFrameView frame = emu_get_video_frame_view();
+    if (!frame.IsValid() || frame.pixel_format != GC_PIXEL_RGB888)
+        return;
+    const GC_VideoFrameDescriptor& descriptor = frame.descriptor;
+    const GC_VideoRect visible = descriptor.visible_area;
+    const u8* visiblePixels = frame.pixels +
+        static_cast<size_t>(visible.y) * frame.row_stride_bytes +
+        static_cast<size_t>(visible.x) * 3u;
 
     Log("Saving screenshot to %s", file_path);
 
-    stbi_write_png(file_path, runtime.screen_width, runtime.screen_height, 3, emu_frame_buffer, runtime.screen_width * 3);
+    stbi_write_png(file_path, visible.width, visible.height, 3,
+        visiblePixels, frame.row_stride_bytes);
 
     Log("Screenshot saved!");
 }
@@ -1541,22 +1986,56 @@ static void load_ram(void)
         gearsf7000->LoadRam();
 }
 
-static const char* get_mapper(Cartridge::CartridgeTypes type)
+const char* emu_get_mapper_name(Cartridge::CartridgeTypes type)
 {
     switch (type)
     {
         case Cartridge::SG1000_1K:
-            return "SG-1000 (1KB)";
+            return "SG-1000 standard (console RAM)";
         case Cartridge::SG1000_16K:
             return "SG-1000 (16KB)";
         case Cartridge::SC3000_2K:
-            return "SC-3000 (2KB)";
+            return "SC-3000 standard (console RAM at $8000)";
         case Cartridge::SC3000_32K:
             return "SC-3000 (32KB)";
         case Cartridge::SF7000IPL:
             return "SF-7000 (64KB)";
         case Cartridge::SC3000_ASC16L:
             return "ASCII 16 Light (32KB)";
+        case Cartridge::SC3000_ASC16LS:
+            return "Internal";
+        case Cartridge::SC3000_16K_AT_8000:
+            return "SC-3000 (16KB cartridge + console RAM)";
+        case Cartridge::SC3000_FLAT64K:
+            return "Flat 64KB RAM";
+        case Cartridge::SG1000_DAHJEE_TYPE_A:
+            return "SG-1000 Dahjee Type A (8KB external + console RAM)";
+        case Cartridge::SG1000_DAHJEE_TYPE_B:
+            return "SG-1000 Dahjee Type B (8KB adapter)";
+        case Cartridge::SC3000_SURVIVORS_MULTICART:
+            return "SC-3000 Survivors Multicart (2MB, 32KB pages)";
+        case Cartridge::SC3000_SURVIVORS_MEGACART:
+            return "SC-3000 Survivors Megacart (4MB, 32KB pages)";
+        case Cartridge::SG1000_OTHELLO_2K:
+            return "SG-1000 Othello (2KB cartridge RAM)";
+        case Cartridge::SG1000_CASTLE_8K:
+            return "SG-1000 The Castle (8KB cartridge + console RAM)";
+        case Cartridge::SG1000_SEGA_315_5208:
+            return "SG-1000 Sega 315-5208 (console RAM)";
+        case Cartridge::SG1000_SEGA_315_5208_DAHJEE_B:
+            return "SG-1000 Sega 315-5208 + Dahjee B (8KB adapter)";
+        case Cartridge::SMS_SEGA_MAPPER:
+            return "Master System Sega mapper";
+        case Cartridge::SORD_M5_LINEAR:
+            return "Sord M5 standard cartridge (up to 20 KB)";
+        case Cartridge::MSX_LINEAR:
+            return "MSX linear cartridge (8/16/32KB)";
+        case Cartridge::MSX_ASCII16:
+            return "MSX ASCII 16 MegaROM (16KB banks)";
+        case Cartridge::COLECOVISION:
+            return "ColecoVision standard cartridge (up to 32KB at $8000)";
+        case Cartridge::COLECO_MEGACART:
+            return "Coleco MegaCart (16KB banks)";
         case Cartridge::CartridgeNotSupported:
             return "Not Supported";
         default:
@@ -1566,41 +2045,6 @@ static const char* get_mapper(Cartridge::CartridgeTypes type)
 
 static void init_debug(void)
 {
-    emu_debug_background_buffer = new u8[256 * 256 * 3];
-    emu_debug_tile_buffer = new u8[32 * 32 * 64 * 3];
-    debug_background_buffer = new u16[256 * 256];    
-    debug_tile_buffer = new u16[32 * 32 * 64];
-
-    for (int i=0,j=0; i < (32 * 32 * 64); i++,j+=3)
-    {
-        debug_tile_buffer[i] = 0;
-        emu_debug_tile_buffer[j] = 0;
-        emu_debug_tile_buffer[j+1] = 0;
-        emu_debug_tile_buffer[j+2] = 0;
-    }
-
-    for (int s = 0; s < 64; s++)
-    {
-        emu_debug_sprite_buffers[s] = new u8[16 * 16 * 3];
-        debug_sprite_buffers[s] = new u16[16 * 16];
-
-        for (int i=0,j=0; i < (16 * 16); i++,j+=3)
-        {
-            debug_sprite_buffers[s][i] = 0;
-            emu_debug_sprite_buffers[s][j] = 0;
-            emu_debug_sprite_buffers[s][j+1] = 0;
-            emu_debug_sprite_buffers[s][j+2] = 0;
-        }
-    }
-
-    for (int i=0,j=0; i < (256 * 256); i++,j+=3)
-    {
-        debug_background_buffer[i] = 0;
-        emu_debug_background_buffer[j] = 0;
-        emu_debug_background_buffer[j+1] = 0;
-        emu_debug_background_buffer[j+2] = 0;
-    }
-
     const int rom_inspector_pixels = ROM_INSPECTOR_TEXTURE_SIZE * ROM_INSPECTOR_TEXTURE_SIZE;
     emu_debug_rom_inspector_buffer = new u8[rom_inspector_pixels * 3];
     for (int i = 0; i < (rom_inspector_pixels * 3); i++)
@@ -1609,412 +2053,12 @@ static void init_debug(void)
 
 static void destroy_debug(void)
 {
-    SafeDeleteArray(emu_debug_background_buffer);
-    SafeDeleteArray(emu_debug_tile_buffer);
-    SafeDeleteArray(debug_background_buffer);
-    SafeDeleteArray(debug_tile_buffer);
     SafeDeleteArray(emu_debug_rom_inspector_buffer);
 
-    for (int s = 0; s < 64; s++)
-    {
-        SafeDeleteArray(emu_debug_sprite_buffers[s]);
-        SafeDeleteArray(debug_sprite_buffers[s]);
-    }
 }
 
-static void update_debug(void)
+config_VideoOutput emu_get_effective_video_output(bool debug)
 {
-
-    update_debug_background_buffer();
-    update_debug_tile_buffer();
-    update_debug_sprite_buffers();
-
-    Video* video = gearsf7000->GetVideo();
-
-    video->Render24bit(debug_background_buffer, emu_debug_background_buffer, GC_PIXEL_RGB888, 256 * 256);
-    video->Render24bit(debug_tile_buffer, emu_debug_tile_buffer, GC_PIXEL_RGB888, 32 * 32 * 64);
-
-    for (int s = 0; s < 64; s++)
-    {
-        video->Render24bit(debug_sprite_buffers[s], emu_debug_sprite_buffers[s], GC_PIXEL_RGB888, 16 * 16);
-    }
-}
-
-static void update_debug_background_buffer(void)
-{
-    Video* video = gearsf7000->GetVideo();
-    u8* vram = video->GetVRAM();
-    u8* regs = video->GetRegisters();
-    int mode = video->GetMode();
-
-    int name_table_addr = regs[2] << 10;
-    int color_table_addr = regs[3] << 6;
-    int pattern_table_addr = regs[4] << 11;
-    int region_mask = ((regs[4] & 0x03) << 8) | 0xFF;
-    int color_mask = ((regs[3] & 0x7F) << 3) | 0x07;
-    int backdrop_color = regs[7] & 0x0F;
-    backdrop_color = (backdrop_color > 0) ? backdrop_color : 1;
-    int region = 0;
-
-    switch (mode)
-    {
-        case 1:
-        {
-            int fg_color = (regs[7] >> 4) & 0x0F;
-            int bg_color = backdrop_color;
-            fg_color = (fg_color > 0) ? fg_color : backdrop_color;
-
-            for (int line = 0; line < 192; line++)
-            {
-                int line_offset = line * GC_RESOLUTION_WIDTH;
-                int tile_y = line >> 3;
-                int tile_y_offset = line & 7;
-
-                for (int tile_x = 0; tile_x < 40; tile_x++)
-                {
-                    int tile_number = (tile_y * 40) + tile_x;
-                    int name_tile_addr = name_table_addr + tile_number;
-                    int name_tile = vram[name_tile_addr];
-                    u8 pattern_line = vram[pattern_table_addr + (name_tile << 3) + tile_y_offset];
-
-                    int screen_offset = line_offset + (tile_x * 6);
-
-                    for (int tile_pixel = 0; tile_pixel < 6; tile_pixel++)
-                    {
-                        int pixel = screen_offset + tile_pixel;
-                        debug_background_buffer[pixel] = IsSetBit(pattern_line, 7 - tile_pixel) ? fg_color : bg_color;
-                    }
-                }
-            }
-            return;
-        }
-        case 2:
-        {
-            pattern_table_addr &= 0x2000;
-            color_table_addr &= 0x2000;
-            break;
-        }
-        case 4:
-        {
-            pattern_table_addr &= 0x2000;
-            break;
-        }
-    }
-
-    for (int line = 0; line < 192; line++)
-    {
-        int line_offset = line * GC_RESOLUTION_WIDTH;
-        int tile_y = line >> 3;
-        int tile_y_offset = line & 7;
-        region = (tile_y & 0x18) << 5;
-
-        for (int tile_x = 0; tile_x < 32; tile_x++)
-        {
-            int tile_number = (tile_y << 5) + tile_x;
-            int name_tile_addr = name_table_addr + tile_number;
-            int name_tile = vram[name_tile_addr];
-            u8 pattern_line = 0;
-            u8 color_line = 0;
-
-            if (mode == 4)
-            {
-                int offset_color = pattern_table_addr + (name_tile << 3) + ((tile_y & 0x03) << 1) + (line & 0x04 ? 1 : 0);
-                color_line = vram[offset_color];
-
-                int left_color = color_line >> 4;
-                int right_color = color_line & 0x0F;
-                left_color = (left_color > 0) ? left_color : backdrop_color;
-                right_color = (right_color > 0) ? right_color : backdrop_color;
-
-                int screen_offset = line_offset + (tile_x << 3);
-
-                for (int tile_pixel = 0; tile_pixel < 4; tile_pixel++)
-                {
-                    int pixel = screen_offset + tile_pixel;
-                    debug_background_buffer[pixel] = left_color;
-                }
-
-                for (int tile_pixel = 4; tile_pixel < 8; tile_pixel++)
-                {
-                    int pixel = screen_offset + tile_pixel;
-                    debug_background_buffer[pixel] = right_color;
-                }
-
-                continue;
-            }
-            else if (mode == 0)
-            {
-                pattern_line = vram[pattern_table_addr + (name_tile << 3) + tile_y_offset];
-                color_line = vram[color_table_addr + (name_tile >> 3)];
-            }
-            else if (mode == 2)
-            {
-                name_tile += region;
-                pattern_line = vram[pattern_table_addr + ((name_tile & region_mask) << 3) + tile_y_offset];
-                color_line = vram[color_table_addr + ((name_tile & color_mask) << 3) + tile_y_offset];
-            }
-
-            int fg_color = color_line >> 4;
-            int bg_color = color_line & 0x0F;
-            fg_color = (fg_color > 0) ? fg_color : backdrop_color;
-            bg_color = (bg_color > 0) ? bg_color : backdrop_color;
-
-            int screen_offset = line_offset + (tile_x << 3);
-
-            for (int tile_pixel = 0; tile_pixel < 8; tile_pixel++)
-            {
-                int pixel = screen_offset + tile_pixel;
-                debug_background_buffer[pixel] = IsSetBit(pattern_line, 7 - tile_pixel) ? fg_color : bg_color;
-            }
-        }
-    }
-}
-
-static void update_debug_tile_buffer(void)
-{
-    Video* video = gearsf7000->GetVideo();
-    u8* vram = video->GetVRAM();
-    u8* regs = video->GetRegisters();
-    int mode = video->GetMode();
-
-    int pattern_table_addr = (regs[4] & ((mode == 2) ? 0x04 : 0x07)) << 11;
-    int color_table_addr = regs[3] << 6;
-    if (mode == 2)
-        color_table_addr &= 0x2000;
-
-    int backdrop_color = regs[7] & 0x0F;
-    backdrop_color = (backdrop_color > 0) ? backdrop_color : 1;
-
-    // Text Mode has no per-tile color table at all - fixed fg/bg from R7,
-    // same substitution rule update_debug_background_buffer already uses.
-    int text_fg = (regs[7] >> 4) & 0x0F;
-    int text_bg = backdrop_color;
-    text_fg = (text_fg > 0) ? text_fg : backdrop_color;
-
-    for (int y = 0; y < 256; y++)
-    {
-        int width_y = (y * 256);
-        int tile_y = y / 8;
-        int offset_y = y & 0x7;
-
-        for (int x = 0; x < 256; x++)
-        {
-            int tile_x = x / 8;
-            int offset_x = 7 - (x & 0x7);
-            int pixel = width_y + x;
-
-            int tile_number = (tile_y * 32) + tile_x;
-
-            int tile_data_addr = (pattern_table_addr + (tile_number * 8) + (1 * offset_y)) & 0x3FFF;
-            bool bit_set = IsSetBit(vram[tile_data_addr], offset_x);
-
-            int fg_color = 15;
-            int bg_color = 0;
-
-            if (mode == 1)
-            {
-                fg_color = text_fg;
-                bg_color = text_bg;
-            }
-            else if ((mode == 0) || (mode == 2))
-            {
-                // Graphics I and II both address their color table with the
-                // exact same coordinates used for the pattern table above
-                // (tile_number for II - one color byte per pattern row,
-                // tile_number>>3 for I - one byte per 8 consecutive
-                // patterns), so this grid of tiles is never ambiguous about
-                // which color entry belongs to it: no name-table position
-                // or "which Graphics II region" guess needed. Ported from
-                // SC3K-System's update_debug_tile_buffer_sg1000_mode2/
-                // update_debug_tile_buffer_sg1000 (see
-                // DOCS/ROM_INSPECTOR_PLAN.md point 2).
-                int tile_color_addr = (mode == 2)
-                    ? (color_table_addr + (tile_number * 8) + offset_y) & 0x3FFF
-                    : (color_table_addr + (tile_number >> 3)) & 0x3FFF;
-                int color_line = vram[tile_color_addr];
-                fg_color = color_line >> 4;
-                bg_color = color_line & 0x0F;
-                fg_color = (fg_color > 0) ? fg_color : backdrop_color;
-                bg_color = (bg_color > 0) ? bg_color : backdrop_color;
-            }
-            // Multicolor (mode 4): color is embedded directly in the
-            // pattern data itself, not looked up from a separate table -
-            // a genuinely different decode, not just an added lookup.
-            // Left as plain black/white for now, same scope boundary
-            // SC3K-System itself stopped at.
-
-            debug_tile_buffer[pixel] = bit_set ? fg_color : bg_color;
-        }
-    }
-}
-
-static void update_debug_sprite_buffers(void)
-{
-    GearSF7000Core* core = emu_get_core();
-    Video* video = core->GetVideo();
-    u8* regs = video->GetRegisters();
-    u8* vram = video->GetVRAM();
-    GC_RuntimeInfo runtime;
-    emu_get_runtime(runtime);
-
-    const bool rendered_source = config_debug.vram_sprites_source == 1;
-    const bool pipeline_source = config_debug.vram_sprites_source == 2;
-    const bool scanline_source = config_debug.vram_sprites_source == 3;
-    const Video::RenderedSpriteDebugFrame& rendered =
-        video->GetLastRenderedSpriteDebugFrame();
-    int sprite_size = rendered_source && rendered.valid
-        ? (rendered.large ? 16 : 8)
-        : (IsSetBit(regs[1], 1) ? 16 : 8);
-    u16 sprite_attribute_addr = (regs[5] & 0x7F) << 7;
-    u16 sprite_pattern_addr = (regs[6] & 0x07) << 11;
-
-    for (int s = 0; s < 32; s++)
-    {
-        for (int pixel = 0; pixel < 16 * 16; ++pixel)
-            debug_sprite_buffers[s][pixel] = 0;
-
-        if (rendered_source)
-        {
-            if (!rendered.valid)
-                continue;
-            for (int pixel_y = 0; pixel_y < sprite_size; ++pixel_y)
-                for (int pixel_x = 0; pixel_x < sprite_size; ++pixel_x)
-                {
-                    const int pixel = pixel_y * 16 + pixel_x;
-                    debug_sprite_buffers[s][pixel] =
-                        rendered.entries[s].pixels[pixel];
-                }
-            continue;
-        }
-
-        if (scanline_source)
-        {
-            const Video::SpriteSelectionFrameHistory& history =
-                video->GetSpriteSelectionFrameHistory();
-            const int line = config_debug.vram_sprites_scanline;
-            if (!history.valid || line < 0 || line >= history.rasterLines)
-                continue;
-            const Video::SpriteSelectionHistoryRow& row = history.rows[line];
-            for (int lane = 0; lane < 4; ++lane)
-            {
-                if (row.rasterX[lane] == 0xFF)
-                    continue;
-                const auto scan = TMS9918VramSlotSchedule::GetSlot(
-                    TMS9918VramSlotSchedule::Schedule::Graphics,
-                    row.rasterX[lane]);
-                if (scan.activity !=
-                        TMS9918VramSlotSchedule::Activity::SpriteScanY ||
-                    scan.index != s)
-                    continue;
-                int visible_y = (row.sat[lane][0] + 1) & 0xFF;
-                if (visible_y >= 0xE0)
-                    visible_y -= 0x100;
-                const bool zoomed = (row.flags & 0x08) != 0;
-                const int source_y = (line - visible_y) >> (zoomed ? 1 : 0);
-                const int source_size = (row.flags & 0x04) != 0 ? 16 : 8;
-                if (source_y < 0 || source_y >= source_size)
-                    continue;
-                const int colour = row.sat[lane][3] & 0x0F;
-                for (int x = 0; x < source_size; ++x)
-                {
-                    const u8 pattern = x < 8
-                        ? row.pattern[lane][0] : row.pattern[lane][1];
-                    const int bit = x < 8 ? 7 - x : 15 - x;
-                    if (colour != 0 && IsSetBit(pattern, bit & 7))
-                        debug_sprite_buffers[s][source_y * 16 + x] = colour;
-                }
-            }
-            continue;
-        }
-
-        if (pipeline_source)
-        {
-            const Video::SpritePipelineDebugSnapshot pipeline =
-                video->GetSpritePipelineDebugSnapshot();
-            const Video::SpritePipelineLineDebug* active = nullptr;
-            for (const Video::SpritePipelineLineDebug& line : pipeline.lines)
-            {
-                if (!line.valid)
-                    continue;
-                if (pipeline.activeTargetValid &&
-                    line.absoluteTargetLine == pipeline.activeAbsoluteTargetLine)
-                {
-                    active = &line;
-                    break;
-                }
-                if (active == nullptr)
-                    active = &line;
-            }
-            if (active == nullptr)
-                continue;
-            for (int lane = 0; lane < active->selectedCount && lane < 4;
-                 ++lane)
-            {
-                const Video::SpritePipelineLatchDebug& entry =
-                    active->selected[lane];
-                if (entry.satIndex != s || !entry.yValid || !entry.colourValid ||
-                    !entry.patternValid[0])
-                    continue;
-                int visible_y = (entry.y + 1) & 0xFF;
-                if (visible_y >= 0xE0)
-                    visible_y -= 0x100;
-                const bool zoomed = IsSetBit(regs[1], 0);
-                const int source_y = (active->targetLine - visible_y) >>
-                    (zoomed ? 1 : 0);
-                if (source_y < 0 || source_y >= sprite_size)
-                    continue;
-                const int colour = entry.colour & 0x0F;
-                for (int x = 0; x < sprite_size; ++x)
-                {
-                    if (x >= 8 && !entry.patternValid[1])
-                        continue;
-                    const u8 pattern = x < 8
-                        ? entry.pattern[0] : entry.pattern[1];
-                    const int bit = x < 8 ? 7 - x : 15 - x;
-                    if (colour != 0 && IsSetBit(pattern, bit & 7))
-                        debug_sprite_buffers[s][source_y * 16 + x] = colour;
-                }
-            }
-            continue;
-        }
-
-        int sprite_attribute_offset = sprite_attribute_addr + (s << 2);
-        int sprite_color = vram[sprite_attribute_offset + 3] & 0x0F;
-        int sprite_tile = vram[sprite_attribute_offset + 2];
-        sprite_tile &= (sprite_size == 16) ? 0xFC : 0xFF;
-
-        for (int pixel_y = 0; pixel_y < sprite_size; pixel_y++)
-        {
-            int sprite_line_addr = sprite_pattern_addr + (sprite_tile << 3) + pixel_y;
-
-            for (int pixel_x = 0; pixel_x < 16; pixel_x++)
-            {
-                if ((sprite_size == 8) && (pixel_x == 8))
-                    break;
-
-                int pixel = (pixel_y * 16) + pixel_x;
-
-                bool sprite_pixel = false;
-
-                if (pixel_x < 8)
-                    sprite_pixel = IsSetBit(vram[sprite_line_addr], 7 - pixel_x);
-                else
-                    sprite_pixel = IsSetBit(vram[sprite_line_addr + 16], 15 - pixel_x);
-
-                debug_sprite_buffers[s][pixel] = sprite_pixel ? sprite_color : 0;
-            }
-        }
-    }
-}
-
-void emu_refresh_debug_sprite_buffers(void)
-{
-    if (emu_is_empty())
-        return;
-
-    update_debug_sprite_buffers();
-    Video* video = gearsf7000->GetVideo();
-    for (int s = 0; s < 32; ++s)
-        video->Render24bit(debug_sprite_buffers[s],
-            emu_debug_sprite_buffers[s], GC_PIXEL_RGB888, 16 * 16);
+    return ResolveVideoOutput(config_video_output_for_mode(debug), gearsf7000->GetActiveVideoOptionCode(),
+        debug && !config_debug.video_as_main_settings, emu_get_video_frame_descriptor());
 }

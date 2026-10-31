@@ -1,8 +1,14 @@
 /*
  * GearSF7000 - VGM export
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * Adapted from GearSF7000's VgmRecorder (Copyright (C) 2021 Ignacio Sanchez).
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+ *
+ * Adapted from Gearcoleco's VgmRecorder.
  * See VgmRecorder.h for why this one was ported instead of SC3K-System's.
  */
 
@@ -19,6 +25,7 @@ VgmRecorder::VgmRecorder()
     m_bPAL = false;
     m_bPSGUsed = false;
     m_bAY8910Used = false;
+    m_bYM2413Used = false;
 }
 
 VgmRecorder::~VgmRecorder()
@@ -40,6 +47,7 @@ void VgmRecorder::Start(const char* file_path, int clock_rate, bool is_pal)
     m_TotalSamples = 0;
     m_bPSGUsed = false;
     m_bAY8910Used = false;
+    m_bYM2413Used = false;
     m_CommandBuffer.clear();
 }
 
@@ -79,6 +87,15 @@ const std::string& VgmRecorder::Stop()
             header[0x0D] = (psg_clock >> 8) & 0xFF;
             header[0x0E] = (psg_clock >> 16) & 0xFF;
             header[0x0F] = (psg_clock >> 24) & 0xFF;
+        }
+
+        if (m_bYM2413Used)
+        {
+            const u32 ym2413_clock = static_cast<u32>(m_ClockRate);
+            header[0x10] = (ym2413_clock >> 0) & 0xFF;
+            header[0x11] = (ym2413_clock >> 8) & 0xFF;
+            header[0x12] = (ym2413_clock >> 16) & 0xFF;
+            header[0x13] = (ym2413_clock >> 24) & 0xFF;
         }
 
         // GD3 offset left at 0: no track/author tag written.
@@ -151,6 +168,15 @@ void VgmRecorder::WriteAY8910(u8 reg, u8 data)
     FlushPendingWait();
     m_bAY8910Used = true;
     WriteCommand(0xA0, reg, data);   // AY8910 register write
+}
+
+void VgmRecorder::WriteYM2413(u8 reg, u8 data)
+{
+    if (!m_bRecording)
+        return;
+    FlushPendingWait();
+    m_bYM2413Used = true;
+    WriteCommand(0x51, reg, data);   // YM2413 register write
 }
 
 void VgmRecorder::UpdateTiming(int elapsed_samples)

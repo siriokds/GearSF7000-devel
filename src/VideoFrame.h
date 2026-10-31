@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 /*
  * GearSF7000 video-output contract.
  *
@@ -32,11 +34,39 @@ enum GC_VideoSignalType
     GC_VIDEO_SIGNAL_ANALOG_PAL,
     GC_VIDEO_SIGNAL_DIGITAL_RGB,
     GC_VIDEO_SIGNAL_VGA,
-    GC_VIDEO_SIGNAL_DVI
+    GC_VIDEO_SIGNAL_DVI,
+    GC_VIDEO_SIGNAL_ANALOG_COMPONENT
+};
+
+enum GC_VideoSurfaceKind
+{
+    GC_VIDEO_SURFACE_PRESENTATION,
+    GC_VIDEO_SURFACE_FULL_RASTER_DEBUG
+};
+
+enum GC_VideoPostProcessingCapability : u32
+{
+    GC_VIDEO_POSTPROCESSING_CAPABILITY_NONE = 0,
+    // The completed RGB surface may be resampled spatially. This covers
+    // bilinear filtering and resolution-independent scaling kernels.
+    GC_VIDEO_POSTPROCESSING_CAPABILITY_SPATIAL_SCALING = 1u << 0,
+    // One source row represents one progressive display line, so a display
+    // shader may shape scanlines from the source-row cadence.
+    GC_VIDEO_POSTPROCESSING_CAPABILITY_SCANLINE_CRT = 1u << 1
 };
 
 struct GC_VideoFrameDescriptor
 {
+    // Stable device identity accompanies the geometry. A frontend can cache
+    // resources by revision without accidentally reusing them after a device
+    // replacement whose current mode happens to have the same dimensions.
+    const char* device_key = nullptr;
+    u32 mode_id = 0;
+
+    GC_VideoSurfaceKind surface_kind = GC_VIDEO_SURFACE_PRESENTATION;
+    u32 postprocessing_capabilities =
+        GC_VIDEO_POSTPROCESSING_CAPABILITY_NONE;
+
     // Maximum packed output buffer required by the selected video device.
     // Frontends allocate against this pair, not against TMS-specific defines.
     int buffer_width = 0;
@@ -65,6 +95,18 @@ struct GC_VideoFrameDescriptor
     int logical_width = 0;
     int logical_height = 0;
 
+    // Desktop-space basis for explicit frontend scale choices. This is not a
+    // pixel density and does not describe the geometry of a video mode. A
+    // device may emit a 640x480 framebuffer while asking Scale 1x to occupy
+    // 320x240 desktop units; the complete framebuffer is still presented
+    // uniformly, so high-resolution modes keep their intended proportions.
+    int presentation_width = 0;
+    int presentation_height = 0;
+
+    // Frequency of the native units accepted by IVideoDevice::TickDeviceClocks.
+    // For TMS99xx this is the VDP master oscillator; another device may expose
+    // a pixel clock or another indivisible internal tick instead.
+    u32 device_clock_hz = 0;
     GC_VideoRational refresh_rate;
     GC_VideoRational pixel_aspect_ratio = {1, 1};
     GC_VideoSignalType signal = GC_VIDEO_SIGNAL_UNKNOWN;
@@ -87,12 +129,43 @@ struct GC_VideoFrameDescriptor
             visible_area.width > 0 && visible_area.height > 0 &&
             visible_area.x + visible_area.width <= frame_width &&
             visible_area.y + visible_area.height <= frame_height;
-        return dimensionsValid && contentValid && visibleValid &&
+        return device_key != nullptr && device_key[0] != '\0' &&
+            dimensionsValid && contentValid && visibleValid &&
             raster_width > 0 && raster_height > 0 &&
             logical_width > 0 && logical_height > 0 &&
+            presentation_width > 0 && presentation_height > 0 &&
+            device_clock_hz > 0 &&
             refresh_rate.numerator > 0 && refresh_rate.denominator > 0 &&
             pixel_aspect_ratio.numerator > 0 &&
             pixel_aspect_ratio.denominator > 0;
+    }
+
+    bool SupportsPostProcessing(u32 requiredCapabilities) const
+    {
+        return (postprocessing_capabilities & requiredCapabilities) ==
+            requiredCapabilities;
+    }
+};
+
+// Immutable view of one device-owned, completed presentation frame. The
+// descriptor and pixels are obtained together so a frontend never combines
+// geometry from one mode with storage from another. The pointer remains owned
+// by the device and is valid until that device produces or repacks a frame.
+struct GC_VideoFrameView
+{
+    GC_VideoFrameDescriptor descriptor;
+    const u8* pixels = nullptr;
+    GC_Color_Format pixel_format = GC_PIXEL_RGB888;
+    int row_stride_bytes = 0;
+    u64 frame_serial = 0;
+
+    bool IsValid() const
+    {
+        const int bytesPerPixel =
+            (pixel_format == GC_PIXEL_RGB888 ||
+             pixel_format == GC_PIXEL_BGR888) ? 3 : 2;
+        return descriptor.IsValid() && pixels != nullptr &&
+            row_stride_bytes >= descriptor.frame_width * bytesPerPixel;
     }
 };
 

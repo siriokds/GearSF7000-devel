@@ -1,0 +1,278 @@
+{
+  "schema_version": 2,
+  "description": "Hardware device identities. Variant codes identify output configurations; core_variants explicitly lists implemented combinations. Empty cores and null defaults describe unavailable devices.",
+  "frame_description": "Full nominal raster including blanking. Columns use the horizontal unit specified per device; rows are scanlines. Null dimensions mean the variant timing has not been defined.",
+  "density_factor_description": "Uniform framebuffer-to-presentation reduction at frontend scale 1x, before pixel aspect ratio correction. A factor of 2 presents a 640x480 framebuffer at 320x240. Independent of timing raster units and logical video mode resolution. Null means not defined by an implemented variant.",
+  "devices": [
+    {
+      "code": "TMS9918",
+      "name": "TMS9918",
+      "cores": [
+        "TMS99xx"
+      ],
+      "default_core": "TMS99xx",
+      "default_variant": "TMS9918-NTSC",
+      "core_variants": {
+        "TMS99xx": [
+          "TMS9918-NTSC"
+        ]
+      },
+      "variants": [
+        {
+          "code": "TMS9918-NTSC",
+          "name": "NTSC",
+          "frame": {
+            "columns": 342,
+            "rows": 262,
+            "column_unit": "dot"
+          },
+          "density_factor": 1,
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "code": "TMS9918B",
+      "name": "TMS9918B",
+      "cores": [
+        "TMS99xx"
+      ],
+      "default_core": "TMS99xx",
+      "default_variant": "TMS9918B-NTSC",
+      "core_variants": {
+        "TMS99xx": [
+          "TMS9918B-NTSC"
+        ]
+      },
+      "variants": [
+        {
+          "code": "TMS9918B-NTSC",
+          "name": "NTSC",
+          "frame": {
+            "columns": 342,
+            "rows": 262,
+            "column_unit": "dot"
+          },
+          "density_factor": 1,
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "code": "TMS9928",
+      "name": "TMS9928",
+      "cores": [
+        "TMS99xx"
+      ],
+      "default_core": "TMS99xx",
+      "default_variant": "TMS9928-NTSC",
+      "core_variants": {
+        "TMS99xx": [
+          "TMS9928-NTSC"
+        ]
+      },
+      "variants": [
+        {
+          "code": "TMS9928-NTSC",
+          "name": "NTSC",
+          "frame": {
+            "columns": 342,
+            "rows": 262,
+            "column_unit": "dot"
+          },
+          "density_factor": 1,
+          "status": "implemented"
+        },
+        {
+          "code": "TMS9928-VGA",
+          "name": "VGA",
+          "frame": {
+            "columns": null,
+            "rows": null,
+            "column_unit": null
+          },
+          "density_factor": null,
+          "status": "not_implemented"
+        }
+      ]
+    },
+    {
+      "code": "TMS9929",
+      "name": "TMS9929",
+      "cores": [
+        "TMS99xx"
+      ],
+      "default_core": "TMS99xx",
+      "default_variant": "TMS9929-PAL",
+      "core_variants": {
+        "TMS99xx": [
+          "TMS9929-PAL"
+        ]
+      },
+      "variants": [
+        {
+          "code": "TMS9929-PAL",
+          "name": "PAL",
+          "frame": {
+            "columns": 342,
+            "rows": 313,
+            "column_unit": "dot"
+          },
+          "density_factor": 1,
+          "status": "implemented"
+        },
+        {
+          "code": "TMS9929-VGA",
+          "name": "VGA",
+          "frame": {
+            "columns": null,
+            "rows": null,
+            "column_unit": null
+          },
+          "density_factor": null,
+          "status": "not_implemented"
+        }
+      ]
+    },
+    {
+      "code": "PICO9918",
+      "name": "PICO9918",
+      "cores": [
+        "Pico9918"
+      ],
+      "default_core": "Pico9918",
+      "default_variant": "PICO9918-VGA",
+      "core_variants": {
+        "Pico9918": [
+          "PICO9918-VGA"
+        ]
+      },
+      "variants": [
+        {
+          "code": "PICO9918-VGA",
+          "name": "VGA",
+          "frame": {
+            "columns": 2668,
+            "rows": 525,
+            "column_unit": "pio_tick"
+          },
+          "density_factor": 2,
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "code": "SEGA3155124",
+      "name": "Sega 315-5124",
+      "cores": [
+        "PicoSMSvdp"
+      ],
+      "default_core": "PicoSMSvdp",
+      "default_variant": "SEGA3155124-NTSC",
+      "core_variants": {
+        "PicoSMSvdp": [
+          "SEGA3155124-NTSC"
+        ]
+      },
+      "variants": [
+        {
+          "code": "SEGA3155124-NTSC",
+          "name": "NTSC",
+          "frame": {
+            "columns": 342,
+            "rows": 262,
+            "column_unit": "dot"
+          },
+          "density_factor": 1,
+          "status": "implemented"
+        },
+        {
+          "code": "SEGA3155124-PAL",
+          "name": "PAL",
+          "frame": {
+            "columns": 342,
+            "rows": 313,
+            "column_unit": "dot"
+          },
+          "density_factor": null,
+          "status": "not_implemented"
+        }
+      ]
+    },
+    {
+      "code": "PICOSMSVDP",
+      "name": "PicoSMSvdp",
+      "cores": [
+        "PicoSMSvdp"
+      ],
+      "default_core": "PicoSMSvdp",
+      "default_variant": "PICOSMSVDP-VGA",
+      "core_variants": {
+        "PicoSMSvdp": [
+          "PICOSMSVDP-VGA"
+        ]
+      },
+      "variants": [
+        {
+          "code": "PICOSMSVDP-VGA",
+          "name": "VGA",
+          "frame": {
+            "columns": 2668,
+            "rows": 525,
+            "column_unit": "pio_tick"
+          },
+          "density_factor": 2,
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "code": "SEGA3155378",
+      "name": "Sega 315-5378 (Game Gear)",
+      "cores": [
+        "PicoSMSvdp"
+      ],
+      "default_core": "PicoSMSvdp",
+      "default_variant": "SEGA3155378",
+      "core_variants": {
+        "PicoSMSvdp": [
+          "SEGA3155378"
+        ]
+      },
+      "variants": [
+        {
+          "code": "SEGA3155378",
+          "name": "LCD",
+          "frame": {
+            "columns": 342,
+            "rows": 262,
+            "column_unit": "dot"
+          },
+          "density_factor": 1,
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "code": "F18A",
+      "name": "F18A",
+      "cores": [],
+      "default_core": null,
+      "default_variant": null,
+      "core_variants": {},
+      "variants": [
+        {
+          "code": "F18A-VGA",
+          "name": "VGA",
+          "frame": {
+            "columns": 794,
+            "rows": 525,
+            "column_unit": "pixel_clock"
+          },
+          "density_factor": null,
+          "status": "planned"
+        }
+      ]
+    }
+  ]
+}

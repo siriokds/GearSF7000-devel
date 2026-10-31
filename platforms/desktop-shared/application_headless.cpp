@@ -1,8 +1,12 @@
 /*
  * GearSF7000 - headless application
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2013  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Derived from Gearsystem by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include "application_headless.h"
@@ -14,6 +18,7 @@
 #include "../../src/build_info.h"
 #include "emu.h"
 #include "rewind.h"
+#include "rom_map_project.h"
 #include "DiagnosticLog.h"
 #include "GearSF7000Core.h"
 #include "application.h"
@@ -28,8 +33,12 @@ static void headless_signal_handler(int)
 int application_headless_init(const char* rom_file, const char* symbol_file,
                               bool enable_audio)
 {
-    config_init();
+    config_init_headless();
     config_read();
+    // Projects are the user's: the headless instance reads them, never writes.
+#if GEARSF7000_ENABLE_DEBUG_TOOLS
+    rom_map_project_set_read_only(true);
+#endif
 
     if (DiagnosticLogOpen(config_root_path, "gearsf7000.log"))
     {
@@ -170,6 +179,7 @@ void application_headless_mainloop(void)
 void application_headless_destroy(void)
 {
     DiagInfo("app", "headless shutting down");
+    emu_prepare_shutdown();
     config_write();
     config_destroy();
     emu_destroy();

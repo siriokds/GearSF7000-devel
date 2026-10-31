@@ -1,7 +1,9 @@
 /*
  * GearSF7000 - CRT signal dump sink
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef CRT_SIGNAL_DUMP_H
@@ -43,7 +45,7 @@ public:
     bool WriteTo(const char* path) const;
 
     void ConfigureSignal(bool isPAL,
-        TMS9918RasterTiming::SignalOutput signalOutput) override;
+        GC_CrtSignalOutput signalOutput) override;
     void OutputSync(int dots) override;
     void OutputBlank(int dots) override;
     void OutputColourBurst(int dots) override;

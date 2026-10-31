@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+// Copyright (C) 2013  Ignacio Sanchez
+// Copyright (C) 2026  Saverio Russo
+// Derived from Gearsystem by Ignacio Sanchez (GPL-3.0-or-later); the changes
+// and additions by Saverio Russo are AGPL-3.0-or-later.
 /* GearSC3000 libretro core options, adapted from current Gearsystem. */
 #ifndef GEARSC3000_LIBRETRO_CORE_OPTIONS_H
 #define GEARSC3000_LIBRETRO_CORE_OPTIONS_H
@@ -6,6 +11,7 @@
 
 static struct retro_core_option_v2_category gearsc3000_option_categories[] = {
     { "system", "System", "Configure SC-3000 region and refresh timing." },
+    { "cartridge", "Cartridge", "Configure the cartridge mapper." },
     { "video", "Video", "Configure the visible frame and presentation." },
     { "input", "Input", "Configure joystick input behaviour." },
     { NULL, NULL, NULL }
@@ -20,10 +26,38 @@ static struct retro_core_option_v2_definition gearsc3000_option_definitions[] = 
         "Auto"
     },
     {
+        "gearsc3000_mapper", "Cartridge > Mapper (restart)", "Mapper (restart)",
+        "Force the cartridge mapper. Auto detects known games by CRC and ASC16L by signature; an image it does not recognise runs as SG-1000 Dahjee Type B (8 KB RAM).", NULL, "cartridge",
+        { { "Auto", NULL },
+          { "SC-3000 2 KB", "SC-3000 standard (console RAM at $8000)" },
+          { "SC-3000 32 KB", "SC-3000 (32 KB cartridge RAM)" },
+          { "SC-3000 16 KB + 2 KB", "SC-3000 (16 KB cartridge RAM at $8000 + console RAM)" },
+          { "SG-1000 1 KB", "SG-1000 standard (console RAM)" },
+          { "SG-1000 16 KB", "SG-1000 (16 KB)" },
+          { "SG-1000 Othello 2 KB", "SG-1000 Othello (2 KB cartridge RAM)" },
+          { "SG-1000 The Castle 8 KB", "SG-1000 The Castle (8 KB cartridge RAM + console RAM)" },
+          { "SG-1000 Dahjee A", "SG-1000 Dahjee Type A (8 KB adapter RAM + console RAM)" },
+          { "SG-1000 Dahjee B", "SG-1000 Dahjee Type B (8 KB work RAM)" },
+          { "SG-1000 Sega 315-5208", "SG-1000 Sega 315-5208 (one 16 KB page, console RAM)" },
+          { "SG-1000 Sega 315-5208 + Dahjee B", "SG-1000 Sega 315-5208 + Dahjee B (8 KB adapter RAM)" },
+          { "ASC16L", "ASC16L (ASCII 16 Lite)" },
+          { "Master System Mapper", "Master System Mapper (16 KB pages)" },
+          { "Survivors Multicart", "SC-3000 Survivors Multicart (2 MB)" },
+          { "Survivors Megacart", "SC-3000 Survivors Megacart (4 MB)" },
+          { NULL, NULL } },
+        "Auto"
+    },
+    {
+        "gearsc3000_asc16l_ram", "Cartridge > ASC16L RAM (restart)", "ASC16L RAM (restart)",
+        "Physical ASC16L cartridge RAM. The 8 KB option repeats across the 16 KB window at $C000-$FFFF.", NULL, "cartridge",
+        { { "16 KB", NULL }, { "8 KB", NULL }, { NULL, NULL } },
+        "16 KB"
+    },
+    {
         "gearsc3000_aspect_ratio", "Video > Aspect Ratio", "Aspect Ratio",
         "Choose the aspect ratio reported to the libretro frontend.", NULL, "video",
-        { { "1:1 PAR", NULL }, { "4:3 DAR", NULL }, { "16:9 DAR", NULL }, { NULL, NULL } },
-        "1:1 PAR"
+        { { "Device PAR", NULL }, { "4:3 DAR", NULL }, { "16:9 DAR", NULL }, { NULL, NULL } },
+        "Device PAR"
     },
     {
         "gearsc3000_overscan", "Video > Borders", "Borders",
@@ -57,7 +91,9 @@ static inline void gearsc3000_set_core_options(retro_environment_t environ_cb)
 
     static const struct retro_variable variables[] = {
         { "gearsc3000_timing", "Refresh Rate (restart); Auto|NTSC|PAL" },
-        { "gearsc3000_aspect_ratio", "Aspect Ratio; 1:1 PAR|4:3 DAR|16:9 DAR" },
+        { "gearsc3000_mapper", "Mapper (restart); Auto|SC-3000 2 KB|SC-3000 32 KB|SC-3000 16 KB + 2 KB|SG-1000 1 KB|SG-1000 16 KB|SG-1000 Othello 2 KB|SG-1000 The Castle 8 KB|SG-1000 Dahjee A|SG-1000 Dahjee B|SG-1000 Sega 315-5208|SG-1000 Sega 315-5208 + Dahjee B|ASC16L|Master System Mapper|Survivors Multicart|Survivors Megacart" },
+        { "gearsc3000_asc16l_ram", "ASC16L RAM (restart); 16 KB|8 KB" },
+        { "gearsc3000_aspect_ratio", "Aspect Ratio; Device PAR|4:3 DAR|16:9 DAR" },
         { "gearsc3000_overscan", "Borders; Disabled|Borders" },
         { "gearsc3000_up_down_allowed", "Allow Opposing Directions; Disabled|Enabled" },
         { NULL, NULL }

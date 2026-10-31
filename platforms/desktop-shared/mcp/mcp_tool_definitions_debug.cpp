@@ -1,10 +1,19 @@
+// SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
+// Copyright (C) 2013  Ignacio Sanchez
+// Copyright (C) 2026  Saverio Russo
+// Derived from Gearsystem by Ignacio Sanchez (GPL-3.0-or-later); the changes
+// and additions by Saverio Russo are AGPL-3.0-or-later.
 #include "mcp_config.h"
 
 #if GEARSF7000_ENABLE_MCP
 
 #include "mcp_tool_definitions.h"
 
-void AddMcpToolDefinitionsDebug(json& tools)
+// Split into several functions because one function with dozens of nested
+// nlohmann::json initializer-lists blows past MSVC's C1060 compiler heap
+// limit (each part below compiles fine on its own).
+
+static void AddMcpToolDefinitionsDebug_ChipStatus(json& tools)
 {
     // Chip status tools
     tools.push_back({
@@ -22,7 +31,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "get_vdp_registers"},
         {"title", "Get VDP Registers"},
-        {"description", "Read TMS9918 VDP registers R0-R7 with hex values and decoded meanings."},
+        {"description", "Read every register bank published by the active video device, including fields and derived addresses."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -34,7 +43,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "get_vdp_status"},
         {"title", "Get VDP Status"},
-        {"description", "Read TMS9918 VDP state, raster position, CPU-port VRAM latch, in-flight transfer and arbitration counters."},
+        {"description", "Read state and frame geometry published by the active video device. TMS99xx devices also return their optional sequencer, renderer and arbitration diagnostics."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -46,7 +55,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "set_region"},
         {"title", "Set Region"},
-        {"description", "Switch the machine between PAL (313 lines, 50.16 Hz) and NTSC (262 lines, 59.92 Hz), or back to whatever the cartridge implies. Resets the machine to apply it."},
+        {"description", "Select a compatible 50 Hz or 60 Hz video device, or restore the device declared by the machine profile. Resets the machine to apply it."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -93,7 +102,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "read_framebuffer"},
         {"title", "Read Frame Buffer"},
-        {"description", "Read composed frame pixels as TMS9918 palette indices, one hex nibble per pixel, 64 characters per 256 pixel line. Reads the presented buffer, or either renderer directly for comparison."},
+        {"description", "Read rows from the active video device at its runtime frame geometry. The TMS99xx legacy/streaming diagnostics return compact palette-index rows; presented is device-independent RGB888 hex."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -103,7 +112,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
                     {"enum", json::array({"presented", "legacy", "streaming"})},
                     {"description", "Which buffer to read. Default presented."}
                 }},
-                {"y", {{"type", "integer"}, {"description", "First line, 0-191. Default 0."}}},
+                {"y", {{"type", "integer"}, {"description", "First logical frame line. Default 0; the active device supplies the valid height."}}},
                 {"height", {{"type", "integer"}, {"description", "Number of lines. Default all remaining."}}}
             }},
             {"additionalProperties", false}
@@ -113,13 +122,27 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "get_psg_status"},
         {"title", "Get PSG Status"},
-        {"description", "Read SN76489 PSG audio state: 3 tone channels, noise, volume, period, frequency."},
+        {"description", "Read the active PSG: onboard AY-3-8910 on MSX, SN76489-family on other boards. Includes channels, noise, volume, period and frequency."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
             {"properties", json::object()},
             {"additionalProperties", false}
         }}
+    });
+
+    tools.push_back({
+        {"name", "get_m5_status"}, {"title", "Get Sord M5 Status"},
+        {"description", "Read Sord M5 memory decode, all CTC channels and interrupt state, active-high keyboard and joystick directions, firmware and peripheral latches. Reports provisional PSG WAIT and unsupported fire/tape/printer explicitly."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
+    });
+
+    tools.push_back({
+        {"name", "get_msx_status"}, {"title", "Get MSX Status"},
+        {"description", "Read MSX primary/secondary slot selectors, four mapped pages, PPI latches and pins, International keyboard matrix, onboard AY and one-bit click audio. Reports unsupported peripherals explicitly."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {{"type", "object"}, {"properties", json::object()}, {"additionalProperties", false}}}
     });
 
     tools.push_back({
@@ -137,7 +160,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "get_ay8910_status"},
         {"title", "Get AY-3-8910 Status"},
-        {"description", "Read AY-3-8910 SGM audio state: 3 channels, mixer, noise, envelope, registers, mute."},
+        {"description", "Read onboard MSX or expansion AY-3-8910 audio state: 3 channels, mixer, noise, envelope, registers, mute."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -145,23 +168,165 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+
+#if GEARSF7000_ENABLE_YM2413
+    tools.push_back({
+        {"name", "get_ym2413_status"},
+        {"title", "Get YM2413 Status"},
+        {"description", "Read YM2413 FM hardware state: interface, detection/control latch, PSG/FM routing, channels, rhythm and registers."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"}, {"properties", json::object()},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "set_ym2413_enabled"},
+        {"title", "Set YM2413 FM Unit Connected"},
+        {"description", "Connect or disconnect the YM2413 FM Sound Unit: the same saved setting as Audio > YM2413 FM Sound Unit > Connected. REQUIRES A ROM RESET: like the menu, this only stages the change, and the unit appears or disappears after the next reset (call debug_reset, or pass reset=true to reset now). Only SMS-family machines have the FM interface."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"enabled", {{"type", "boolean"}, {"description", "true connects the FM unit, false disconnects it."}}},
+                {"reset", {{"type", "boolean"}, {"description", "Also reset the ROM now so the change takes effect. Default false: staged until the next reset."}}}
+            }},
+            {"required", json::array({"enabled"})},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "set_ym2413_loudness_enabled"},
+        {"title", "Set YM2413 Loudness Meter Enabled"},
+        {"description", "Turn the perceived-loudness meter (ITU-R BS.1770-4 / EBU R128, K-weighted and gated LUFS) on or off for the FM bus and the final output mix. Off by default because it costs CPU. Enabling starts a fresh measurement; reset=true restarts one already running. Same switch as the YM2413 window's Perceived loudness section."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"enabled", {{"type", "boolean"}, {"description", "true to measure, false to stop (last values stay readable)."}}},
+                {"reset", {{"type", "boolean"}, {"description", "Discard the running measurement and start over. Default false."}}}
+            }},
+            {"required", json::array({"enabled"})},
+            {"additionalProperties", false}
+        }}
+    });
+#endif
+
+    tools.push_back({
+        {"name", "start_vgm_recording"},
+        {"title", "Start VGM Recording"},
+        {"description", "Record every write to the sound chips (SN76489, and the AY-3-8910 / YM2413 when present) to a VGM file at file_path. This is the register log with sample-accurate timing, not an audio recording: two runs can be compared write by write, which is how a rebuilt sound driver is checked against the game it came from. Needs a ROM loaded. Pair it with set_audio_mute to record without listening. Stop with stop_vgm_recording, which is what actually finishes the file."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"file_path", {{"type", "string"}, {"description", "Absolute path of the .vgm to write. An existing file is overwritten."}}}
+            }},
+            {"required", json::array({"file_path"})},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "stop_vgm_recording"},
+        {"title", "Stop VGM Recording"},
+        {"description", "Finish the VGM file and return the path written. The file is only complete after this: a recording left running has no header totals, and players hang on it."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"}, {"properties", json::object()},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "get_vgm_recording_status"},
+        {"title", "Get VGM Recording Status"},
+        {"description", "Whether a VGM or WAV recording is running."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"}, {"properties", json::object()},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "start_wav_recording"},
+        {"title", "Start WAV Recording"},
+        {"description", "Record the final audio mix to a stereo 16-bit WAV at file_path: what the speakers get, after the bus gains and the soft limiter. Use this for listening back or measuring a file (loudness, spectrum); for comparing a rebuilt sound driver against the game write by write use start_vgm_recording instead. Needs a bootable machine (cartridge or BIOS). Works with set_audio_mute: the file is written even with the output silenced."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"file_path", {{"type", "string"}, {"description", "Absolute path of the .wav to write. An existing file is overwritten."}}}
+            }},
+            {"required", json::array({"file_path"})},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "stop_wav_recording"},
+        {"title", "Stop WAV Recording"},
+        {"description", "Finish the WAV file. Only after this does the header carry the right length, so the file is readable."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", false}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"}, {"properties", json::object()},
+            {"additionalProperties", false}
+        }}
+    });
+
+    tools.push_back({
+        {"name", "set_audio_mute"},
+        {"title", "Set Audio Mute"},
+        {"description", "Silence the host audio output, or turn it back on. The machine keeps running and a VGM recording keeps capturing: this only stops the sound reaching the speakers, so long analysis runs do not have to be listened to. Same switch as the Audio menu's Enable Audio."},
+        {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"},
+            {"properties", {
+                {"mute", {{"type", "boolean"}, {"description", "true to silence the output, false to hear it again."}}}
+            }},
+            {"required", json::array({"mute"})},
+            {"additionalProperties", false}
+        }}
+    });
+
+#if GEARSF7000_ENABLE_YM2413
+    tools.push_back({
+        {"name", "get_ym2413_loudness"},
+        {"title", "Get YM2413 Loudness"},
+        {"description", "Read perceived loudness in LUFS for the FM bus and the final output mix: momentary (400 ms), short-term (3 s), integrated since enable/reset, their maxima and loudness range (LRA, LU). Measured in emulated time. Use integrated to compare how loud games sound."},
+        {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
+        {"inputSchema", {
+            {"type", "object"}, {"properties", json::object()},
+            {"additionalProperties", false}
+        }}
+    });
+#endif
 
     tools.push_back({
         {"name", "get_screenshot"},
         {"title", "Get Screenshot"},
-        {"description", "Capture current screen/frame/video output as PNG screenshot image."},
+        {"description", "Capture the current video output as a PNG. By default what the player sees (area \"visible\"): the presented picture, which on a Game Gear is its 160x144 window. area \"frame\" returns the whole frame the VDP rendered, window or not - for seeing what a Game Gear hides. content_area (the 256-wide active picture, where sprite X/Y count from) and visible_area are given in the returned image's coordinates; content_area can start negative when the window crops it."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
-            {"properties", json::object()},
+            {"properties", {
+                {"area", {{"type", "string"}, {"enum", json::array({"visible", "frame"})},
+                          {"description", "visible (default): what the player sees. frame: the whole rendered frame."}}}
+            }},
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_DebugExport(json& tools)
+{
     tools.push_back({
         {"name", "set_full_raster_debug_enabled"},
         {"title", "Set Full Raster Debug Enabled"},
-        {"description", "Full Frame view: the whole 342-dot TMS9918 raster (sync/blank/color burst/border/active), 342x262 on NTSC or 342x313 on PAL, instead of the ~256x192 picture the normal screen shows. Blanking and color burst are true black; the horizontal and vertical sync bands are a dark slate (22,24,38) so they can be told apart from the blanking around them; border and active carry the real backdrop/content color. Same thing as Debug > Video > Overscan > Full Frame; it is deliberately unavailable in Computer mode. Off by default; costs nothing when disabled."},
+        {"description", "Enable the active video device's optional full-raster debug surface, including sync, blanking, border and active regions at the geometry it publishes. Same setting as Debug > Video > Overscan > Full Frame."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -192,7 +357,7 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "get_full_raster_debug_screenshot"},
         {"title", "Get Full Raster Debug Screenshot"},
-        {"description", "PNG of the full-raster debug buffer (342 x 262/313 depending on region), see set_full_raster_debug_enabled. Errors if that hasn't been enabled yet."},
+        {"description", "PNG of the optional full-raster debug surface at the dimensions published by the active video device. Errors if the capability is absent or disabled."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", false}}},
         {"inputSchema", {
             {"type", "object"},
@@ -204,12 +369,12 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "export_memory_file"},
         {"title", "Export Memory To File"},
-        {"description", "MCP counterpart of the desktop Debug > Memory > Show Memory Import window's RAM/ROM/VRAM export - dumps a range from one of the areas list_memory_areas reports (area 0 is the real Z80 address space, respects bank switching; area 3 is VRAM) straight to a binary file. Use list_memory_areas first if unsure which area/offset covers what."},
+        {"description", "MCP counterpart of the desktop Memory Import/Export panel. Dumps a range from an area reported by list_memory_areas; area 3 is the active video device's primary display-memory space. Use list_memory_areas for runtime names and sizes."},
         {"annotations", {{"readOnlyHint", true}, {"destructiveHint", false}, {"idempotentHint", true}, {"openWorldHint", true}}},
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
-                {"area", {{"type", "integer"}, {"description", "Memory area id from list_memory_areas (0=Z80 address space, 3=VRAM, etc)."}}},
+                {"area", {{"type", "integer"}, {"description", "Memory area id from list_memory_areas (0=Z80 address space; 3=primary video display memory)."}}},
                 {"offset", {{"type", "integer"}, {"description", "Byte offset within the area to start reading from."}}},
                 {"length", {{"type", "integer"}, {"description", "How many bytes to export."}}},
                 {"file_path", {{"type", "string"}, {"description", "Absolute path to write the dump to."}}}
@@ -222,12 +387,12 @@ void AddMcpToolDefinitionsDebug(json& tools)
     tools.push_back({
         {"name", "import_memory_file"},
         {"title", "Import Memory From File"},
-        {"description", "MCP counterpart of the desktop Debug > Memory > Show Memory Import window's RAM/ROM/VRAM import - writes a binary file straight into one of the areas list_memory_areas reports (area 0 is the real Z80 address space, respects bank switching; area 3 is VRAM), starting at offset. Writes past the area's own size are silently truncated, same as WriteMemoryArea/write_memory."},
+        {"description", "MCP counterpart of the desktop Memory Import/Export panel. Writes a binary file into an area reported by list_memory_areas; area 3 is the active video device's primary display-memory space. Writes past the runtime area size are truncated."},
         {"annotations", {{"readOnlyHint", false}, {"destructiveHint", true}, {"idempotentHint", false}, {"openWorldHint", true}}},
         {"inputSchema", {
             {"type", "object"},
             {"properties", {
-                {"area", {{"type", "integer"}, {"description", "Memory area id from list_memory_areas (0=Z80 address space, 3=VRAM, etc)."}}},
+                {"area", {{"type", "integer"}, {"description", "Memory area id from list_memory_areas (0=Z80 address space; 3=primary video display memory)."}}},
                 {"offset", {{"type", "integer"}, {"description", "Byte offset within the area to start writing at."}}},
                 {"file_path", {{"type", "string"}, {"description", "Absolute path to read the file from."}}}
             }},
@@ -268,7 +433,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_MediaLoad(json& tools)
+{
     // Media and state management tools
     tools.push_back({
         {"name", "load_rom"},
@@ -412,7 +580,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"required", json::array({"file_path"})}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_SaveStates(json& tools)
+{
     tools.push_back({
         {"name", "list_save_state_slots"},
         {"title", "List Save State Slots"},
@@ -503,7 +674,10 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
 
+static void AddMcpToolDefinitionsDebug_FastForwardAndSync(json& tools)
+{
     tools.push_back({
         {"name", "set_fast_forward_speed"},
         {"title", "Set Fast Forward Speed"},
@@ -605,6 +779,28 @@ void AddMcpToolDefinitionsDebug(json& tools)
             {"additionalProperties", false}
         }}
     });
+}
+
+static void AddMcpToolDefinitionsDebug_RewindAnalysis(json& tools)
+{
+    // Nested via local json variables, not a single literal, to keep MSVC's
+    // compiler heap (C1060) from choking on too-deep initializer-list nesting.
+    json rewind_range_item_properties = json::object();
+    rewind_range_item_properties["area"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 7}};
+    rewind_range_item_properties["offset"] = {{"type", "integer"}, {"minimum", 0}};
+    rewind_range_item_properties["size"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}};
+
+    json rewind_range_item = json::object();
+    rewind_range_item["type"] = "object";
+    rewind_range_item["properties"] = rewind_range_item_properties;
+    rewind_range_item["required"] = json::array({"area", "offset", "size"});
+    rewind_range_item["additionalProperties"] = false;
+
+    json rewind_memory_ranges = json::object();
+    rewind_memory_ranges["type"] = "array";
+    rewind_memory_ranges["maxItems"] = 8;
+    rewind_memory_ranges["description"] = "Physical areas from list_memory_areas; 4096 bytes each, 16384 total.";
+    rewind_memory_ranges["items"] = rewind_range_item;
 
     tools.push_back({
         {"name", "analyze_rewind_range"},
@@ -618,22 +814,11 @@ void AddMcpToolDefinitionsDebug(json& tools)
                 {"end_position", {{"type", "integer"}, {"minimum", 1}}},
                 {"step", {{"type", "integer"}, {"minimum", 1}, {"description", "Sample every N Recorder snapshots; the end position is always included. Default 1."}}},
                 {"cpu", {{"type", "boolean"}, {"description", "Include compact CPU state. Default true."}}},
+                { "msx", {{"type", "boolean"}, {"description", "Include complete MSX board snapshot; default true on MSX."}}},
+                {"m5", {{"type", "boolean"}, {"description", "Include M5 CTC, memory and input; default true on M5."}}},
                 {"vdp", {{"type", "boolean"}, {"description", "Include VDP registers, status, hashes, overflow and collision. Default true."}}},
                 {"changes_only", {{"type", "boolean"}, {"description", "Return a memory baseline then changed spans only. Default true."}}},
-                {"memory_ranges", {
-                    {"type", "array"}, {"maxItems", 8},
-                    {"description", "Physical areas from list_memory_areas; 4096 bytes each, 16384 total."},
-                    {"items", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"area", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
-                            {"offset", {{"type", "integer"}, {"minimum", 0}}},
-                            {"size", {{"type", "integer"}, {"minimum", 1}, {"maximum", 4096}}}
-                        }},
-                        {"required", json::array({"area", "offset", "size"})},
-                        {"additionalProperties", false}
-                    }}
-                }}
+                {"memory_ranges", rewind_memory_ranges}
             }},
             {"required", json::array({"start_position", "end_position"})},
             {"additionalProperties", false}
@@ -679,7 +864,16 @@ void AddMcpToolDefinitionsDebug(json& tools)
             }}
         }}
     });
+}
 
+void AddMcpToolDefinitionsDebug(json& tools)
+{
+    AddMcpToolDefinitionsDebug_ChipStatus(tools);
+    AddMcpToolDefinitionsDebug_DebugExport(tools);
+    AddMcpToolDefinitionsDebug_MediaLoad(tools);
+    AddMcpToolDefinitionsDebug_SaveStates(tools);
+    AddMcpToolDefinitionsDebug_FastForwardAndSync(tools);
+    AddMcpToolDefinitionsDebug_RewindAnalysis(tools);
 }
 
 #endif /* GEARSF7000_ENABLE_MCP */

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2025  Saverio Russo
 #include "WAVUtils.h"
 #include <cstdio>   // For printf
 #include <cstring>  // For memcpy

@@ -1,12 +1,29 @@
 /*
  * GearSC3000 - SC-3000 libretro core
  * Copyright (C) 2021 Ignacio Sanchez
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2024-2026  Saverio Russo
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
+ * Derived from Gearcoleco by Ignacio Sanchez. His code is free software: you
+ * can redistribute it and/or modify it under the terms of the GNU General
+ * Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * The changes and additions by Saverio Russo are free software: you can
+ * redistribute them and/or modify them under the terms of the GNU Affero
+ * General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ * Section 13 of both licences permits the combination.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License and the GNU Affero General Public License
+ * for more details.
+ *
+ * You should have received a copy of both licences along with this
+ * program.  If not, see http://www.gnu.org/licenses/
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include <cstdarg>
@@ -19,12 +36,13 @@
 
 #include "../../src/GearSF7000Core.h"
 #include "../../src/Memory.h"
-#include "../../src/Video.h"
+#include "../../src/VideoDeviceOptions.h"
+#include "../../src/VideoCatalog.h"
 
 namespace
 {
 constexpr unsigned kPadCount = 2;
-constexpr size_t kSystemRamSize = MAX_SRAM_SIZE;
+
 
 retro_environment_t environ_cb = nullptr;
 retro_video_refresh_t video_cb = nullptr;
@@ -35,8 +53,6 @@ retro_input_state_t input_state_cb = nullptr;
 retro_log_printf_t log_cb = nullptr;
 
 GearSF7000Core* core = nullptr;
-u8* frame_buffer = nullptr;
-size_t frame_buffer_capacity = 0;
 s16 audio_buffer[GC_AUDIO_BUFFER_SIZE] = {};
 Cartridge::ForceConfiguration config;
 
@@ -56,24 +72,6 @@ void fallback_log(enum retro_log_level, const char* format, ...)
     va_end(args);
 }
 
-void ensure_frame_buffer()
-{
-    if (!core)
-        return;
-    const GC_VideoFrameDescriptor descriptor = core->GetVideoFrameDescriptor();
-    const size_t required = static_cast<size_t>(descriptor.buffer_width) *
-        static_cast<size_t>(descriptor.buffer_height) * sizeof(u16);
-    if (required <= frame_buffer_capacity)
-        return;
-
-    u8* replacement = new (std::nothrow) u8[required]();
-    if (!replacement)
-        return;
-    delete[] frame_buffer;
-    frame_buffer = replacement;
-    frame_buffer_capacity = required;
-}
-
 double frame_rate(const GC_VideoFrameDescriptor& descriptor)
 {
     if (descriptor.refresh_rate.numerator > 0 && descriptor.refresh_rate.denominator > 0)
@@ -85,11 +83,15 @@ double frame_rate(const GC_VideoFrameDescriptor& descriptor)
 void fill_geometry(struct retro_game_geometry& geometry)
 {
     const GC_VideoFrameDescriptor descriptor = core->GetVideoFrameDescriptor();
-    geometry.base_width = static_cast<unsigned>(descriptor.frame_width);
-    geometry.base_height = static_cast<unsigned>(descriptor.frame_height);
+    geometry.base_width = static_cast<unsigned>(descriptor.visible_area.width);
+    geometry.base_height = static_cast<unsigned>(descriptor.visible_area.height);
     geometry.max_width = static_cast<unsigned>(descriptor.buffer_width);
     geometry.max_height = static_cast<unsigned>(descriptor.buffer_height);
-    geometry.aspect_ratio = aspect_ratio;
+    geometry.aspect_ratio = aspect_ratio > 0.0f ? aspect_ratio :
+        (static_cast<float>(descriptor.visible_area.width) *
+         descriptor.pixel_aspect_ratio.numerator) /
+        (static_cast<float>(descriptor.visible_area.height) *
+         descriptor.pixel_aspect_ratio.denominator);
 }
 
 void publish_geometry(bool force)
@@ -117,14 +119,48 @@ void check_variables()
     const char* value = get_variable("gearsc3000_up_down_allowed");
     allow_opposing_directions = value && std::strcmp(value, "Enabled") == 0;
 
+    static const struct { const char* name; Cartridge::CartridgeTypes type; } mappers[] = {
+        { "SC-3000 2 KB", Cartridge::SC3000_2K },
+        { "SC-3000 32 KB", Cartridge::SC3000_32K },
+        { "SC-3000 16 KB + 2 KB", Cartridge::SC3000_16K_AT_8000 },
+        { "SG-1000 1 KB", Cartridge::SG1000_1K },
+        { "SG-1000 16 KB", Cartridge::SG1000_16K },
+        { "SG-1000 Othello 2 KB", Cartridge::SG1000_OTHELLO_2K },
+        { "SG-1000 The Castle 8 KB", Cartridge::SG1000_CASTLE_8K },
+        { "SG-1000 Dahjee A", Cartridge::SG1000_DAHJEE_TYPE_A },
+        { "SG-1000 Dahjee B", Cartridge::SG1000_DAHJEE_TYPE_B },
+        { "SG-1000 Sega 315-5208", Cartridge::SG1000_SEGA_315_5208 },
+        { "SG-1000 Sega 315-5208 + Dahjee B", Cartridge::SG1000_SEGA_315_5208_DAHJEE_B },
+        { "ASC16L", Cartridge::SC3000_ASC16L },
+        { "Master System Mapper", Cartridge::SMS_SEGA_MAPPER },
+        { "Survivors Multicart", Cartridge::SC3000_SURVIVORS_MULTICART },
+        { "Survivors Megacart", Cartridge::SC3000_SURVIVORS_MEGACART },
+    };
+    value = get_variable("gearsc3000_mapper");
+    config.type = Cartridge::CartridgeNotSupported;
+    for (const auto& mapper : mappers)
+        if (value && std::strcmp(value, mapper.name) == 0)
+            config.type = mapper.type;
+
+    value = get_variable("gearsc3000_asc16l_ram");
+    config.asc16lRamBytes = value && std::strcmp(value, "8 KB") == 0
+        ? 0x2000 : 0x4000;
+
+    // An image no signature or CRC identifies (typically a plain .sg) runs
+    // as Dahjee Type B: ROM at $0000-$BFFF and 8 KB of work RAM above it.
+    config.fallbackType = Cartridge::SG1000_DAHJEE_TYPE_B;
+    config.detectSegaHeader = true;
+
     value = get_variable("gearsc3000_timing");
     if (!value || std::strcmp(value, "Auto") == 0)
-        config.region = Cartridge::CartridgeUnknownRegion;
-    else if (std::strcmp(value, "PAL") == 0 ||
-             std::strcmp(value, "PAL (50 Hz)") == 0)
-        config.region = Cartridge::CartridgePAL;
-    else
-        config.region = Cartridge::CartridgeNTSC;
+        core->SelectDefaultVideoDevice();
+    else {
+        const bool pal = std::strcmp(value, "PAL") == 0 || std::strcmp(value, "PAL (50 Hz)") == 0;
+        const auto* option = FindMachineVideoOptionForFrequency(core->GetSystemModel(),
+            core->GetSelectedVideoOptionCode(), pal ? VDP_FREQ_50Hz : VDP_FREQ_60Hz);
+        if (option) core->SelectVideoOption(option->code);
+        else log_cb(RETRO_LOG_WARN, "Requested video frequency unavailable with the selected core; keeping %s.\n", core->GetActiveVideoOptionCode().c_str());
+    }
 
     value = get_variable("gearsc3000_aspect_ratio");
     if (value && std::strcmp(value, "4:3 DAR") == 0)
@@ -137,12 +173,12 @@ void check_variables()
     value = get_variable("gearsc3000_overscan");
     if (core)
     {
-        Video::Overscan overscan = Video::OverscanDisabled;
-        if (value && (std::strcmp(value, "Borders") == 0 ||
-                      std::strcmp(value, "Full (284 width)") == 0))
-            overscan = Video::OverscanFull284;
-        core->GetVideo()->SetOverscan(overscan);
-        ensure_frame_buffer();
+        s64 overscan = GC_VideoBorder::Disabled;
+        if (value && std::strcmp(value, "Borders") == 0)
+            overscan = GC_VideoBorder::Full272;
+        else if (value && std::strcmp(value, "Full (284 width)") == 0)
+            overscan = GC_VideoBorder::Full284;
+        core->SetVideoOption(GC_VideoOption::Border, overscan);
     }
 }
 
@@ -321,7 +357,6 @@ void retro_init(void)
     core = new GearSF7000Core();
     core->Init(GC_PIXEL_RGB565);
     core->SetKeyboardMode(true);
-    ensure_frame_buffer();
     supports_input_bitmasks = environ_cb &&
         environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);
     check_variables();
@@ -330,9 +365,6 @@ void retro_init(void)
 
 void retro_deinit(void)
 {
-    delete[] frame_buffer;
-    frame_buffer = nullptr;
-    frame_buffer_capacity = 0;
     delete core;
     core = nullptr;
 }
@@ -343,10 +375,10 @@ void retro_get_system_info(struct retro_system_info* info)
 {
     std::memset(info, 0, sizeof(*info));
     info->library_name = "GearSC3000";
-    info->library_version = "";
+    info->library_version = GEARSF7000_VERSION;
     info->need_fullpath = false;
     info->block_extract = false;
-    info->valid_extensions = "sg|sc|rom|asc|bin|zip";
+    info->valid_extensions = "sg|sc|sms|rom|asc|asls|bin|zip";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info)
@@ -379,19 +411,31 @@ void retro_run(void)
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
     {
         check_variables();
+        if (core->GetSelectedVideoOptionCode() != core->GetActiveVideoOptionCode()) {
+            core->ResetROMPreservingRAM(&config);
+            struct retro_system_av_info av = {};
+            retro_get_system_av_info(&av);
+            environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+        }
         publish_geometry(true);
     }
 
     update_input();
-    ensure_frame_buffer();
     int sample_count = 0;
-    core->RunToVBlank(frame_buffer, audio_buffer, &sample_count);
-    const GC_VideoFrameDescriptor descriptor = core->GetVideoFrameDescriptor();
+    core->RunToVBlank(audio_buffer, &sample_count);
+    const GC_VideoFrameView frame = core->GetVideoFrameView();
+    const GC_VideoFrameDescriptor& descriptor = frame.descriptor;
     publish_geometry(false);
 
-    if (video_cb)
-        video_cb(frame_buffer, descriptor.frame_width, descriptor.frame_height,
-            descriptor.stride_pixels * sizeof(u16));
+    if (video_cb && frame.IsValid() && frame.pixel_format == GC_PIXEL_RGB565)
+    {
+        const GC_VideoRect visible = descriptor.visible_area;
+        const u8* visiblePixels = frame.pixels +
+            static_cast<size_t>(visible.y) * frame.row_stride_bytes +
+            static_cast<size_t>(visible.x) * sizeof(u16);
+        video_cb(visiblePixels, visible.width, visible.height,
+            frame.row_stride_bytes);
+    }
     if (audio_batch_cb && sample_count > 0)
         audio_batch_cb(audio_buffer, static_cast<size_t>(sample_count / 2));
 }
@@ -400,6 +444,10 @@ void retro_reset(void)
 {
     check_variables();
     core->ResetROMPreservingRAM(&config);
+    struct retro_system_av_info av = {};
+    retro_get_system_av_info(&av);
+    environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+    publish_geometry(true);
 }
 
 bool retro_load_game(const struct retro_game_info* info)
@@ -420,15 +468,23 @@ bool retro_load_game(const struct retro_game_info* info)
     }
 
     check_variables();
+    Cartridge::ForceConfiguration load_config = config;
+    const char* reason = nullptr;
+    if (load_config.type != Cartridge::CartridgeNotSupported
+        && !Cartridge::IsTypeCompatible(load_config.type, static_cast<int>(info->size), &reason))
+    {
+        log_cb(RETRO_LOG_WARN, "Mapper not usable with this image (%s); using Auto.\n",
+            reason ? reason : "incompatible size");
+        load_config.type = Cartridge::CartridgeNotSupported;
+    }
     if (!core->LoadROMFromBuffer(static_cast<const u8*>(info->data),
-        static_cast<int>(info->size), &config))
+        static_cast<int>(info->size), &load_config))
     {
         log_cb(RETRO_LOG_ERROR, "Invalid or unsupported SC-3000 cartridge.\n");
         return false;
     }
 
     core->SetKeyboardMode(true);
-    ensure_frame_buffer();
     geometry_revision = 0;
     publish_geometry(true);
     return true;
@@ -442,10 +498,35 @@ void retro_unload_game(void)
 
 unsigned retro_get_region(void)
 {
-    return core && core->GetCartridge()->IsPAL() ? RETRO_REGION_PAL : RETRO_REGION_NTSC;
+    return core && core->GetVideoFrameDescriptor().region == Region_PAL
+        ? RETRO_REGION_PAL : RETRO_REGION_NTSC;
 }
 
 bool retro_load_game_special(unsigned, const struct retro_game_info*, size_t) { return false; }
+
+// Optional frontend clock alignment. Applied by the web player before its
+// first presented frame; the core latches the requested rate at Reset.
+extern "C" void gearsc3000_set_target_frame_rate(double fps)
+{
+    if (core) core->SetTargetFrameRate(fps);
+}
+
+extern "C" double gearsc3000_get_effective_frame_rate(void)
+{
+    return core ? core->GetEffectiveFrameRate() : 0.0;
+}
+
+extern "C" int gearsc3000_is_internal_mapper(void)
+{
+    return core && core->GetCartridge()
+        && core->GetCartridge()->GetType() == Cartridge::SC3000_ASC16LS;
+}
+
+extern "C" int gearsc3000_is_asc16l_mapper(void)
+{
+    return core && core->GetCartridge()
+        && core->GetCartridge()->GetType() == Cartridge::SC3000_ASC16L;
+}
 
 size_t retro_serialize_size(void)
 {
@@ -465,14 +546,22 @@ bool retro_unserialize(const void* data, size_t size)
     return core && data && core->LoadState(static_cast<const u8*>(data), size);
 }
 
+// libretro offers one contiguous system-RAM region. Use the first visible
+// motherboard/expansion region; never advertise the allocation's unused tail.
+static RamRegion SystemRamRegion()
+{
+    if (core && core->GetSystemBus())
+        for (const auto& region : core->GetSystemBus()->GetRamRegions())
+            if (region.showInEditor && region.role != RamRole::Cartridge) return region;
+    return {};
+}
 void* retro_get_memory_data(unsigned id)
 {
-    return id == RETRO_MEMORY_SYSTEM_RAM && core ? core->GetMemory()->GetRam() : nullptr;
+    return id == RETRO_MEMORY_SYSTEM_RAM ? SystemRamRegion().data : nullptr;
 }
-
 size_t retro_get_memory_size(unsigned id)
 {
-    return id == RETRO_MEMORY_SYSTEM_RAM ? kSystemRamSize : 0;
+    return id == RETRO_MEMORY_SYSTEM_RAM ? SystemRamRegion().size : 0;
 }
 
 void retro_cheat_reset(void) {}

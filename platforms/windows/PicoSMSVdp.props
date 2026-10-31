@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Opt in with /p:UsePicoSMSVdpCore=true to match the current desktop
+       SMS build. Keep legacy builds available without the sibling dependency. -->
+  <PropertyGroup>
+    <UsePicoSMSVdpCore Condition="'$(UsePicoSMSVdpCore)' == ''">false</UsePicoSMSVdpCore>
+    <PicoSMSVdpCorePath Condition="'$(PicoSMSVdpCorePath)' == ''">$(ProjectDir)..\..\..\picoSMSvdp-core</PicoSMSVdpCorePath>
+    <PicoSMSVdpBuildDir>$(ProjectDir)build\picosmsvdp-$(Platform)</PicoSMSVdpBuildDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(UsePicoSMSVdpCore)' == 'true'">
+    <ClCompile>
+      <PreprocessorDefinitions>GEARSF7000_USE_PICOSMSVDP_CORE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(PicoSMSVdpBuildDir)\src\$(Configuration)\pico9918_core.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup Condition="'$(UsePicoSMSVdpCore)' == 'true'">
+    <ClCompile Include="..\..\src\PicoSMSVdpCoreAdapter.cpp">
+      <AdditionalIncludeDirectories>$(PicoSMSVdpCorePath)\src;$(PicoSMSVdpBuildDir)\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>PICO9918_STATIC;PICO9918_SMS=1;PICO9918_F18A=0;PICO9918_TEXT80=0;PICO9918_GPU=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <Target Name="BuildPicoSMSVdpCore" BeforeTargets="ClCompile" Condition="'$(UsePicoSMSVdpCore)' == 'true'">
+    <Error Condition="!Exists('$(PicoSMSVdpCorePath)\CMakeLists.txt')" Text="picoSMSvdp-core not found. Set /p:PicoSMSVdpCorePath=... to its checkout." />
+    <Exec Command="cmake -S &quot;$(PicoSMSVdpCorePath)&quot; -B &quot;$(PicoSMSVdpBuildDir)&quot; -G &quot;Visual Studio 17 2022&quot; -A $(Platform) -DBUILD_SHARED_LIBS=OFF -DPICO9918_PORTABLE_CODEGEN=ON -DPICO9918_EMULATOR=ON -DPICO9918_SMS=ON -DPICO9918_F18A=OFF -DPICO9918_TEXT80=OFF -DPICO9918_GPU=OFF" />
+    <Exec Command="cmake --build &quot;$(PicoSMSVdpBuildDir)&quot; --config $(Configuration) --target pico9918_core --parallel" />
+  </Target>
+</Project>

@@ -1,27 +1,31 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
-
+ * Copyright (C) 2026  Saverio Russo
+ *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see http://www.gnu.org/licenses/
  *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef BUILD_INFO_H
 #define BUILD_INFO_H
 
-// Which build is this, answered at run time rather than by a macro pasted
-// into whichever files happened to be recompiled.
+// Release version shown to users. The source of truth is version.h.
+const char* build_info_version(void);
+
+// Which source revision is this, answered at run time rather than by a macro
+// pasted into whichever files happened to be recompiled.
 //
 // EMULATOR_BUILD is fixed into a translation unit when that unit is compiled.
 // Change one source, rebuild, and every file that was already up to date keeps
@@ -40,7 +44,7 @@
 // where they started from.
 
 // Commit as `git describe` saw it when this build was made, e.g. "d199dad-dirty".
-const char* build_info_version(void);
+const char* build_info_revision(void);
 
 // When this binary was compiled: "31/08/2026 12:34:56". This is the value that
 // tells two builds of the same dirty commit apart, and tells a stale .app from
@@ -48,7 +52,7 @@ const char* build_info_version(void);
 const char* build_info_timestamp(void);
 
 // Both together, for a title bar or a one-line banner:
-// "d199dad-dirty (31/08/2026 12:34:56)".
+// "1.0.0 build d199dad-dirty (31/08/2026 12:34:56)".
 const char* build_info_full(void);
 
 #endif /* BUILD_INFO_H */

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
+// Derived from crt-consumer (libretro slang-shaders, GPL-2.0-or-later) by
+// way of Gearsystem's port by Ignacio Sanchez; the changes by Saverio
+// Russo are AGPL-3.0-or-later.
 #pragma once
 #include <stdint.h>
 

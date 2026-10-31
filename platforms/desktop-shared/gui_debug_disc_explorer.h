@@ -1,6 +1,6 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
  * Disc Explorer: a window onto the Sega Disk BASIC filesystem of an .sf7
  * image, built on src/sf7fs. It is a GUI for the sfdisc command-line tool
@@ -15,6 +15,8 @@
  *
  * Writes stay in memory until Save is pressed, so nothing touches the file
  * on disc by accident -- including the image the emulator may have open.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef GUI_DEBUG_DISC_EXPLORER_H

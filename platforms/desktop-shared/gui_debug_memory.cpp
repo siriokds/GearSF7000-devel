@@ -1,12 +1,20 @@
+#include "../../src/SystemBusM5.h"
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include "gui_debug_memory.h"
 
 #include <array>
 #include <cstring>
+#include <string>
 
 #include "imgui/imgui.h"
 #include "imgui/colors.h"
@@ -15,6 +23,9 @@
 #include "emu.h"
 #include "gui.h"
 #include "../../src/gearsf7000.h"
+#include "../../src/IVideoDevice.h"
+#include "../../src/SystemBusMSX.h"
+#include "../../src/IVideoDebugProvider.h"
 #if GEARSF7000_ENABLE_SF7000
 #include "../../src/SF7000.h"
 #endif
@@ -24,10 +35,14 @@ namespace
 MemEditor g_editors[GuiDebugMemoryEditorSlotCount];
 struct ViewState
 {
-    const char* title = "";
+    std::string title;
+    std::string source_type_key;
+    std::string source_space_code;
     std::uint8_t* data = nullptr;
     int size = 0;
     int base_address = 0;
+    std::uint64_t source_generation = 0;
+    std::uint64_t source_layout_revision = 0;
 };
 std::array<ViewState, GuiDebugMemoryEditorSlotCount> g_views;
 int g_requested_selection = -1;
@@ -36,6 +51,29 @@ int g_current_editor = GuiDebugMemoryEditorSlotPrimary;
 bool valid_slot(int slot)
 {
     return slot >= 0 && slot < GuiDebugMemoryEditorSlotCount;
+}
+
+void invalidate_changed_ram_views()
+{
+    const auto* bus = emu_get_core()->GetSystemBus();
+    const auto regions = bus ? bus->GetRamRegions() : RamRegions{};
+    for (int slot = GuiDebugMemoryEditorSlotInternalRam; slot <= GuiDebugMemoryEditorSlotCartridgeRam; ++slot)
+    {
+        const auto& view = g_views[slot];
+        if (!view.data) continue;
+        bool matches = false;
+        for (const auto& region : regions)
+            if (slot == GuiDebugMemoryEditorSlotInternalRam + static_cast<int>(region.role))
+                matches = region.showInEditor && view.data == region.data &&
+                    view.size == static_cast<int>(region.size) &&
+                    view.base_address == static_cast<int>(region.displayBase) &&
+                    view.source_generation == emu_get_machine_generation();
+        if (!matches) {
+            g_editors[slot].Invalidate(); g_views[slot] = {};
+            if (g_current_editor == slot) g_current_editor = GuiDebugMemoryEditorSlotPrimary;
+            if (g_requested_selection == slot) g_requested_selection = -1;
+        }
+    }
 }
 }
 
@@ -166,6 +204,7 @@ static void draw_menu_bar(void)
 
 void gui_debug_memory_window(void)
 {
+    invalidate_changed_ram_views();
     // These two draw the modal popups that AddBookmark()/AddWatch() request.
     // Both only raise a flag; without something calling the popup each frame
     // the flag is set and nothing ever consumes it, which is why "Add
@@ -180,7 +219,7 @@ void gui_debug_memory_window(void)
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
     ImGui::SetNextWindowPos(ImVec2(567, 249), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(324, 308), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(32.5f, 45.3f);
 
     ImGui::Begin("Memory Editor", &config_debug.show_memory,
                  ImGuiWindowFlags_MenuBar);
@@ -190,7 +229,10 @@ void gui_debug_memory_window(void)
     GearSF7000Core* core = emu_get_core();
     Memory* memory = core->GetMemory();
     Cartridge* cartridge = core->GetCartridge();
-    Video* video = core->GetVideo();
+    const VideoDeviceHandle video_handle = core->AcquireVideoDevice();
+    IVideoDebugProvider* video_debug =
+        core->IsVideoDeviceHandleCurrent(video_handle)
+        ? video_handle.device->GetDebugProvider() : nullptr;
 #if GEARSF7000_ENABLE_SF7000
     SF7000* sf7000 = core->GetSF7000();
 #endif
@@ -202,86 +244,172 @@ void gui_debug_memory_window(void)
         && cartridge->GetType() == Cartridge::SC3000_FLAT64K;
 
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());
-    ImGui::TextColored(cyan, "%s", memory->IsSF7000Enabled() ? "SF-7000"
-                                 : flatMap ? "FLAT 64K" : "ROM");
-    if (!flatMap)
+    if (core->GetMachineType() == MachineType::MSX)
     {
-        ImGui::SameLine();
-        ImGui::TextColored(magenta, " BANK");
-        ImGui::SameLine();
-        ImGui::Text("$%02X", memory->GetRomBank());
-        ImGui::SameLine();
-        ImGui::TextColored(magenta, " ADDRESS");
-        ImGui::SameLine();
-        ImGui::Text("$%05X", memory->GetRomBankAddress());
+        const auto& msx = *static_cast<const SystemBusMSX*>(core->GetSystemBus());
+        char heading[64];
+        snprintf(heading, sizeof(heading), "MSX1 slots $%02X###msx_slots", msx.Slots().GetPrimarySlots());
+        if (ImGui::TreeNode(heading))
+        {
+            for (const auto& page : msx.GetPageMappings())
+            {
+                ImGui::Text("$%04X-%04X  slot %u", page.start, page.end, page.primary);
+                if (page.expanded) { ImGui::SameLine(); ImGui::Text(".%u", page.secondary); }
+                ImGui::SameLine();
+                if (page.mapped)
+                    ImGui::Text("%s +$%05X (%s)", page.device, page.offset, page.writable ? "RW" : "RO");
+                else ImGui::TextUnformatted("empty ($FF)");
+            }
+            ImGui::TreePop();
+        }
     }
-    ImGui::SameLine();
-    ImGui::TextColored(magenta, " CONFIG");
-    ImGui::SameLine();
-    char mapper_description[128] = {};
-    cartridge->GetMapperDescr(mapper_description);
-    ImGui::TextUnformatted(mapper_description);
+    else if (const auto* m5 = core->GetM5Bus()) {
+        if (ImGui::TreeNode(m5->EM5Installed() ? "Sord M5 + EM-5 map" : "Sord M5 standard map")) {
+            for (const auto& map : m5->Mapper().GetMappings()) {
+                const char* name = map.area == M5MemoryMapper::Area::Bios ? "BIOS"
+                    : map.area == M5MemoryMapper::Area::Cartridge ? "Cartridge"
+                    : map.area == M5MemoryMapper::Area::InternalRam ? "Internal RAM"
+                    : map.area == M5MemoryMapper::Area::ExternalRam ? "EM-5 RAM" : "Open bus";
+                ImGui::Text("$%04X-%04X %s (%u bytes)", map.start, map.end, name, map.backingSize);
+            }
+            ImGui::TreePop();
+        }
+    }
+    else
+    {
+        ImGui::TextColored(cyan, "%s", memory->IsSF7000Enabled() ? "SF-7000"
+                                     : flatMap ? "FLAT 64K" : "ROM");
+        if (!flatMap)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(magenta, " BANK");
+            ImGui::SameLine();
+            ImGui::Text("$%02X", memory->GetRomBank());
+            ImGui::SameLine();
+            ImGui::TextColored(magenta, " ADDRESS");
+            ImGui::SameLine();
+            ImGui::Text("$%05X", memory->GetRomBankAddress());
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(magenta, " CONFIG");
+        ImGui::SameLine();
+        char mapper_description[128] = {};
+        cartridge->GetMapperDescr(mapper_description);
+        ImGui::TextUnformatted(mapper_description);
 #if GEARSF7000_ENABLE_SF7000
-    if (memory->IsSF7000Enabled())
-    {
-        ImGui::SameLine();
-        ImGui::TextColored(magenta, " IPL");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(sf7000->IPL_Enabled() ? "ENABLED" : "DISABLED");
-    }
+        if (memory->IsSF7000Enabled())
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(magenta, " IPL");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(sf7000->IPL_Enabled() ? "ENABLED" : "DISABLED");
+        }
 #endif
+    }
     ImGui::PopFont();
 
     const auto draw_tab = [](const char* title, int slot, std::uint8_t* data,
-                             int size, int base, ImFont* font)
+                             int size, int base, ImFont* font,
+                             std::uint64_t source_generation = 0,
+                             const char* source_type_key = nullptr,
+                             std::uint64_t source_layout_revision = 0,
+                             const char* source_space_code = nullptr)
     {
         const ImGuiTabItemFlags flags = gui_debug_memory_should_select(slot)
             ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
         if (ImGui::BeginTabItem(title, nullptr, flags))
         {
-            gui_debug_memory_draw_view(slot, title, data, size, base, font, true);
+            gui_debug_memory_draw_view(slot, title, data, size, base, font, true,
+                source_generation, source_type_key, source_layout_revision,
+                source_space_code);
             ImGui::EndTabItem();
         }
     };
 
     if (ImGui::BeginTabBar("##memory_tabs", ImGuiTabBarFlags_None))
     {
-        if (memory->IsSF7000Enabled())
+        if (memory->GetMSXSlots())
         {
-            // Physical IPL image.  The later logical CPU views will make the
-            // read-only overlay and RAM write-through explicit.
-            draw_tab("IPL ROM 8K", GuiDebugMemoryEditorSlotPrimary,
-                     memory->GetBios(), 0x2000, 0x0000, gui_default_font);
-            draw_tab("SF-7000 RAM 64K", GuiDebugMemoryEditorSlotSecondary,
-                     memory->GetSGMRam(), 0x10000, 0x0000, gui_unifont_font);
+            draw_tab("BIOS", GuiDebugMemoryEditorSlotPrimary,
+                     memory->GetBios(), memory->GetBiosSize(), 0, gui_default_font);
+            auto& bus = *static_cast<SystemBusMSX*>(const_cast<ISystemBus*>(core->GetSystemBus()));
+            if (!bus.LogoROM().empty())
+                draw_tab("Logo ROM", GuiDebugMemoryEditorSlotMsxLogo,
+                         bus.LogoROM().data(), bus.LogoROM().size(), 0, gui_default_font);
+            if (!bus.BasicROM().empty())
+                draw_tab("BASIC ROM", GuiDebugMemoryEditorSlotMsxBasic,
+                         bus.BasicROM().data(), bus.BasicROM().size(), 0, gui_default_font);
+
+            if (cartridge->IsReady())
+                draw_tab("ROM IMAGE", GuiDebugMemoryEditorSlotTertiary,
+                         cartridge->GetROM(), cartridge->GetROMSize(), 0, gui_default_font);
+        }
+        else if (memory->IsSF7000Enabled())
+        {
+
+            draw_tab("IPL ROM", GuiDebugMemoryEditorSlotPrimary,
+                     memory->GetBios(), memory->GetBiosSize(), 0x0000, gui_default_font);
+
         }
         else if (cartridge->GetType() == Cartridge::SC3000_FLAT64K)
         {
-            // The flat map has no ROM in the machine at all: the image is
-            // copied into the 64 KiB at reset and everything the CPU sees
-            // afterwards is that RAM. Showing cartridge->GetROM() here would
-            // show the file on disk, never the writes the program has made -
-            // so the live buffer comes first, exactly as in the SF-7000 case
-            // above, and the image is offered beside it for comparison.
-            draw_tab("RAM 64K", GuiDebugMemoryEditorSlotPrimary,
-                     memory->GetSGMRam(), 0x10000, 0x0000, gui_unifont_font);
+
             if (cartridge->GetROMSize() > 0)
                 draw_tab("IMAGE", GuiDebugMemoryEditorSlotSecondary,
                          cartridge->GetROM(), cartridge->GetROMSize(), 0x0000,
                          gui_default_font);
         }
-        else if (cartridge->GetType() == Cartridge::SC3000_ASC16L)
+        else if (cartridge->GetType() == Cartridge::SC3000_ASC16L
+              || cartridge->GetType() == Cartridge::SC3000_ASC16LS)
         {
             draw_tab("ROM FIXED", GuiDebugMemoryEditorSlotPrimary,
                      cartridge->GetROM(), 0x8000, 0x0000, gui_default_font);
             draw_tab("ROM PAGED", GuiDebugMemoryEditorSlotSecondary,
                      cartridge->GetROM() + memory->GetRomBankAddress(),
                      0x4000, 0x8000, gui_default_font);
-            // ASC16L has a 16 KiB RAM window at $C000-$FFFF.  The backing
-            // storage starts at $4000 in the shared 64 KiB allocation.
-            draw_tab("RAM 16K", GuiDebugMemoryEditorSlotTertiary,
-                     memory->GetSGMRam() + 0x4000, 0x4000, 0xC000,
-                     gui_unifont_font);
+
+        }
+        else if (cartridge->GetType() == Cartridge::SC3000_SURVIVORS_MULTICART
+              || cartridge->GetType() == Cartridge::SC3000_SURVIVORS_MEGACART)
+        {
+
+            u8* active = cartridge->GetROM() + memory->GetRomBankAddress();
+            draw_tab("ROM $0000-$3FFF", GuiDebugMemoryEditorSlotPrimary,
+                     active, 0x4000, 0x0000, gui_default_font);
+            draw_tab("ROM $4000-$7FFF", GuiDebugMemoryEditorSlotSecondary,
+                     active + 0x4000, 0x4000, 0x4000, gui_default_font);
+
+        }
+        else if (Cartridge::UsesSega3155208(cartridge->GetType()))
+        {
+            const u8 page2 = memory->GetRomBank();
+            draw_tab("ROM FIXED $0000-$7FFF", GuiDebugMemoryEditorSlotPrimary,
+                     cartridge->GetROM(), 0x8000, 0x0000, gui_default_font);
+            draw_tab("ROM PAGED $8000-$BFFF", GuiDebugMemoryEditorSlotSecondary,
+                     cartridge->GetROM() + (static_cast<u32>(page2) << 14),
+                     0x4000, 0x8000, gui_default_font);
+            draw_tab("ROM IMAGE", GuiDebugMemoryEditorSlotTertiary,
+                     cartridge->GetROM(), cartridge->GetROMSize(), 0x0000,
+                     gui_default_font);
+
+        }
+        else if (emu_get_core()->GetMachineType() == MachineType::Coleco || emu_get_core()->GetMachineType() == MachineType::SordM5)
+        {
+
+            if (memory->IsBiosLoaded())
+                draw_tab("BIOS", GuiDebugMemoryEditorSlotPrimary,
+                         memory->GetBios(), memory->GetBiosSize(), 0x0000, gui_default_font);
+
+            draw_tab("ROM", GuiDebugMemoryEditorSlotTertiary,
+                     cartridge->GetROM(), cartridge->GetROMSize(), core->GetM5Bus() ? 0x2000 : 0x8000,
+                     gui_default_font);
+        }
+        else if (memory->UsesSMSWorkRam())
+        {
+            draw_tab("ROM IMAGE", GuiDebugMemoryEditorSlotPrimary,
+                     cartridge->GetROM(), cartridge->GetROMSize(), 0x0000,
+                     gui_default_font);
+
         }
         else
         {
@@ -289,45 +417,48 @@ void gui_debug_memory_window(void)
                      cartridge->GetROM(), cartridge->GetROMSize(), 0x0000,
                      gui_default_font);
 
-            switch (cartridge->GetType())
-            {
-                case Cartridge::SC3000_2K:
-                    draw_tab("RAM 2K", GuiDebugMemoryEditorSlotSecondary,
-                             memory->GetRam(), 0x0800, 0xC000,
-                             gui_default_font);
-                    break;
-                case Cartridge::SC3000_32K:
-                    draw_tab("RAM 32K", GuiDebugMemoryEditorSlotSecondary,
-                             memory->GetSGMRam(), 0x8000, 0x8000,
-                             gui_default_font);
-                    break;
-                case Cartridge::SG1000_1K:
-                    draw_tab("RAM 1K", GuiDebugMemoryEditorSlotSecondary,
-                             memory->GetRam(), 0x0400, 0xC000,
-                             gui_default_font);
-                    break;
-                case Cartridge::SG1000_16K:
-                    draw_tab("RAM 16K", GuiDebugMemoryEditorSlotTertiary,
-                             memory->GetSGMRam(), 0x4000, 0xC000,
-                             gui_unifont_font);
-                    break;
-                case Cartridge::SC3000_16K_AT_8000:
-                    // Two tabs because they are two chips. Folding the 2 KB
-                    // into a 16 KB view would just show eight copies of it.
-                    draw_tab("CART RAM 16K", GuiDebugMemoryEditorSlotSecondary,
-                             memory->GetSGMRam(), 0x4000, 0x8000,
-                             gui_unifont_font);
-                    draw_tab("INT RAM 2K", GuiDebugMemoryEditorSlotTertiary,
-                             memory->GetRam(), 0x0800, 0xC000,
-                             gui_default_font);
-                    break;
-                default:
-                    break;
-            }
         }
 
-        draw_tab("VRAM", GuiDebugMemoryEditorSlotVram, video->GetVRAM(),
-                 0x4000, 0x0000, gui_default_font);
+        if (core->GetSystemBus()) for (const auto& region : core->GetSystemBus()->GetRamRegions())
+        {
+            if (!region.showInEditor) continue;
+            const std::string label = std::string(region.name) + " " +
+                std::to_string(region.size / 1024) + "KB";
+            const int slot = GuiDebugMemoryEditorSlotInternalRam + static_cast<int>(region.role);
+            draw_tab(label.c_str(), slot, region.data, region.size, region.displayBase, gui_default_font,
+                     emu_get_machine_generation(), region.key);
+        }
+
+        bool described_video_space = false;
+        if (video_debug != nullptr)
+        {
+            const std::size_t space_count = video_debug->GetMemorySpaceCount();
+            for (std::size_t index = 0; index < space_count; ++index)
+            {
+                GC_VideoMemorySpaceDescriptor space;
+                if (!video_debug->DescribeMemorySpace(index, space) ||
+                    space.direct_data == nullptr || space.installed_size_bytes == 0)
+                    continue;
+
+                described_video_space = true;
+
+                const char* title = space.name != nullptr ? space.name :
+                    (space.code != nullptr ? space.code : "Video Memory");
+                ImGui::PushID(space.code != nullptr ? space.code : title);
+                draw_tab(title, GuiDebugMemoryEditorSlotVram, space.direct_data,
+                    static_cast<int>(space.installed_size_bytes), 0x0000,
+                    gui_default_font, video_handle.generation,
+                    video_handle.type_key.c_str(), space.layout_revision,
+                    space.code);
+                ImGui::PopID();
+            }
+        }
+        if (!described_video_space &&
+            g_views[GuiDebugMemoryEditorSlotVram].data != nullptr)
+        {
+            g_editors[GuiDebugMemoryEditorSlotVram].Invalidate();
+            g_views[GuiDebugMemoryEditorSlotVram] = {};
+        }
         ImGui::EndTabBar();
     }
 
@@ -342,7 +473,10 @@ bool gui_debug_memory_should_select(int slot)
 
 void gui_debug_memory_draw_view(int slot, const char* title, std::uint8_t* data, int size,
                                 int base_address, ImFont* font,
-                                bool request_select)
+                                bool request_select, std::uint64_t source_generation,
+                                const char* source_type_key,
+                                std::uint64_t source_layout_revision,
+                                const char* source_space_code)
 {
     if (!valid_slot(slot) || data == nullptr || size <= 0)
         return;
@@ -352,15 +486,30 @@ void gui_debug_memory_draw_view(int slot, const char* title, std::uint8_t* data,
 
     g_current_editor = slot;
     ViewState& view = g_views[slot];
+    const char* safe_title = title != nullptr ? title : "";
+    const char* safe_type_key = source_type_key != nullptr ? source_type_key : "";
+    const char* safe_space_code = source_space_code != nullptr ? source_space_code : "";
+    if (view.data != nullptr && (view.source_generation != source_generation ||
+        view.source_type_key != safe_type_key ||
+        view.source_space_code != safe_space_code ||
+        view.source_layout_revision != source_layout_revision))
+        g_editors[slot].Invalidate();
     if (view.data != data || view.size != size ||
         view.base_address != base_address ||
-        std::strcmp(view.title, title != nullptr ? title : "") != 0)
+        view.source_generation != source_generation ||
+        view.source_layout_revision != source_layout_revision ||
+        view.source_type_key != safe_type_key ||
+        view.source_space_code != safe_space_code || view.title != safe_title)
     {
-        view.title = title != nullptr ? title : "";
+        view.title = safe_title;
+        view.source_type_key = safe_type_key;
+        view.source_space_code = safe_space_code;
         view.data = data;
         view.size = size;
         view.base_address = base_address;
-        g_editors[slot].Reset(view.title, data, size, base_address);
+        view.source_generation = source_generation;
+        view.source_layout_revision = source_layout_revision;
+        g_editors[slot].Reset(view.title.c_str(), data, size, base_address);
     }
 
     // The setting is global to Memory Editor, rather than tied to a transient
@@ -414,11 +563,7 @@ void gui_debug_memory_paste(void)
     g_editors[g_current_editor].Paste();
 }
 
-// Deliberately duplicates gui_debug_memory_window()'s tab dispatch instead
-// of sharing it - that function is already shipped/working and this is a
-// read-only query used by unrelated tools (Mem Import/Export, MCP), so the
-// lower-risk choice is a second small copy over a wider refactor of tested
-// GUI code. Keep the two in sync by hand if the profile dispatch changes.
+// Physical RAM views use the same bus declarations as the editor and MCP.
 int gui_debug_memory_get_current_views(GuiDebugMemoryView* out_views, int max_views)
 {
     if (out_views == nullptr || max_views <= 0)
@@ -440,17 +585,21 @@ int gui_debug_memory_get_current_views(GuiDebugMemoryView* out_views, int max_vi
         count++;
     };
 
-    // The importer targets the real internal buffers directly, ignoring
-    // whatever the currently active mapper/profile happens to expose at a
-    // given CPU address - these four physical buffers exist unconditionally,
-    // independent of cartridge type or SF-7000 mode, so the list is fixed
-    // rather than dispatched per profile like gui_debug_memory_window() is.
+    // Import physical regions declared by the bus, with the same bounds as
+    // the editor. CPU windows and allocation capacity do not define sizes.
     if (cartridge->GetROMSize() > 0)
         add_view("ROM", cartridge->GetROM(), cartridge->GetROMSize(), 0x0000);
-    add_view("RAM 64K", memory->GetSGMRam(), 0x10000, 0x0000);
-    add_view("RAM 2K", memory->GetRam(), 0x0800, 0x0000);
-    add_view("IPL 8K", memory->GetBios(), 0x2000, 0x0000);
+    if (core->GetSystemBus()) for (const auto& region : core->GetSystemBus()->GetRamRegions())
+        if (region.showInEditor)
+            add_view(region.name, region.data, region.size, region.displayBase);
+    if (memory->GetBiosSize())
+        add_view("BIOS / IPL", memory->GetBios(), memory->GetBiosSize(), 0x0000);
 
+    if (core->GetMachineType() == MachineType::MSX) {
+        auto& bus = *static_cast<SystemBusMSX*>(const_cast<ISystemBus*>(core->GetSystemBus()));
+        if (!bus.LogoROM().empty()) add_view("Logo ROM", bus.LogoROM().data(), bus.LogoROM().size(), 0);
+        if (!bus.BasicROM().empty()) add_view("BASIC ROM", bus.BasicROM().data(), bus.BasicROM().size(), 0);
+    }
     return count;
 }
 
@@ -460,6 +609,7 @@ int gui_debug_memory_get_current_views(GuiDebugMemoryView* out_views, int max_vi
 // been asked to open it.
 void gui_debug_memory_search_window(void)
 {
+    invalidate_changed_ram_views();
     for (int i = 0; i < GuiDebugMemoryEditorSlotCount; i++)
     {
         ImGui::PushFont(gui_default_font, gui_get_default_font_size());
@@ -470,6 +620,7 @@ void gui_debug_memory_search_window(void)
 
 void gui_debug_memory_find_bytes_window(void)
 {
+    invalidate_changed_ram_views();
     for (int i = 0; i < GuiDebugMemoryEditorSlotCount; i++)
     {
         ImGui::PushFont(gui_default_font, gui_get_default_font_size());
@@ -480,6 +631,7 @@ void gui_debug_memory_find_bytes_window(void)
 
 void gui_debug_memory_watches_window(void)
 {
+    invalidate_changed_ram_views();
     for (int i = 0; i < GuiDebugMemoryEditorSlotCount; i++)
     {
         ImGui::PushFont(gui_default_font, gui_get_default_font_size());

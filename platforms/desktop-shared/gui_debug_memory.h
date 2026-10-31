@@ -1,11 +1,17 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
  * Debug-memory controller shared by the desktop debugger.  It intentionally
  * owns editor state independently from the surrounding ImGui windows so the
  * SC-3000/SF-7000 memory views can later move out of gui_debug.cpp without
  * changing clipboard, selection or navigation behaviour.
+ *
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #ifndef GUI_DEBUG_MEMORY_H
@@ -22,6 +28,11 @@ enum GuiDebugMemoryEditorSlot
     GuiDebugMemoryEditorSlotTertiary,
     GuiDebugMemoryEditorSlotReserved,
     GuiDebugMemoryEditorSlotVram,
+    GuiDebugMemoryEditorSlotMsxLogo,
+    GuiDebugMemoryEditorSlotMsxBasic,
+    GuiDebugMemoryEditorSlotInternalRam,
+    GuiDebugMemoryEditorSlotExternalRam,
+    GuiDebugMemoryEditorSlotCartridgeRam,
     GuiDebugMemoryEditorSlotCount
 };
 
@@ -33,7 +44,10 @@ void gui_debug_memory_find_bytes_window(void);
 void gui_debug_memory_watches_window(void);
 void gui_debug_memory_draw_view(int slot, const char* title, std::uint8_t* data, int size,
                                 int base_address, ImFont* font,
-                                bool request_select);
+                                bool request_select, std::uint64_t source_generation = 0,
+                                const char* source_type_key = nullptr,
+                                std::uint64_t source_layout_revision = 0,
+                                const char* source_space_code = nullptr);
 bool gui_debug_memory_should_select(int slot);
 void gui_debug_memory_goto(int slot, int address);
 void gui_debug_memory_copy(void);
@@ -55,9 +69,9 @@ struct GuiDebugMemoryView
 };
 
 // Fills out_views (capacity max_views) with the RAM/ROM views for the
-// currently active machine profile, VRAM excluded (callers that want VRAM
-// use Video::GetVRAM() directly - it's profile-independent, always 16 KiB
-// at base 0). Returns how many views were written.
+// currently active machine profile. Video-device spaces are published by
+// IVideoDebugProvider and are deliberately excluded here. Returns how many
+// views were written.
 int gui_debug_memory_get_current_views(GuiDebugMemoryView* out_views, int max_views);
 
 #endif /* GUI_DEBUG_MEMORY_H */

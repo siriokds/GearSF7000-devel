@@ -1,20 +1,21 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
  * Copyright (C) 2026  Saverio Russo
-
+ *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see http://www.gnu.org/licenses/
  *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include <cctype>
@@ -34,8 +35,9 @@
 static const int k_buffer_size = 8 * 1024;
 
 // Shared with the MCP tools, which is why this is not a local static inside
-// the window function: external tools can load a fragment into the panel and
-// clear it again without selecting the text by hand.
+// the window function: an agent driving the emulator has to be able to load a
+// fragment into the panel, and to clear it out again, without the user having
+// to select the text and delete it by hand.
 static char buffer[k_buffer_size] = "";
 static std::string status;
 static ImVec4 status_color = cyan;
@@ -253,7 +255,7 @@ bool gui_debug_basic_typer_send(const char* source)
 void gui_debug_basic_typer_window(void)
 {
     ImGui::SetNextWindowPos(ImVec2(220, 200), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(28.9f, 20.0f);
 
     ImGui::Begin("BASIC Typer", &config_debug.show_basic_typer);
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());

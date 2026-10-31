@@ -1,8 +1,12 @@
 /*
  * GearSF7000 - frame recorder window
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2021  Ignacio Sanchez
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Derived from Gearcoleco by Ignacio Sanchez (GPL-3.0-or-later); the changes
+ * and additions by Saverio Russo are AGPL-3.0-or-later.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include "gui_debug_rewind.h"
@@ -459,14 +463,18 @@ void gui_debug_window_rewind(void)
         ApplyPendingSeek();
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::SetNextWindowPos(ImVec2(180, 300), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10.0f * ImGui::GetFontSize(),
+                                   16.7f * ImGui::GetFontSize()), ImGuiCond_FirstUseEver);
+    // Deliberately no size: the window is AlwaysAutoResize, so it fits its
+    // content and an explicit size would be ignored. What sets the minimum
+    // width is the Dummy below, which is why that one is in em.
     ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_FirstUseEver);
     // "Recorder", not "Rewind": rewinding is one of the things it does, and the
     // menu, the buttons and the documentation all say Recorder.
     ImGui::Begin("Recorder", &config_debug.show_rewind,
                  ImGuiWindowFlags_AlwaysAutoResize);
 
-    ImGui::Dummy(ImVec2(360, 0));
+    ImGui::Dummy(ImVec2(20.0f * ImGui::GetFontSize(), 0.0f));
 
     const RewindStatus status = rewind_get_status();
     const int count = rewind_get_snapshot_count();

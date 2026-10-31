@@ -1,6 +1,8 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "gui_debug_rom_inspector.h"
@@ -14,13 +16,13 @@
 
 #include "imgui/imgui.h"
 #include "imgui/colors.h"
-#include "nfd/nfd.h"
+#include "nfd_parented.h"
 #include "config.h"
 #include "emu.h"
 #include "gui.h"
 #include "renderer.h"
 #include "../../src/definitions.h"
-#include "../../src/Video.h"
+#include "../../src/TMS99xxPalette.h"
 
 namespace
 {
@@ -138,7 +140,7 @@ void open_rom_file_dialog()
     // No extension filter - source files can be ROMs from any of the
     // TMS9918-based systems this tool targets (ColecoVision/MSX/
     // CreatiVision/SC-3000), with whatever extension their own tooling uses.
-    nfdresult_t result = NFD_OpenDialog(&out_path, nullptr, 0, nullptr);
+    nfdresult_t result = NFD_OpenDialogParented(&out_path, nullptr, 0, nullptr);
     if (result != NFD_OKAY)
     {
         if (result != NFD_CANCEL)
@@ -212,7 +214,7 @@ void decode_rom_inspector_buffer(int base_offset)
                     else
                         color_index = IsSetBit(pattern_byte, 7 - offset_x) ? fg_color : bg_color;
 
-                    // Same TMS9918 palette table Video.cpp defaults to
+                    // Same TMS9918 palette table TMS99xx.cpp defaults to
                     // (kPalette_888_tms9918_analog) - a real color LUT, not
                     // an approximation, and independent of any live Video
                     // instance since it's a plain static array.
@@ -412,7 +414,7 @@ void gui_debug_rom_inspector_render_visible(int* out_width, int* out_height)
 void gui_debug_rom_inspector_window(void)
 {
     ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(700, 640), ImGuiCond_FirstUseEver);
+    gui_set_next_window_size_em(38.9f, 35.6f);
 
     ImGui::Begin("ROM Inspector", &config_debug.show_rom_inspector);
     ImGui::PushFont(gui_default_font, gui_get_default_font_size());

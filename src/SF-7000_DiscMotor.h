@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025  Saverio Russo
 const int SF7000_DiscMotor_size = 101664;
 
 const unsigned char SF7000_DiscMotor_data[SF7000_DiscMotor_size] = {

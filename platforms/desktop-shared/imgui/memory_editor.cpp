@@ -1,20 +1,29 @@
 /*
- * Gearsystem - Sega Master System / Game Gear Emulator
+ * GearSF7000 - SC-3000/SF-7000 Emulator
  * Copyright (C) 2013  Ignacio Sanchez
-
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * Copyright (C) 2025-2026  Saverio Russo
+ *
+ * Derived from Gearsystem by Ignacio Sanchez. His code is free software: you
+ * can redistribute it and/or modify it under the terms of the GNU General
+ * Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * The changes and additions by Saverio Russo are free software: you can
+ * redistribute them and/or modify them under the terms of the GNU Affero
+ * General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ * Section 13 of both licences permits the combination.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see http://www.gnu.org/licenses/
+ * GNU General Public License and the GNU Affero General Public License
+ * for more details.
  *
+ * You should have received a copy of both licences along with this
+ * program.  If not, see http://www.gnu.org/licenses/
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later AND AGPL-3.0-or-later
  */
 
 #include <string>
@@ -222,6 +231,26 @@ void MemEditor::Reset(const char* title, uint8_t* mem_data, int mem_size, int ba
 
     m_search_data = new uint8_t[m_mem_size * m_mem_word];
     memcpy(m_search_data, m_mem_data, m_mem_size * m_mem_word);
+}
+
+void MemEditor::Invalidate()
+{
+    Reset("", nullptr, 0);
+    m_selection_start = 0;
+    m_selection_end = 0;
+    m_editing_address = -1;
+    m_jump_to_address = -1;
+    m_scroll_to_address = -1;
+    m_add_bookmark = false;
+    m_watch_window = false;
+    m_add_watch = false;
+    m_search_window = false;
+    m_find_bytes_window = false;
+    m_bookmarks.clear();
+    m_watches.clear();
+    m_search_results.clear();
+    m_find_bytes_results.clear();
+    m_find_bytes_match_lengths.clear();
 }
 
 void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)

@@ -1,4 +1,6 @@
 #version 450 core
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
 
 // Pass 1 of 2 of the real composite/S-Video decode (see composite_luma.frag
 // for pass 2). Direct GLSL translation of DecodeFrame's chroma stage in
@@ -28,7 +30,7 @@ const int kSamplesPerDot = 8;
 const int kPictureDots = 284;
 const int kPictureLines = 294;
 // Fixed by the PAL standard itself, not by the VDP - see
-// TMS9918RasterTiming.h / the ICrtSignalSink work this decode is built on.
+// TMS99xxRasterTiming.h / the ICrtSignalSink work this decode is built on.
 const float kSubcarrierCyclesPerLine = 283.7516;
 const float kCyclesPerSample = kSubcarrierCyclesPerLine / float(kDotsPerLine * kSamplesPerDot);
 // Chroma is the narrow-band signal - a wide window here is what gives

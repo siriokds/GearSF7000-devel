@@ -8,6 +8,15 @@
 ** More info: http://www.bluemsx.com
 **
 ** Copyright (C) 2003-2006 Daniel Vik
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik (GPL-2.0-or-later, used here under
+** version 3) and largely extended for GearSF7000; the changes and additions
+** by Saverio Russo are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
+**
+** The original notice of blueMSX follows.
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
@@ -30,8 +39,10 @@
 
 #include <stdint.h>
 #include <iosfwd>
+#include <string>
 //#include "MsxTypes.h"
 #include "Audio.h"
+#include "IDebugEventProvider.h"
 
 
 typedef struct NEC765 NEC765;
@@ -94,6 +105,35 @@ void nec765GetDebugInfo(NEC765* fdc, NEC765DebugInfo* info);
 // surface down to the fractional raw bit.
 void nec765SaveState(NEC765* fdc, std::ostream& stream);
 bool nec765LoadState(NEC765* fdc, std::istream& stream);
+
+struct NEC765DebugConfiguration
+{
+    std::string key;
+    std::string parentKey;
+    std::string name;
+    std::uint16_t ioPortBase = 0xE0;
+};
+
+// Owns the opaque blueMSX controller and gives that concrete instance the
+// common device-provider interface used during machine composition. The C API
+// remains available while the rest of the FDC implementation is modernised.
+class NEC765Device : public IDebugEventProvider
+{
+public:
+    explicit NEC765Device(NEC765DebugConfiguration debug = {});
+    ~NEC765Device();
+    NEC765Device(const NEC765Device&) = delete;
+    NEC765Device& operator=(const NEC765Device&) = delete;
+
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+    operator NEC765*() { return m_fdc; }
+    operator NEC765*() const { return m_fdc; }
+    explicit operator bool() const { return m_fdc != nullptr; }
+
+private:
+    NEC765* m_fdc = nullptr;
+    NEC765DebugConfiguration m_debug;
+};
 
 /* =========================================================
  * FDC diagnostic log

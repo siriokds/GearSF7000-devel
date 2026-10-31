@@ -1,20 +1,21 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026  Saverio Russo
-
+ * Copyright (C) 2024-2026  Saverio Russo
+ *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see http://www.gnu.org/licenses/
  *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef MACHINEIOPORTS_H
@@ -22,6 +23,10 @@
 
 
 #include "IOPorts.h"
+#include "IVideoPortDevice.h"
+#include "IFmPortDevice.h"
+#include "Intel8255.h"
+#include "ControllerDevice.h"
 
 #include <cstdint>
 #include <vector>
@@ -29,22 +34,24 @@
 #include <cmath>
 #include <iostream>
 #include <istream>
+#include <memory>
 #include <ostream>
 #include "SegaBasicDeserializer.h"
 #include <stdio.h>
 
 class Audio;
-class Video;
-class SK1100;
+class SegaKeyboard;
+class Input;
 class SF7000;
-class SP400;
+class SC3000SerialPrinterPort;
+class SegaCassettePort;
 class SR1000;
 class Cartridge;
 class Memory;
-class MachineIOPorts : public IOPorts
+class MachineIOPorts : public IOPorts, private IIntel8255Pins
 {
 public:
-    MachineIOPorts(Audio* pAudio, Video* pVideo, SK1100* pSK1100, SR1000* pSR1000, SF7000* pSF7000, SP400* pSP400, Cartridge* pCartridge, Memory* pMemory);
+    MachineIOPorts(Audio* pAudio, IVideoPortDevice* pVideo, SegaKeyboard* pKeyboard, SR1000* pSR1000, SF7000* pSF7000, SC3000SerialPrinterPort* pSerialPrinterPort, SegaCassettePort* pCassettePort, Cartridge* pCartridge, Memory* pMemory);
     ~MachineIOPorts();
     void Reset() override;
     u8 In(uint64_t tstates, u8 port) override;
@@ -59,13 +66,59 @@ public:
     unsigned int GetWaitStatesAt(uint64_t tstates, u8 port,
                                  bool write) const override;
     DebugProbe GetDebugProbe(u8 port) const override;
-    
-    inline uint8_t SC3000_PPI_GetPortA();
-    
-    void SC3000_PPI_SetPortB(uint8_t val);
-    inline uint8_t SC3000_PPI_GetPortB();
+    void BindDebugEvents(const DebugDeviceRegistry& registry);
+    IVideoPortDevice* GetVideoDevice() const { return m_pVideo; }
+    void SetVideoDevice(IVideoPortDevice* video) { m_pVideo = video; }
+    const Intel8255& GetSC3000PPI() const { return *m_sc3000Ppi; }
 
-    void SC3000_PPI_SetPortC(uint64_t tstates, uint8_t val);
+    // SG-1000 motherboard routing. These deliberately bypass the onboard
+    // SC-3000 PPI and all SF-7000 registers. A future SK-1100 composition
+    // will add its own responder to the $C0-$FF block.
+    u8 SG1000In(uint64_t tstates, u8 port, bool sk1100Attached = false);
+    void SG1000Out(uint64_t tstates, u8 port, u8 value,
+                   bool sk1100Attached = false);
+    unsigned int SG1000GetWaitStates(u8 port, bool write) const;
+    DebugProbe GetSG1000DebugProbe(u8 port,
+                                   bool sk1100Attached = false) const;
+
+    // ColecoVision motherboard routing (schematic, Processor sheet: a
+    // 74LS138 on A5-A7 with /IORQ and /WR, so every block repeats every 32
+    // ports). $80 write: keypad mode; $A0: VDP, A0 selects data/control;
+    // $C0 write: joystick mode; $E0: controllers in, SN76489 out.
+    void SetColecoInput(Input* input) { m_pColecoInput = input; }
+    u8 ColecoIn(uint64_t tstates, u8 port);
+    void ColecoOut(uint64_t tstates, u8 port, u8 value);
+    unsigned int ColecoGetWaitStates(u8 port, bool write) const;
+    DebugProbe GetColecoDebugProbe(u8 port) const;
+
+    // Master System motherboard routing. Exact $F0-$F2 FM decoding is
+    // checked before the otherwise mirrored controller block.
+    void ConfigureSMS(bool pal);
+    // What is plugged into each Master System controller port (player 0 is port A):
+    // the SMS pad unless the user picks a Mega Drive pad. A user setting, like a
+    // controller in the socket - not part of a machine's model.
+    void SetControllerDevice(unsigned player, SystemControllerDevice type);
+    ControllerDevice& GetControllerDevice(unsigned player) { return *m_controllers[player & 1]; }
+    const ControllerDevice& GetControllerDevice(unsigned player) const { return *m_controllers[player & 1]; }
+    u8 SMSIn(uint64_t tstates, u8 port);
+    void SMSOut(uint64_t tstates, u8 port, u8 value);
+    unsigned int SMSGetWaitStates(u8 port, bool write) const;
+    DebugProbe GetSMSDebugProbe(u8 port) const;
+    void SetFmPortDevice(IFmPortDevice* device,
+                         FmPortMap ports = FmPortMap{})
+    {
+        m_fmDevice = device;
+        m_fmPorts = ports;
+    }
+    u8 GetSMSMemoryControl() const { return m_smsMemoryControl; }
+    u8 GetSMSIoControl() const { return m_smsIoControl; }
+    
+    uint8_t SC3000_PPI_GetPortA();
+    
+    uint8_t SC3000_PPI_GetPortB(uint64_t tstates = 0);
+
+    void SC3000_PPI_SetPortC(uint64_t tstates, uint8_t val,
+                             uint8_t drivenMask = 0xFF);
     uint8_t SC3000_PPI_SamplePortC();
     uint8_t SC3000_PPI_GetPortC(uint64_t tstates);
 
@@ -73,7 +126,7 @@ public:
     // is the whole of the port decoder's own state: everything else it owns
     // is a pointer to another device, which saves itself.
     void SaveState(std::ostream& stream) const;
-    void LoadState(std::istream& stream);
+    void LoadState(std::istream& stream, std::uint16_t version = 3);
 
     void SC3000_PPI_GetPorts(uint8_t* ports)
     {
@@ -86,41 +139,88 @@ public:
     }
 
 private:
+    Intel8255PinSample ReadPortA(std::uint64_t timestamp) override;
+    Intel8255PinSample ReadPortB(std::uint64_t timestamp) override;
+    Intel8255PinSample ReadPortC(std::uint64_t timestamp) override;
+    Intel8255PinSample PeekPortA(std::uint64_t timestamp) const override;
+    Intel8255PinSample PeekPortB(std::uint64_t timestamp) const override;
+    Intel8255PinSample PeekPortC(std::uint64_t timestamp) const override;
+    void DrivePortA(std::uint8_t value, std::uint8_t drivenMask,
+                    std::uint64_t timestamp) override;
+    void DrivePortB(std::uint8_t value, std::uint8_t drivenMask,
+                    std::uint64_t timestamp) override;
+    void DrivePortC(std::uint8_t value, std::uint8_t drivenMask,
+                    std::uint64_t timestamp) override;
+
     Audio* m_pAudio;
-    Video* m_pVideo;
-    SK1100* m_pSK1100;
+    IVideoPortDevice* m_pVideo;
+    SegaKeyboard* m_pKeyboard;
     SR1000* m_pSR1000;
     SF7000* m_pSF7000;
-    SP400* m_pSP400;
+    SC3000SerialPrinterPort* m_pSerialPrinterPort;
+    SegaCassettePort* m_pCassettePort;
     Cartridge* m_pCartridge;
     Memory* m_pMemory;
-    uint8_t SC3000_PPI_PortA;
-    uint8_t SC3000_PPI_PortB;
-    uint8_t SC3000_PPI_PortC;
-    uint8_t SC3000_PPI_PortCTRL;
+    uint8_t SC3000_PPI_PortA = 0;
+    uint8_t SC3000_PPI_PortB = 0;
+    uint8_t SC3000_PPI_PortC = 0;
+    uint8_t SC3000_PPI_PortCTRL = 0x9B;
+    std::unique_ptr<Intel8255> m_sc3000Ppi;
+    DebugDeviceId m_scBusDebugDevice = 0;
+    DebugDeviceId m_scVdpDebugDevice = 0;
+    DebugDeviceId m_scPpiDebugDevice = 0;
+    DebugDeviceId m_scAyDebugDevice = 0;
+    DebugDeviceId m_sgmDebugDevice = 0;
+    DebugDeviceId m_sgmAyDebugDevice = 0;
+    DebugDeviceId m_sfFdcDebugDevice = 0;
+    DebugDeviceId m_sfPpiDebugDevice = 0;
+    DebugDeviceId m_sfUsartDebugDevice = 0;
+    DebugDeviceId m_sgBusDebugDevice = 0;
+    DebugDeviceId m_sgVdpDebugDevice = 0;
+    DebugDeviceId m_smsBusDebugDevice = 0;
+    DebugDeviceId m_colecoBusDebugDevice = 0;
+    DebugDeviceId m_colecoVdpDebugDevice = 0;
+    Input* m_pColecoInput = nullptr;
+    DebugDeviceId m_smsVdpDebugDevice = 0;
+    DebugDeviceId m_smsPsgDebugDevice = 0;
+    DebugDeviceId m_smsFmDebugDevice = 0;
 
-    uint8_t SR1000_CassetteSignal;
+    IFmPortDevice* m_fmDevice = nullptr;
+    FmPortMap m_fmPorts{};
+    bool m_smsPal = false;
+    std::unique_ptr<ControllerDevice> m_controllers[2];
+    // The SMS pad lines of each player as the joystick row holds them: player 1 in
+    // bits 0-5 of $DC; player 2's up and down in bits 6-7 of $DC, the rest in bits
+    // 0-3 of $DD.
+    u8 SmsPadLines(unsigned player) const;
+    void UpdateControllerTh(uint64_t tstates);
+    uint8_t m_smsMemoryControl = 0xFF;
+    uint8_t m_smsIoControl = 0xFF;
+
+    uint8_t SR1000_CassetteSignal = 0;
 
     SegaBasicDeserializer *basicDeserializer;
     void onByteReceived(uint8_t byte);
+    bool SmsThLevel(unsigned player) const;
+    bool SmsTrLevel(unsigned player) const;
+    u8 ReadFmPort(u8 port) const;
+    void WriteFmPort(uint64_t tstates, u8 port, u8 value);
 
 #ifdef DEBUG_PORT
     FILE* fp_debug;
 #endif
 };
 
-#include "Video.h"
 #include "Audio.h"
-#include "sk1100.h"
+#include "SegaKeyboard.h"
 #if GEARSF7000_ENABLE_SR1000
 #include "SR1000.h"
 #endif
 #if GEARSF7000_ENABLE_SF7000
 #include "SF7000.h"
 #endif
-#if GEARSF7000_ENABLE_SP400
-#include "SP400.h"
-#endif
+#include "SC3000SerialPrinterPort.h"
+#include "SegaCassettePort.h"
 #include "Cartridge.h"
 #include "Memory.h"
 #ifdef DEBUG_PORT
@@ -194,72 +294,9 @@ static inline bool IsSF7000_port(u8 port)
 
 
 
-inline uint8_t MachineIOPorts::SC3000_PPI_GetPortA()
-{
-    const uint8_t value = m_pSK1100->GetPortA();
-    SC3000_PPI_PortA = value;
-    return value;
-}
-
-
-inline uint8_t MachineIOPorts::SC3000_PPI_GetPortB()
-{
-#if GEARSF7000_ENABLE_SR1000
-    uint8_t sr1000Signal = m_pSR1000->GetSignal();
-
-#ifdef _DEBUG
-    if (SR1000_CassetteSignal != sr1000Signal)
-    {
-        printf("\n[SC-3000 PPI B] Read Cassette Signal %d\n", sr1000Signal);
-    }
-
-#endif
-
-    SR1000_CassetteSignal = sr1000Signal;
-#endif
-
-    uint8_t value =
-#if GEARSF7000_ENABLE_SR1000
-          (SR1000_CassetteSignal != 0 ? 0x80 : 0x00)
-#else
-          0x00 // no cassette fitted: line reads idle
-#endif
-#if GEARSF7000_ENABLE_SP400
-        | (m_pSP400->ReadPortB()  )
-#endif
-        | (m_pSK1100->GetPortB() & 0x1F) ;
-
-
-
-#ifdef _DEBUG
-    //printf("\n[SC-3000 PPI B] Read SP400 FAULT Signal %d\n", (value >> 5) & 1);
-    //printf("\n[SC-3000 PPI B] Read SP400 BUSY  Signal %d\n", (value >> 6) & 1);
-#endif
-
-
-    SC3000_PPI_PortB = value;
-    return value;
-}
-
-inline void MachineIOPorts::SC3000_PPI_SetPortB(uint8_t value)
-{
-    (void)value; // unused
-//    SC3000_PPI_PortB = value;
-//
-//#ifdef _DEBUG
-//    if (SR1000_CassetteSignal != sr1000Signal)
-//    {
-//        printf("\n[SC-3000 PPI B] Write Cassette Signal %d\n", value & 0x80 ? 1 : 0);
-//    }
-//#endif
-//
-//    //m_pSR1000->SetMotor((value & 0x08) != 0);       // PC3 Cassette Motor (not connected on the real machine but used on basic)
-//    //m_pSK1100->SetPortC(value);
-
-}
-
-
-inline void MachineIOPorts::SC3000_PPI_SetPortC(uint64_t tstates, uint8_t value)
+inline void MachineIOPorts::SC3000_PPI_SetPortC(uint64_t tstates,
+                                                uint8_t value,
+                                                uint8_t drivenMask)
 {
     const uint8_t oldValue = SC3000_PPI_PortC;
     SC3000_PPI_PortC = value;
@@ -277,10 +314,9 @@ inline void MachineIOPorts::SC3000_PPI_SetPortC(uint64_t tstates, uint8_t value)
 
     m_pSR1000->SetMotor((value & 0x08) != 0);       // PC3 Cassette Motor (not connected on the real machine but used on basic)
 #endif
-	m_pSK1100->SetPortC(value);
-#if GEARSF7000_ENABLE_SP400
-	m_pSP400->WritePortC(value & 0xE0); // PC5, PC6, PC7
-#endif
+	m_pKeyboard->SetPortC(value);
+	m_pSerialPrinterPort->DrivePortC(value, drivenMask, tstates);
+    m_pCassettePort->DrivePortC(value, drivenMask);
 
     // This also covers the BSR path: publish the resulting PC latch only
     // when it really changed, rather than the raw OUT (available as I/O).
@@ -290,8 +326,8 @@ inline void MachineIOPorts::SC3000_PPI_SetPortC(uint64_t tstates, uint8_t value)
 #ifdef _DEBUG
     //printf("*** [SC-3000 PPI]: Write to Port C\n");
 
-    //printf("\t  SP-400 /RESET   => %d\n", (value >> 6) & 1);
-    //printf("\t  SP-400 /FEED    => %d\n", (value >> 7) & 1);
+    //printf("\t  DIN-5 /RESET    => %d\n", (value >> 6) & 1);
+    //printf("\t  DIN-5 /FEED     => %d\n", (value >> 7) & 1);
 #endif
 }
 
@@ -300,24 +336,18 @@ inline uint8_t MachineIOPorts::SC3000_PPI_SamplePortC()
     //SC3000_PPI_PortC
     return SC3000_PPI_PortC = (
 
-        // (m_pSK1100->GetPortC() & 0xF7)
+        // (m_pKeyboard->GetPortC() & 0xF7)
 
-		      (m_pSK1100->GetPortC() & 0x07)             //                   -   PC2, PC1, PC0
+		      (m_pKeyboard->GetPortC() & 0x07)             //                   -   PC2, PC1, PC0
 #if GEARSF7000_ENABLE_SR1000
             | (m_pSR1000->IsMotorOn() ? 0x10 : 0x00)    //               PC4
 #endif
-#if GEARSF7000_ENABLE_SP400
-		    | (m_pSP400->GetPortC() & 0xE0)             // PC7, PC6, PC5
-#endif
-
         ); // PC3 Cassette Motor (not connected on the real machine but used on basic)
 }
 
 inline uint8_t MachineIOPorts::SC3000_PPI_GetPortC(uint64_t tstates)
 {
-    (void)tstates;
-    const uint8_t value = SC3000_PPI_SamplePortC();
-    return value;
+    return m_sc3000Ppi->ReadRegister(2, tstates);
 }
 
 
@@ -335,7 +365,7 @@ inline u8 MachineIOPorts::In(uint64_t tstates, u8 port)
     }
 
 #if GEARSF7000_ENABLE_AY
-    if (IsSC3000_AYport(port))
+    if (m_pAudio->IsAyEnabled() && IsSC3000_AYport(port))
     {
         // Only +2 reads back; the rest of the window is open bus, as it would
         // be on a card that decodes the block but drives no data there.
@@ -354,31 +384,7 @@ inline u8 MachineIOPorts::In(uint64_t tstates, u8 port)
         //else
         //    return ((m_pInput->GetPortDD() & 0x3F) | (m_Port3F & 0xC0));
 
-        switch (port)
-        {
-            case 0xDC:								/* D2 U2 B1 A1 R1 L1 D1 U1 */
-            {
-                return SC3000_PPI_GetPortA();
-            }
-            case 0xDD:								/* D2 U2 B1 A1 R1 L1 D1 U1 */
-            {
-
-                return SC3000_PPI_GetPortB();
-            }
-            case 0xDE:
-            {
-                return SC3000_PPI_GetPortC(tstates);
-            }
-            case 0xDF:
-            {
-                // The 8255 control register is write-only.  Preserve the
-                // existing open-bus result while making the attempted read
-                // visible to the centralized CPU bus publisher.
-                const uint8_t value = 0xFF;
-                return value;
-            }
-
-        }
+        return m_sc3000Ppi->ReadRegister(port & 3, tstates);
     }
     
     
@@ -413,12 +419,7 @@ inline u8 MachineIOPorts::In(uint64_t tstates, u8 port)
             case 0xE6:
             case 0xE7:
             {
-                uint8_t value = 0xFF;
-                if (port == 0xE4) value = m_pSF7000->PPI_ReadPortA();
-                else if (port == 0xE5) value = m_pSF7000->PPI_ReadPortB();
-                else if (port == 0xE6) value = m_pSF7000->PPI_ReadPortC();
-                else value = m_pSF7000->PPI_ReadControl();
-                return value;
+                return m_pSF7000->PPI_ReadRegister(port & 3, tstates);
             }
 
             case 0xE8: return m_pSF7000->USART_ReadData();  	/* USART Data */
@@ -457,6 +458,10 @@ inline void MachineIOPorts::Out(uint64_t tstates, u8 port, u8 value)
     }
 #endif
 
+    // Cartridge-side I/O decoding is independent of the motherboard
+    // devices below. Survivors boards decode every port in $E0-$FF.
+    m_pMemory->WriteMapperPort(port, value);
+
     if (IsSC3000_PSGport(port))                             // bit 7 = 0, bit 6 = 1
     {
         // Writes to any address go to the SN76489AN PSG
@@ -484,7 +489,7 @@ inline void MachineIOPorts::Out(uint64_t tstates, u8 port, u8 value)
     }
 
 #if GEARSF7000_ENABLE_AY
-    if (IsSC3000_AYport(port))
+    if (m_pAudio->IsAyEnabled() && IsSC3000_AYport(port))
     {
         // MSX register layout with bit 7 cleared: +0 latch, +1 data write,
         // +2 data read. Unlike the PSG this takes no wait states - the
@@ -515,59 +520,14 @@ inline void MachineIOPorts::Out(uint64_t tstates, u8 port, u8 value)
         // The CPU bus records the attempt even for input-configured
         // or ignored ports. A derived Port-C latch transition remains a
         // separate device event.
-        switch (port & 3)
-        {
-            case 0x00:  // 0xDC
-                break;
-
-            case 0x01:  // 0xDD
-                //SC3000_PPI_SetPortB(value);
-                break;
-
-            case 0x02:  // 0xDE
-                SC3000_PPI_SetPortC(tstates, value);
-                break;
-
-            case 0x03:  // 0xDF
-                {
-                    // Control-mode and BSR writes are meaningful independently
-                    // from the PC transition they may subsequently cause.
-                    bool bsrMode = ((value & 0x80) == 0);
-
-
-                    if (bsrMode)
-                    {
-                        uint8_t bitVal = value & 1;
-                        uint8_t bitIndex = (value >> 1) & 7;
-                        uint8_t mask = 1 << bitIndex;
-
-
-                        const uint8_t portC = SC3000_PPI_SamplePortC();
-                        if (bitVal)		SC3000_PPI_SetPortC(tstates, portC | mask);
-                        else			SC3000_PPI_SetPortC(tstates, portC & ~mask);
-                    }
-                    else
-                    {
-						const uint8_t oldControl = SC3000_PPI_PortCTRL;
-						SC3000_PPI_PortCTRL = value;
-                        if (oldControl != SC3000_PPI_PortCTRL)
-                            m_pMemory->CheckPPIStateChange(0xDF, oldControl, SC3000_PPI_PortCTRL);
-                        SC3000_PPI_PortA = 0;
-                        SC3000_PPI_PortB = 0;
-                        //SC3000_PPI_SetPortB(0x00);
-                        // Let SetPortC observe the previous latch before the
-                        // mode-set command clears it; pre-clearing here hid
-                        // the transition from both hardware and debugger.
-                        SC3000_PPI_SetPortC(tstates, 0x00);
-#ifdef _DEBUG
-                        printf("[SC3000 PPI] Init $%02X\n", value);
-
-#endif
-                    }
-
-                }
-                break;
-        }
+        const Intel8255Snapshot before = m_sc3000Ppi->GetSnapshot();
+        m_sc3000Ppi->WriteRegister(port & 3, value, tstates);
+        const Intel8255Snapshot after = m_sc3000Ppi->GetSnapshot();
+        SC3000_PPI_PortA = after.outputLatch[0];
+        SC3000_PPI_PortB = after.outputLatch[1];
+        SC3000_PPI_PortCTRL = after.control;
+        if ((port & 3) == 3 && before.control != after.control)
+            m_pMemory->CheckPPIStateChange(0xDF, before.control, after.control);
     }
 
 
@@ -585,17 +545,11 @@ inline void MachineIOPorts::Out(uint64_t tstates, u8 port, u8 value)
             }
             break;
 
+            case 0xE4:
+            case 0xE5:
             case 0xE6:
-                m_pSF7000->PPI_WritePortC(value);
-                //CPU_ForceNMI = sf7.PPI_WritePortC(val);
-
-                m_pMemory->SetIPLRomDisabled(!m_pSF7000->IPL_Enabled());
-
-                break;
-
             case 0xE7:
-                m_pSF7000->PPI_WriteControl(value); //SC3000_MapperIPL();
-                m_pMemory->SetIPLRomDisabled(!m_pSF7000->IPL_Enabled());
+                m_pSF7000->PPI_WriteRegister(port & 3, value, tstates);
                 break;
 
             case 0xE8:	m_pSF7000->USART_WriteData(value); break;

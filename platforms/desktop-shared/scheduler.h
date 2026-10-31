@@ -1,6 +1,6 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
  * Frame pacing. Decides how many emulated frames are due, from the machine's
  * own frame rate and a wall clock - not from how often the host happens to
@@ -16,6 +16,8 @@
  * The rule here is the opposite one: wall time decides how many frames the
  * machine owes, presentation is free to happen more or less often than that,
  * and neither one is derived from the other.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef SCHEDULER_H

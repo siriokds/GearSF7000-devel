@@ -1,20 +1,21 @@
 /*
  * GearSF7000 - SC-3000/SF-7000 Emulator
- * Copyright (C) 2026 Saverio Russo
-
+ * Copyright (C) 2026  Saverio Russo
+ *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * any later version.
-
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
-
- * You should have received a copy of the GNU General Public License
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see http://www.gnu.org/licenses/
  *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 // This file is deliberately recompiled by every build, so __DATE__ and
@@ -24,6 +25,7 @@
 
 #include <cstdio>
 #include "build_info.h"
+#include "version.h"
 
 #ifndef EMULATOR_BUILD
 #define EMULATOR_BUILD "undefined"
@@ -77,6 +79,11 @@ void build_timestamp_once(void)
 
 const char* build_info_version(void)
 {
+    return GEARSF7000_VERSION;
+}
+
+const char* build_info_revision(void)
+{
     return EMULATOR_BUILD;
 }
 
@@ -91,7 +98,8 @@ const char* build_info_full(void)
     if (g_full[0] == 0)
     {
         build_timestamp_once();
-        snprintf(g_full, sizeof(g_full), "%s (%s)", EMULATOR_BUILD, g_timestamp);
+        snprintf(g_full, sizeof(g_full), "%s build %s (%s)",
+                 GEARSF7000_VERSION, EMULATOR_BUILD, g_timestamp);
     }
     return g_full;
 }

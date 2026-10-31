@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026  Saverio Russo
+// Port of a public-domain shader by Timothy Lottes, credited below.
 #pragma once
 #include <stdint.h>
 

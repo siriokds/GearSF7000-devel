@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
+#include "SaveStateStream.h"
+#include "miniz/miniz.h"
+#include <bit>
+#include <cmath>
 #include "SegaBasicWavTape.h"
 #include "definitions.h"
 //#include "SegaBasicTapeFormat.h"
@@ -124,53 +130,20 @@ int16_t SegaBasicWavTape::GetSample()
 
 void SegaBasicWavTape::Tick(int cycles)
 {
-	Tape::Tick(cycles);
-	const int tapeCycles = AdjustedCycles;
-
-	if (TapeRunning && !Eof() && Motor->IsMotorOn())
-	{
-		PositionCyclesCounter += tapeCycles;
-		if (PositionCyclesCounter >= CyclesPerPosition)
-		{
-			PositionCyclesCounter -= CyclesPerPosition;
-
-			if (Eof())
-			{
-				//Position = EndPosition;
-				Stop();
-			}
-			else
-			{
-				//if (TapeRunning && Motor->IsMotorOn())
-				{
-					ActualSymbol = GetSample();
-					Position++;
-				}
-			}
-
-
-		}
-		
-		ActualValue = 1;
-		if (TapeRunning && Motor->IsMotorOn())
-		{
-			if (ActualSymbol < 8000.0f)
-			{
-				ActualValue = 0;
-			}
-		}
-
-	}
-
-
-
+    Tape::Tick(cycles);
+    if (!TapeRunning || !Motor->IsMotorOn()) return;
+    PositionCyclesCounter += AdjustedCycles;
+    while (PositionCyclesCounter >= CyclesPerPosition && !Eof()) {
+        PositionCyclesCounter -= CyclesPerPosition;
+        ActualSymbol = GetSample();
+        ++Position;
+    }
+    ActualValue = ActualSymbol >= 8000 ? 1 : 0;
+    if (Eof()) Stop();
 }
 
-
-
-bool SegaBasicWavTape::LoadBas(std::string fullPath)
+bool SegaBasicWavTape::LoadBas(std::string)
 {
-	(void)fullPath; // unused
 	//FilePath = fullPath;
 	//Position = 0;
 	//PositionCyclesCounter = 0;
@@ -276,6 +249,7 @@ bool SegaBasicWavTape::LoadTape(std::string filePath)
 		CyclesPerPosition = MasterClock / static_cast<float>(GC_AUDIO_SAMPLE_RATE);
 	
 	EndPosition = wavInfo.numSamples - 1;
+	m_mediaCRC = mz_crc32(0, reinterpret_cast<const unsigned char*>(audioData), wavInfo.numSamples * sizeof(*audioData));
 
 	return Tape::LoadTape();
 }
@@ -339,6 +313,7 @@ bool SegaBasicWavTape::LoadMp3(std::string filePath)
 		CyclesPerPosition = MasterClock / static_cast<float>(GC_AUDIO_SAMPLE_RATE);
 
 	EndPosition = wavInfo.numSamples - 1;
+	m_mediaCRC = mz_crc32(0, reinterpret_cast<const unsigned char*>(audioData), wavInfo.numSamples * sizeof(*audioData));
 
 	return Tape::LoadTape();
 }
@@ -434,4 +409,43 @@ std::string SegaBasicWavTape::GetInfo()
 	//int offset = static_cast<int>(perc * 4.0) & 3; // Ridotto a intervallo [0,3]
 
 	return "C: " + std::to_string(revs);
+}
+
+// Sample data remain external to snapshots; identity is checked against the
+// mounted decoded PCM, so rewind never reopens or re-decodes the media file.
+void SegaBasicWavTape::SavePlaybackState(std::ostream& stream) const
+{
+    StateWriter w(stream);
+    w.U32(m_mediaCRC); w.I32(wavInfo.numSamples); w.I32(wavInfo.sampleRate); w.I32(MasterClock);
+    w.Bool(TapeRunning); w.Bool(Recording);
+    w.I64(CyclesElapsed); w.I32(AdjustedCycles);
+    const auto real = [&](double v) { w.U64(std::bit_cast<std::uint64_t>(v)); };
+    real(TargetPlaybackSpeedPercent); real(EffectivePlaybackSpeedPercent); real(PlaybackCycleRemainder);
+    w.I32(Position); real(PositionCyclesCounter); w.I16(ActualSymbol); w.U8(ActualValue);
+}
+
+bool SegaBasicWavTape::LoadPlaybackState(std::istream& stream, bool apply)
+{
+    StateReader r(stream);
+    const auto crc = r.U32(); const int count = r.I32(), rate = r.I32(), clock = r.I32();
+    const unsigned running = r.U8(), recording = r.U8();
+    const auto elapsed = r.I64(); const int adjusted = r.I32();
+    const auto real = [&]() { return std::bit_cast<double>(r.U64()); };
+    const double target = real(), effective = real(), remainder = real();
+    const int position = r.I32(); const double phase = real();
+    const auto symbol = r.I16(); const auto value = r.U8();
+    if (!r.Ok() || !Loaded || crc != m_mediaCRC || count != wavInfo.numSamples ||
+        rate != wavInfo.sampleRate || clock != MasterClock || running > 1 || recording > 1 ||
+        elapsed < 0 || adjusted < 0 || !std::isfinite(target) || target < -20 || target > 20 ||
+        !std::isfinite(effective) || effective < -20 || effective > 20 ||
+        !std::isfinite(remainder) || remainder < 0 || remainder >= 1 || position < 0 ||
+        position > count || !std::isfinite(phase) || phase < 0 || phase > 1e9 || value > 1)
+        return false;
+    if (apply) {
+        TapeRunning = running; Recording = recording; CyclesElapsed = elapsed; AdjustedCycles = adjusted;
+        TargetPlaybackSpeedPercent = target; EffectivePlaybackSpeedPercent = effective;
+        PlaybackCycleRemainder = remainder; Position = position; PositionCyclesCounter = phase;
+        ActualSymbol = symbol; ActualValue = value;
+    }
+    return true;
 }

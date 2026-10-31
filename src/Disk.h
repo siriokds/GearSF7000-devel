@@ -4,6 +4,15 @@
 ** Extended from the original blueMSX Disk.h to support the Physical Track
 ** Model (DiskTrack / DiskSector) and four disk image formats:
 **   SF7 (flat raw), EDSK (Amstrad/CPC), HFE (HxC v1), DS7 (native model).
+**
+** Copyright (C) 2003-2006 Daniel Vik, Tomas Karlsson
+** Copyright (C) 2024-2026  Saverio Russo
+**
+** Derived from blueMSX by Daniel Vik and Tomas Karlsson (GPL-2.0-or-later,
+** used here under version 3); the changes and additions by Saverio Russo
+** are AGPL-3.0-or-later.
+**
+** SPDX-License-Identifier: GPL-2.0-or-later AND AGPL-3.0-or-later
 ******************************************************************************
 */
 #ifndef DISK_H
@@ -11,6 +20,11 @@
 
 #include <stdint.h>
 #include "DiskModel.h"   /* DiskTrack, DiskSector, DISC_DRIVE, all constants */
+
+#ifdef __cplusplus
+#include "IDebugEventProvider.h"
+#include <string>
+#endif
 
 /* =========================================================
  * Configuration
@@ -134,5 +148,55 @@ uint8_t diskSaveDS7(int driveId, const char* fileName);
  * Returns true on success.
  * ========================================================= */
 bool diskCreateEmptyDS7(const char* filename);
+
+#ifdef __cplusplus
+
+class DebugDeviceRegistry;
+class Memory;
+
+struct FloppyDriveDebugConfiguration
+{
+    std::string key;
+    std::string parentKey;
+    std::string name;
+};
+
+// Device facade for one physical drive slot. The disk-image engine remains
+// behind the C API while it is modernised; this object supplies stable device
+// identity and publishes only discrete drive-line transitions.
+class FloppyDriveDevice : public IDebugEventProvider
+{
+public:
+    enum State : uint8_t
+    {
+        MediaPresent = 0,
+        Enabled,
+        WriteProtected,
+        Motor,
+        Index,
+        StateCount
+    };
+
+    FloppyDriveDevice(int driveId, Memory* memory,
+                      FloppyDriveDebugConfiguration debug);
+    DebugDeviceDefinition DescribeDebugDevice() const override;
+    void BindDebugEvents(const DebugDeviceRegistry& registry);
+    // Establishes the current electrical state without creating startup or
+    // catalog-recomposition events.
+    void Capture(bool motor, bool index);
+    void Observe(bool motor, bool index);
+
+private:
+    void Publish(State state, bool value);
+
+    int m_driveId;
+    Memory* m_memory;
+    FloppyDriveDebugConfiguration m_debug;
+    DebugDeviceId m_debugDevice = 0;
+    bool m_observed[StateCount] = {};
+    bool m_hasObservation = false;
+};
+
+#endif
 
 #endif /* DISK_H */

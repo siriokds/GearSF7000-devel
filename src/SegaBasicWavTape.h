@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026  Saverio Russo
 #pragma once
 
 #include <iostream>
+#include <cstdint>
 #include <fstream>
 #include <filesystem>
 #include <string>
@@ -19,6 +22,7 @@ protected:
 	WAVUtils::WAVStruct wavInfo;
 	int16_t* audioData;
 	int audioDataIndex;
+	std::uint32_t m_mediaCRC = 0;
 
 	int CyclePositions[4];
 	float CyclesPerPosition;
@@ -58,6 +62,8 @@ public:
 	// the same mono int16_t PCM shape LoadTape() produces from a WAV file, so
 	// every signal-decode routine below works unmodified either way.
 	bool LoadMp3(std::string filePath);
+	void SavePlaybackState(std::ostream& stream) const;
+	bool LoadPlaybackState(std::istream& stream, bool apply);
 
 
 

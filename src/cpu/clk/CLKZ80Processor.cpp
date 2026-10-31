@@ -1,8 +1,8 @@
 /*
  * GearSF7000 - CLK Z80 processor facade
- * Copyright (C) 2026 Saverio Russo
+ * Copyright (C) 2026  Saverio Russo
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "CLKZ80Processor.h"
@@ -10,6 +10,8 @@
 #include "cpu/clk/CLKZ80StateAccess.h"
 
 #include "SaveStateStream.h"
+
+#include <utility>
 
 CLKZ80Processor::CLKZ80Processor(
     Memory* memory, IOPorts* ioPorts, GearSF7000BusClockSink* clockSink)
@@ -144,6 +146,11 @@ void CLKZ80Processor::PulseNonMaskableInterrupt()
     m_cpu.set_non_maskable_interrupt_line(false);
 }
 
+void CLKZ80Processor::SetNonMaskableInterruptLevel(bool asserted)
+{
+    m_cpu.set_non_maskable_interrupt_line(asserted);
+}
+
 CpuStateSnapshot CLKZ80Processor::GetCpuStateSnapshot() const
 {
     using Register = CPU::Z80::Register;
@@ -252,6 +259,7 @@ void CLKZ80Processor::ResetExecution()
     // A machine reset initializes every device separately. Do not deliver a
     // stale partial CPU interval into the freshly reset machine.
     m_bus.DiscardElapsedTime();
+    CPU::Z80::GearSF7000StateAccess::ClearMachineInterruptRequests(m_cpu);
     RequestPowerOnReset();
 }
 
@@ -310,6 +318,41 @@ bool CLKZ80Processor::ConsumeDebugPauseRequest()
     const bool requested = m_debugPauseRequested;
     m_debugPauseRequested = false;
     return requested;
+}
+
+void CLKZ80Processor::SetDebugParentKey(const std::string& key)
+{
+    m_debugParentKey = key;
+}
+
+DebugDeviceDefinition CLKZ80Processor::DescribeDebugDevice() const
+{
+    DebugDeviceDefinition device;
+    device.key = m_debugParentKey + ".cpu";
+    device.parentKey = m_debugParentKey;
+    device.typeKey = "zilog.z80";
+    device.name = "Z80";
+
+    DebugSpaceDefinition execute;
+    execute.id = DebugCommonSpace::Execute;
+    execute.key = "execute";
+    execute.name = "Execute";
+    execute.targetMax = 0xFFFF;
+    execute.supportedAccesses = DebugEventAccess_Execute;
+    execute.defaultBitWidth = 0;
+    device.spaces.push_back(std::move(execute));
+
+    DebugSpaceDefinition memory;
+    memory.id = DebugCommonSpace::Memory;
+    memory.key = "memory";
+    memory.name = "CPU Memory";
+    memory.targetMax = 0xFFFF;
+    memory.supportedAccesses = DebugEventAccess_Read | DebugEventAccess_Write;
+    memory.beforeValueAccesses = memory.supportedAccesses;
+    memory.afterValueAccesses = memory.supportedAccesses;
+    device.spaces.push_back(std::move(memory));
+
+    return device;
 }
 
 GearSF7000BusHandler& CLKZ80Processor::GetBusHandler()
