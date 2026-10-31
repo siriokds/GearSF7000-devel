@@ -270,6 +270,7 @@ these configurations exactly as shown in the application:
 | `SG-1000 The Castle (8K cart + console RAM)` | 32 KiB ROM at `$0000-$7FFF`, 8 KiB cartridge RAM at `$8000-$9FFF` mirrored to `$BFFF`, and the console's mirrored RAM at `$C000-$FFFF`. |
 | `SG-1000 Sega 315-5208 (console RAM)` | Late SG-1000-compatible cartridge with Sega's 16 KiB paging controller and no RAM of its own: `$C000-$FFFF` is the console's RAM (1 KiB SG-1000, 2 KiB SC-3000); used by the 128 KiB Loretta no Shouzou. |
 | `MSX linear (8/16/32K)` | MSX cartridge ROM mapped linearly in its slot; small BASIC cartridges sit in page 2. |
+| `MSX ASCII 16 MegaROM` | 32 KiB to 4 MiB of ROM in 16 KiB banks, shown in two windows at `$4000-$7FFF` and `$8000-$BFFF`; writes to `$6000-$67FF` and `$7000-$77FF` select their banks. Chosen automatically for MSX images larger than 32 KiB that use it. |
 | `Sord M5 standard (up to 20 KB)` | Sord M5 cartridge ROM up to 20 KB. |
 | `ColecoVision standard (32K at 8000)` | Up to 32 KiB of ROM at `$8000-$FFFF`. |
 | `Coleco MegaCart (128K-1MB)` | 128 KiB to 1 MiB of ROM in 16 KiB banks: the last bank fixed at `$8000-$BFFF`, the bank at `$C000-$FFFF` selected by reading `$FFC0-$FFFF`. |
