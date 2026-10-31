@@ -556,7 +556,7 @@ void Audio::ResetLoudnessMeter()
 
 void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
 {
-    m_pApu->end_frame(m_ElapsedCycles);
+    m_pApu->end_frame((blip_time_t)m_ElapsedCycles);
     if (m_pApu->is_debug_enabled())
     {
         for (int i = 0; i < 4; i++)
@@ -571,7 +571,7 @@ void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
     // disagrees between them. Run it even when the expansion is disabled - it
     // is then silent, but keeping its clock aligned means enabling it at the
     // next reset does not start from a stale time.
-    m_pAyApu->end_frame(m_ElapsedCycles);
+    m_pAyApu->end_frame((blip_time_t)m_ElapsedCycles);
     if (m_pAyApu->is_debug_enabled())
     {
         for (int i = 0; i < 3; i++)
@@ -589,7 +589,7 @@ void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
         event.sample = static_cast<int>(m_pBuffer->center()->count_samples(
             static_cast<blip_time_t>(event.cycle)));
 #endif
-    m_pBuffer->end_frame(m_ElapsedCycles);
+    m_pBuffer->end_frame((blip_time_t)m_ElapsedCycles);
 
     int count = static_cast<int>(m_pBuffer->read_samples(m_pSampleBuffer, GC_AUDIO_BUFFER_SIZE));
 

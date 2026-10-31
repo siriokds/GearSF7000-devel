@@ -422,7 +422,7 @@ void boardSetFdcActive()
 
 uint32_t boardSystemTime(NEC765* fdc)
 {
-    return fdc->totalCycles;
+    return (uint32_t)fdc->totalCycles;
 }
 
 void nec765SetAudio(NEC765* fdc, Audio* pAudio)
